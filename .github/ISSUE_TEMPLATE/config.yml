@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/getpwnforge/pwnforge/security/advisories/new
+    about: Please report security issues privately — do not open a public issue.
+  - name: Community discussion / questions
+    url: https://github.com/getpwnforge/pwnforge/discussions
+    about: Ask questions, share ideas, or get help from the community.

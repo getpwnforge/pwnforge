@@ -1,0 +1,49 @@
+name: OpenSSF Scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "30 4 * * 1"   # weekly, Monday
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # to upload results to the Security tab
+      id-token: write          # to publish results and get a badge
+      # Only needed on private repos with the default GITHUB_TOKEN — without these,
+      # Scorecard's GraphQL calls (ListCommits, SAST detection) fail with
+      # "Resource not accessible by integration". Harmless to keep once the repo goes
+      # public; the checks just use less of what they grant.
+      actions: read
+      issues: read
+      pull-requests: read
+      checks: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        # ossf/scorecard-action doesn't publish a floating major-version tag like most
+        # actions do — only exact release tags exist (v2.4.1, v2.4.2, ...). Check
+        # https://github.com/ossf/scorecard-action/releases for the current one before
+        # running pin-actions.sh, since "v2" alone will 422 against the commits API.
+        uses: ossf/scorecard-action@f49aabe0b5af0936a0987cfb85d86b75731b0186 # v2.4.1
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF results to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

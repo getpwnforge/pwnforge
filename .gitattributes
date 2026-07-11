@@ -1,0 +1,19 @@
+# Normalize line endings for everything Git considers text, regardless of the
+# committer's OS. Binary files are left untouched (Git auto-detects them).
+* text=auto eol=lf
+
+# Better hunk headers in `git diff` — Rust has a builtin Git userdiff driver
+# that identifies which fn/impl/struct a change falls in (@@ ... @@ fn foo() {
+# instead of a bare line range). TOML and React/JSX have no equivalent builtin
+# driver in Git as of 2.53, so there's no `diff=toml`/`diff=react` to add here
+# — those attribute values wouldn't do anything.
+*.rs text diff=rust
+
+# Lockfiles: exclude from GitHub's language stats and collapse by default in
+# diffs — they're generated, not hand-written, and skew both otherwise.
+Cargo.lock linguist-generated=true
+frontend/pnpm-lock.yaml linguist-generated=true
+
+# Shell scripts must keep LF even if someone commits from a Windows checkout
+# with autocrlf misconfigured — a CRLF shell script fails at runtime.
+*.sh text eol=lf
