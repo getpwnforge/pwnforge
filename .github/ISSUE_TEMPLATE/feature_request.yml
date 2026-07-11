@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest an idea or improvement for PwnForge
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for PwnForge? Tell us about it. Feel free to also start a [Discussion](../../discussions) if you'd like to brainstorm before filing a formal request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Is your feature request related to a problem or workflow gap? Describe it.
+      placeholder: "As a team captain, I'm frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you currently use (Notion, Discord, spreadsheets, etc.)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which area does this affect?
+      multiple: true
+      options:
+        - Challenges
+        - Writeups
+        - Teams & permissions
+        - Workspaces
+        - Notifications / activity feed
+        - Self-hosting / deployment
+        - API / integrations
+        - Other
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, links, related issues
+    validations:
+      required: false
