@@ -1,0 +1,80 @@
+name: Docker Build & Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write   # required for keyless cosign signing
+
+env:
+  REGISTRY: ghcr.io
+  # OCI/Docker image references must be all-lowercase — this must stay lowercase even
+  # if the GitHub org display name ever changes case, and must never be swapped for
+  # `${{ github.repository_owner }}` directly (that preserves real GitHub casing, e.g.
+  # a personal account like "SomeUser" would break `cosign sign` with a
+  # "could not parse reference" error).
+  ORG: getpwnforge
+
+jobs:
+  build-and-push:
+    name: Build & push (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/pwnforge-${{ matrix.service }}
+          tags: |
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          # `edge` = latest build off main, may break — for testers/contributors.
+          # `X.Y.Z` + `X.Y` + `latest` only appear once you push a `vX.Y.Z` git tag;
+          # `latest` is managed automatically by this action to follow the highest
+          # semver tag, not the `main` branch — that's intentional, don't add a
+          # separate `type=raw,value=latest` line or the two will fight over it.
+          # `sha-XXXXXXX` = exact commit traceability for debugging a live deployment.
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign image (keyless, OIDC)
+        run: |
+          cosign sign --yes \
+            ${{ env.REGISTRY }}/${{ env.ORG }}/pwnforge-${{ matrix.service }}@${{ steps.build.outputs.digest }}
