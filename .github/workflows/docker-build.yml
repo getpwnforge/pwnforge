@@ -2,7 +2,7 @@ name: Docker Build & Publish
 
 on:
   push:
-    branches: [main]
+    branches: ["release/**"]
     tags: ["v*.*.*"]
 
 concurrency:
@@ -16,7 +16,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  # OCI/Docker image references must be all-lowercase — this must stay lowercase even
+  # OCI/Docker image references must be all-lowercase. This must stay lowercase even
   # if the GitHub org display name ever changes case, and must never be swapped for
   # `${{ github.repository_owner }}` directly (that preserves real GitHub casing, e.g.
   # a personal account like "SomeUser" would break `cosign sign` with a
@@ -49,15 +49,22 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.ORG }}/pwnforge-${{ matrix.service }}
           tags: |
-            type=raw,value=edge,enable={{is_default_branch}}
+            type=raw,value=edge,enable=${{ startsWith(github.ref, 'refs/heads/release/') }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=short
-          # `edge` = latest build off main, may break — for testers/contributors.
-          # `X.Y.Z` + `X.Y` + `latest` only appear once you push a `vX.Y.Z` git tag;
-          # `latest` is managed automatically by this action to follow the highest
-          # semver tag, not the `main` branch — that's intentional, don't add a
-          # separate `type=raw,value=latest` line or the two will fight over it.
+          # `edge` = build from an active release/* branch, while stabilizing before
+          # tagging; only whoever is validating that release should really use it.
+          # `X.Y.Z` + `X.Y` + `latest` only appear once you push a `vX.Y.Z` git tag.
+          # Tag on `main`, after pushing the release branch there
+          # (`git push origin release/x.y.z:main`), not on the release branch itself —
+          # tagging after that push means the tag points at a commit that already
+          # lives in main's permanent history, so the release/* branch can be deleted
+          # afterward without orphaning the tag. `latest` is managed automatically by
+          # this action to follow the highest semver tag. Merges to `main` build
+          # nothing on their own; only the tag does, which is the whole point of this
+          # trigger setup. Don't add a separate `type=raw,value=latest` line or the
+          # two will fight over it.
           # `sha-XXXXXXX` = exact commit traceability for debugging a live deployment.
 
       - name: Build and push
