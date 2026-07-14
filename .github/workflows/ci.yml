@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [dev, release/**, main]
+    branches: [dev, "release/**", main]
   pull_request:
     branches: [dev]
 
@@ -11,8 +11,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
   backend:
     name: Backend (Rust)
+    needs: changes
+    # Skipping (rather than filtering at the trigger level) keeps this check
+    # completing with a real status on every run, even when backend/ didn't
+    # change. A workflow that never triggers at all leaves a required status
+    # check stuck "Pending" forever and permanently blocks merging. A skipped
+    # job reports as passed instead.
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -70,19 +95,35 @@ jobs:
 
   frontend:
     name: Frontend (React/TS)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          package_json_file: frontend/package.json
+      - name: Enable Corepack
+        # Corepack ships with Node itself and reads the "packageManager" field in
+        # package.json natively, no separate action needed. Sidesteps
+        # pnpm/action-setup's package_json_file bug entirely
+        # (https://github.com/pnpm/action-setup/issues/227).
+        run: corepack enable
+
+      - name: Activate pinned pnpm version
+        # Corepack resolves "packageManager" by walking up from the invoking
+        # command's cwd. actions/setup-node's pnpm cache step below runs from the
+        # repo root, not frontend/, so it can't discover frontend/package.json's
+        # packageManager field there and silently falls back to "latest" instead
+        # of erroring. That then crashed needing a newer Node than we pin here.
+        # Activating the exact pinned version explicitly, once, avoids relying on
+        # cwd-based discovery for the rest of the job.
+        run: |
+          version=$(grep -oP '"packageManager":\s*"pnpm@\K[^"]+' frontend/package.json)
+          corepack prepare "pnpm@$version" --activate
 
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
