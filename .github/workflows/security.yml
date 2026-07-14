@@ -2,16 +2,41 @@ name: Security
 
 on:
   push:
-    branches: [dev, release/**, main]
+    branches: [dev, "release/**", main]
   pull_request:
     branches: [dev]
   schedule:
-    # Weekly scan even without code changes — new CVEs get published against pinned deps
+    # Weekly scan even without code changes; new CVEs get published against pinned deps
     - cron: "0 6 * * 1"
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Filter paths
+        id: filter
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
   cargo-audit:
     name: cargo audit (backend)
+    needs: changes
+    # Skipping (not filtering at the trigger level) keeps this check completing
+    # with a real status every run; a workflow that never triggers leaves a
+    # required status check stuck "Pending" forever. Same reasoning as ci.yml.
+    # The weekly schedule run always has backend == '' (no diff to compare), so
+    # add that as an explicit fallback to keep the scheduled scan working.
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -25,15 +50,27 @@ jobs:
 
   pnpm-audit:
     name: pnpm audit (frontend)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          package_json_file: frontend/package.json
+
+      - name: Enable Corepack
+        # See ci.yml for why: sidesteps pnpm/action-setup's package_json_file bug
+        # entirely (https://github.com/pnpm/action-setup/issues/227).
+        run: corepack enable
+
+      - name: Activate pinned pnpm version
+        # See ci.yml for why explicit activation is needed here rather than
+        # relying on Corepack's cwd-based auto-discovery.
+        run: |
+          version=$(grep -oP '"packageManager":\s*"pnpm@\K[^"]+' frontend/package.json)
+          corepack prepare "pnpm@$version" --activate
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - working-directory: frontend
@@ -45,6 +82,7 @@ jobs:
 
   codeql:
     name: CodeQL
+    needs: changes
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -55,14 +93,30 @@ jobs:
         language: ["rust", "javascript-typescript"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: |
+          (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
+          (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
 
       - name: Initialize CodeQL
+        if: |
+          (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
+          (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
 
       - name: Autobuild
+        if: |
+          (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
+          (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
         uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL analysis
+        if: |
+          (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
+          (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
+        # On a private repo without a GitHub Advanced Security license (e.g. this
+        # sandbox), the analysis itself succeeds but the final upload step fails with
+        # "Code scanning is not enabled for this repository": expected, not a config
+        # bug. Code Scanning upload is free once the real repo is public.
         uses: github/codeql-action/analyze@v3

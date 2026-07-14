@@ -1,0 +1,38 @@
+name: Enforce PR Target Branch
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-target:
+    runs-on: ubuntu-latest
+    # dev is the only valid PR target in this flow. main and release/* branches
+    # only ever move via direct push (git push origin release/x.y.z:main, or a
+    # push straight to release/x.y.z), restricted to org members/admins via their
+    # rulesets. A PR against either of those, or any other stray branch, is always
+    # a mistake (usually a contributor's feature/fix/chore branch pointed at the
+    # wrong base) and gets closed.
+    if: github.event.pull_request.base.ref != 'dev'
+    steps:
+      - name: Comment and close
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const targetBranch = context.payload.pull_request.base.ref;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `This PR targets \`${targetBranch}\` instead of \`dev\`. \`dev\` is the only branch that accepts pull requests here; \`main\` and \`release/*\` branches only move via direct push from a maintainer. Please retarget this PR (Edit \u2192 base branch) and reopen. See [CONTRIBUTING.md](../blob/dev/CONTRIBUTING.md) for the branching model.`,
+            });
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              state: "closed",
+            });
