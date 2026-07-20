@@ -1,0 +1,6 @@
+[package]
+name = "seed"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
