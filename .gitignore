@@ -6,6 +6,7 @@ Cargo.lock.bak
 # Node / Vite
 node_modules/
 dist/
+dist-ssr/
 .vite/
 *.local
 
@@ -18,6 +19,11 @@ dist/
 .vscode/*
 !.vscode/extensions.json
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # OS
 .DS_Store
@@ -25,8 +31,12 @@ Thumbs.db
 
 # Logs
 *.log
+logs
 npm-debug.log*
 pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
 # Docker
 docker-compose.override.yml
