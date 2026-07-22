@@ -21,9 +21,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release -p api --recipe-path recipe.json
+RUN cargo chef cook --release -p api --recipe-path recipe.json --locked
 COPY . .
-RUN cargo build --release -p api
+RUN cargo build --release -p api --locked
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
