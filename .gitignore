@@ -5,6 +5,8 @@ Cargo.lock.bak
 
 # Node / Vite
 node_modules/
+.pnpm-store/
+.pnpm-debug.log*
 dist/
 dist-ssr/
 .vite/
