@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/api",
+    "crates/domain",
+    "crates/migration",
+    "crates/seed",
+    "crates/ws-pubsub",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+dotenvy = "0.15.7"
+anyhow = "1.0.104"
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }

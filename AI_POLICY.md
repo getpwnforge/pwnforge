@@ -2,7 +2,7 @@
 
 PwnForge is a security-critical tool: it stores flags, writeups, and credentials for teams actively competing, and it's self-hosted by people who trust it not to leak. Maintaining that trust requires deep intent behind every change, not just code that happens to compile. There is currently one maintainer. That maintainer's time is the project's scarcest resource.
 
-We recognize AI-assisted tools (Claude, Copilot, ChatGPT, etc.) as legitimate, useful aids for development. This project's own tooling was built with heavy AI assistance, disclosed the same way this policy asks of everyone else. But the same tools make it easy to generate contributions the submitter doesn't fully understand, which shifts the cost of that gap onto the maintainer reviewing it. This policy exists to keep that cost proportional to what a small team can actually carry.
+We recognize AI-assisted tools (Claude, Copilot, ChatGPT, etc.) as legitimate, useful aids for development. But the same tools make it easy to generate contributions the submitter doesn't fully understand, which shifts the cost of that gap onto the maintainer reviewing it. This policy exists to keep that cost proportional to what a small team can actually carry.
 
 ## 1. Human accountability
 
