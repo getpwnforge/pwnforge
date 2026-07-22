@@ -1,13 +1,13 @@
 mod app;
 mod config;
+mod middleware;
 mod routes;
 mod state;
-mod middleware;
 
 use config::Config;
-use state::AppState;
-use sea_orm::Database;
 use migration::MigratorTrait;
+use sea_orm::Database;
+use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

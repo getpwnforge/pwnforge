@@ -1,9 +1,5 @@
 // middleware/tracing.rs
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, middleware::Next, response::Response};
 
 use ::tracing::Instrument;
 
@@ -22,10 +18,7 @@ pub fn init_tracing() {
     }
 }
 
-pub async fn request_id_middleware(
-    request: Request,
-    next: Next
-) -> Response {
+pub async fn request_id_middleware(request: Request, next: Next) -> Response {
     let request_id = uuid::Uuid::new_v4().to_string();
 
     let span = ::tracing::info_span!(
@@ -37,10 +30,12 @@ pub async fn request_id_middleware(
 
     async move {
         let mut response = next.run(request).await;
-        
-        response.headers_mut().insert("X-Request-ID", request_id.parse().unwrap());
+
         response
-    }.instrument(span).await
-
-
+            .headers_mut()
+            .insert("X-Request-ID", request_id.parse().unwrap());
+        response
+    }
+    .instrument(span)
+    .await
 }

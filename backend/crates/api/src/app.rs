@@ -1,5 +1,5 @@
-use axum::{routing::get, Router, middleware};
-use crate::{routes::health::health, state::AppState, middleware::tracing::request_id_middleware};
+use crate::{middleware::tracing::request_id_middleware, routes::health::health, state::AppState};
+use axum::{Router, middleware, routing::get};
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
