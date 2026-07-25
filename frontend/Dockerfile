@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24-alpine AS dev
+FROM node:26-alpine AS dev
 ARG UID=1000
 ARG GID=1000
 RUN corepack enable
@@ -13,7 +13,7 @@ RUN deluser node 2>/dev/null || true \
 WORKDIR /app
 USER ${UID}:${GID}
 
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile --ignore-scripts
