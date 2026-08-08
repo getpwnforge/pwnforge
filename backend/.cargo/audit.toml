@@ -1,0 +1,12 @@
+[advisories]
+ignore = [
+  # RUSTSEC-2026-0235: rkyv 0.7.46, OOB read on archives containing Rc/Arc.
+  # Declared as an optional dependency of rust_decimal, itself pulled in by
+  # sea-orm's `with-rust_decimal` default feature. The rkyv feature is never
+  # enabled: `cargo tree -i rust_decimal -e features` shows only "maths",
+  # "serde" and "std" active, and `cargo tree -i rkyv --target all` returns
+  # nothing. The crate is listed in Cargo.lock but never compiled into the
+  # binary. PwnForge does not deserialize rkyv archives anywhere.
+  # Remove once rust_decimal moves to rkyv 0.8.
+  "RUSTSEC-2026-0235",
+]
