@@ -1,0 +1,128 @@
+{
+  "nav": {
+    "product": "Produit",
+    "solutions": "Solutions",
+    "community": "Communauté",
+    "docs": "Docs",
+    "signIn": "Se connecter",
+    "getStarted": "Commencer"
+  },
+  "hero": {
+    "badge": "Nouveau : synchronisation HTB & TryHackMe",
+    "title": "Le QG de vos <ember>CTF</ember> et de votre red team.",
+    "subtitle": "PwnForge organise vos challenges, vos writeups et votre équipe dans un seul espace clair. Du grind HTB en solo au CTF jeopardy de 48 h, gardez tout le monde synchronisé.",
+    "primaryCta": "Créer un workspace",
+    "secondaryCta": "Voir la démo",
+    "trust": {
+      "selfHostable": "Auto-hébergement possible",
+      "openSource": "Open source, AGPL v3",
+      "exportAnytime": "Export de vos données à tout moment"
+    }
+  },
+  "platforms": {
+    "title": "Compatible avec vos plateformes"
+  },
+  "product": {
+    "eyebrow": "Produit",
+    "title": "Conçu pour la façon dont les red teams travaillent réellement.",
+    "features": {
+      "workspaces": {
+        "title": "Workspaces par plateforme ou CTF",
+        "description": "Un espace dédié pour chaque event ou plateforme : HTB, THM, jeopardy. Solo ou en équipe, avec ses propres challenges, tags et permissions."
+      },
+      "kanban": {
+        "title": "Kanban de challenges",
+        "description": "Suivez chaque challenge du « à faire » au « résolu », affectez vos coéquipiers, catégorisez avec des tags système et personnalisés."
+      },
+      "writeups": {
+        "title": "Writeups Markdown",
+        "description": "Éditeur scindé Markdown / aperçu. Brouillon privé ou publié à toute l'équipe. Notes et fichiers joints inclus."
+      },
+      "realtime": {
+        "title": "Dashboard temps réel",
+        "description": "Le fil d'activité montre qui a résolu quoi, les flags qui tombent, les nouveaux membres, en direct pendant l'event."
+      },
+      "teams": {
+        "title": "Équipes & invitations",
+        "description": "Liens d'invitation, niveaux de droits (Owner, Admin, Member, Viewer), et association des équipes aux workspaces."
+      },
+      "stats": {
+        "title": "Statistiques",
+        "description": "Progression par catégorie, par difficulté, vélocité de l'équipe et statistiques personnelles détaillées."
+      }
+    }
+  },
+  "solutions": {
+    "eyebrow": "Solutions",
+    "title": "Un outil, quatre façons de <ember>pwn</ember>.",
+    "subtitle": "Du joueur solo à la red team d'entreprise, PwnForge s'adapte à la taille et au rythme de votre équipe.",
+    "cases": {
+      "solo": {
+        "tag": "Individuel",
+        "title": "Joueur solo",
+        "description": "Grindez HTB, THM ou Root-Me à votre rythme. Gardez vos writeups classés par catégorie et retrouvez chaque technique en quelques secondes."
+      },
+      "ctfTeam": {
+        "tag": "Compétition",
+        "title": "Équipe CTF",
+        "description": "Coordonnez 5 à 50 joueurs pendant un jeopardy de 48 h. Qui prend quoi, qui bloque, quels flags tombent, en direct."
+      },
+      "studentClub": {
+        "tag": "Formation",
+        "title": "Club étudiant",
+        "description": "Formez la relève, suivez la progression de chaque membre et bâtissez une base de writeups qui survit aux promotions."
+      },
+      "redTeam": {
+        "tag": "Entreprise",
+        "title": "Red team professionnelle",
+        "description": "Centralisez engagements, méthodologie et savoir de l'équipe dans un espace privé, auto-hébergeable si besoin."
+      }
+    }
+  },
+  "community": {
+    "eyebrow": "Communauté",
+    "title": "Rejoignez les équipes qui grimpent.",
+    "stats": {
+      "activeTeams": "équipes actives",
+      "countries": "pays",
+      "publishedWriteups": "writeups publiés",
+      "ctfCovered": "CTF couverts"
+    }
+  },
+  "finalCta": {
+    "title": "Prêt à pwn votre prochain flag ?",
+    "subtitle": "Créez votre premier workspace en moins d'une minute.",
+    "button": "Commencer"
+  },
+  "footer": {
+    "privacy": "Confidentialité",
+    "terms": "Conditions",
+    "security": "Sécurité",
+    "status": "Statut",
+    "contact": "Contact",
+    "copyright": "© {{year}} PwnForge",
+    "copyrightRange": "© {{startYear}}-{{year}} PwnForge",
+    "licensePrefix": "Sous licence",
+    "licenseName": "AGPL v3",
+    "resources": {
+      "title": "Ressources",
+      "docs": "Docs",
+      "api": "Référence API",
+      "selfhosted": "Auto-hébergement",
+      "changelog": "Changelog"
+    },
+    "community": {
+      "title": "Communauté",
+      "github": "GitHub",
+      "discord": "Discord",
+      "contributing": "Contribuer"
+    },
+    "legal": {
+      "title": "Légal",
+      "privacy": "Confidentialité",
+      "terms": "Conditions",
+      "security": "Sécurité",
+      "contact": "Contact"
+    }
+  }
+}

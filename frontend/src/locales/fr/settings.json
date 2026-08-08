@@ -1,0 +1,319 @@
+{
+  "nav": {
+    "profile": "Profil",
+    "preferences": "Préférences",
+    "appearance": "Apparence",
+    "notifications": "Notifications",
+    "security": "Sécurité",
+    "sessions": "Sessions",
+    "connections": "Connexions",
+    "api": "API & tokens",
+    "deleteAccount": "Supprimer mon compte"
+  },
+  "profile": {
+    "title": "Profil",
+    "publicIdentity": "Identité publique",
+    "changePhoto": "Changer la photo",
+    "photoHint": "PNG ou JPG. Recommandé : 400×400.",
+    "handleHint": "Visible par vos équipes et sur les leaderboards publics.",
+    "bio": "Bio",
+    "externalLinks": "Liens externes",
+    "linkLabels": {
+      "github": "GitHub",
+      "website": "Site web",
+      "hackthebox": "HackTheBox",
+      "tryhackme": "TryHackMe"
+    },
+    "email": {
+      "title": "Email",
+      "primaryVerified": "Email principal · vérifié",
+      "secondary": "Email secondaire",
+      "addEmail": "Ajouter un email"
+    }
+  },
+  "preferences": {
+    "title": "Préférences",
+    "languageRegion": {
+      "title": "Langue & région",
+      "interfaceLanguage": "Langue de l'interface",
+      "timezone": "Fuseau horaire",
+      "timezoneHint": "Utilisé pour les horodatages et les rappels.",
+      "dateFormat": "Format de date",
+      "dateFormatOptions": {
+        "ddmmyyyy": "JJ/MM/AAAA",
+        "mmddyyyy": "MM/JJ/AAAA",
+        "iso": "AAAA-MM-JJ"
+      },
+      "timeFormat": "Format d'heure",
+      "timeFormatOptions": {
+        "24h": "24 h",
+        "12h": "12 h"
+      },
+      "firstDayOfWeek": "Premier jour de la semaine"
+    },
+    "startNavigation": {
+      "title": "Démarrage & navigation",
+      "defaultWorkspace": "Workspace par défaut",
+      "defaultWorkspaceHint": "Ouvert automatiquement à la connexion.",
+      "homePage": "Page d'accueil",
+      "homePageHint": "Affichée à l'ouverture d'un workspace.",
+      "homePageOptions": {
+        "dashboard": "Dashboard",
+        "challenges": "Challenges",
+        "myStats": "Mes statistiques"
+      },
+      "displayDensity": "Densité d'affichage",
+      "densityOptions": {
+        "comfortable": "Confortable",
+        "compact": "Compact"
+      }
+    },
+    "challengesWriteups": {
+      "title": "Challenges & writeups",
+      "defaultSort": "Trier les challenges par défaut",
+      "sortOptions": {
+        "points": "Points (décroissant)",
+        "difficulty": "Difficulté",
+        "recent": "Récemment ajoutés"
+      },
+      "hideSolved": "Masquer les challenges résolus",
+      "hideSolvedHint": "Les replie automatiquement dans la liste.",
+      "confirmFlag": "Confirmer avant de soumettre un flag",
+      "autoSaveDrafts": "Sauvegarde auto des brouillons",
+      "autoSaveDraftsHint": "Toutes les 10 secondes pendant la rédaction."
+    }
+  },
+  "appearance": {
+    "title": "Apparence",
+    "theme": {
+      "title": "Thème",
+      "system": "Système",
+      "light": "Clair",
+      "dark": "Sombre"
+    },
+    "colorsTypography": {
+      "title": "Couleurs & typographie",
+      "accentColor": "Couleur d'accent",
+      "accentColorHint": "Boutons, liens et états actifs.",
+      "interfaceFont": "Police de l'interface",
+      "editorFont": "Police de l'éditeur",
+      "editorFontHint": "Markdown / rédaction de writeups.",
+      "textSize": "Taille du texte",
+      "textSizeOptions": {
+        "small": "Petite",
+        "normal": "Normale",
+        "large": "Grande"
+      }
+    },
+    "comfort": {
+      "title": "Confort",
+      "reduceAnimations": "Réduire les animations",
+      "reduceAnimationsHint": "Respecte aussi le réglage système « prefers-reduced-motion ».",
+      "compactTables": "Tableaux compacts",
+      "compactTablesHint": "Réduit la hauteur des lignes dans les listes.",
+      "alwaysShowSidebar": "Toujours afficher la barre latérale"
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "perEvent": {
+      "title": "Par événement",
+      "columns": {
+        "event": "Événement",
+        "email": "Email",
+        "push": "Push",
+        "inApp": "In-app"
+      },
+      "events": {
+        "mentionInWriteup": "Mention dans un writeup",
+        "challengeSolvedByTeammate": "Challenge résolu par un coéquipier",
+        "teamOrWorkspaceInvitation": "Invitation à une équipe / workspace",
+        "newTeamMember": "Nouveau membre dans une équipe",
+        "commentOnMyWriteup": "Commentaire sur mon writeup",
+        "weeklySummary": "Résumé hebdomadaire",
+        "productAnnouncements": "Annonces produit & nouveautés"
+      }
+    },
+    "doNotDisturb": {
+      "title": "Ne pas déranger",
+      "quietHours": "Heures calmes",
+      "quietHoursHint": "Aucune notification push pendant cette plage.",
+      "digestFrequency": "Fréquence du résumé par email",
+      "digestOptions": {
+        "weekly": "Hebdomadaire (lundi)",
+        "daily": "Quotidien",
+        "never": "Jamais"
+      },
+      "suspendAll": "Suspendre toutes les notifications",
+      "suspendAllHint": "Réactivation manuelle."
+    }
+  },
+  "security": {
+    "title": "Sécurité",
+    "password": {
+      "title": "Mot de passe",
+      "label": "Mot de passe",
+      "lastChanged": "Dernière modification {{when}}.",
+      "strength": "Force du mot de passe"
+    },
+    "twoFactor": {
+      "title": "Authentification à deux facteurs",
+      "authenticatorApp": "Application d'authentification (TOTP)",
+      "reconfigure": "Reconfigurer",
+      "backupCodes": "Codes de secours",
+      "backupCodesHint": "{{remaining}} codes restants sur {{total}}.",
+      "securityKeys": "Clés de sécurité (FIDO2 / WebAuthn)",
+      "addKey": "Ajouter une clé"
+    },
+    "recentActivity": {
+      "title": "Activité de sécurité récente",
+      "events": {
+        "loginSuccess": "Connexion réussie",
+        "newFidoKey": "Nouvelle clé FIDO2 ajoutée",
+        "passwordChanged": "Mot de passe modifié",
+        "loginBlocked": "Tentative de connexion bloquée"
+      },
+      "fromSettings": "Depuis les paramètres",
+      "unusualLocation": "Localisation inhabituelle"
+    },
+    "dangerZone": {
+      "title": "Zone de danger",
+      "signOutAll": "Déconnecter toutes les sessions",
+      "signOutAllHint": "Vous devrez vous reconnecter sur tous vos appareils."
+    }
+  },
+  "sessions": {
+    "title": "Sessions",
+    "activeCount": "{{count}} sessions actives sur vos appareils.",
+    "signOutOthers": "Déconnecter les autres sessions",
+    "columns": {
+      "device": "Appareil",
+      "location": "Localisation",
+      "ipAddress": "Adresse IP",
+      "lastActivity": "Dernière activité"
+    },
+    "current": "Actuelle"
+  },
+  "connections": {
+    "title": "Connexions",
+    "subtitle": "Comptes et plateformes liés à votre profil PwnForge. La synchronisation alimente vos statistiques.",
+    "sync": "Sync",
+    "descriptions": {
+      "github": "Connexion et identité de développeur",
+      "hackthebox": "Synchronise machines & rangs",
+      "tryhackme": "Synchronise rooms & streak",
+      "rootme": "Synchronise points & classement",
+      "discord": "Notifications & identité communautaire",
+      "google": "Connexion SSO",
+      "ctftime": "Importe l'historique de vos CTF"
+    },
+    "lastSync": "dernière synchro {{when}}"
+  },
+  "api": {
+    "title": "API & tokens",
+    "subtitle": "Les jetons d'accès personnels authentifient l'API et vos scripts. Traitez-les comme des mots de passe.",
+    "generateToken": "Générer un token",
+    "columns": {
+      "name": "Nom",
+      "scopes": "Scopes",
+      "created": "Créé",
+      "lastUsed": "Dernière utilisation",
+      "expiration": "Expiration"
+    },
+    "noExpiration": "Sans expiration",
+    "usage": {
+      "title": "Utilisation de l'API",
+      "requestsThisMonth": "Requêtes ce mois-ci",
+      "reference": "Consultez la <link>référence API</link> pour les endpoints disponibles."
+    }
+  },
+  "dangerZone": {
+    "title": "Zone de danger",
+    "deleteAccount": "Supprimer mon compte",
+    "deleteAccountHint": "Irréversible. Toutes vos données personnelles seront effacées."
+  },
+  "help": {
+    "title": "Comment pouvons-nous vous aider ?",
+    "subtitle": "Recherchez dans la documentation, parcourez la FAQ ou contactez notre équipe.",
+    "searchPlaceholder": "Rechercher dans l'aide...",
+    "suggestions": "Suggestions :",
+    "tiles": {
+      "gettingStarted": {
+        "title": "Démarrer",
+        "description": "Le guide en 5 min pour configurer votre premier workspace.",
+        "action": "Lire le guide"
+      },
+      "documentation": {
+        "title": "Documentation",
+        "description": "Référence complète : workspaces, équipes, API, intégrations.",
+        "action": "Ouvrir la doc"
+      },
+      "writeUs": {
+        "title": "Nous écrire",
+        "description": "Réponse sous 24 h ouvrées (lun-ven).",
+        "action": "Ouvrir mon client mail"
+      },
+      "platformStatus": {
+        "title": "Statut plateforme",
+        "description": "Tous les services sont opérationnels.",
+        "action": "Voir le statut"
+      }
+    },
+    "categories": {
+      "title": "Catégories",
+      "gettingStarted": "Démarrer",
+      "workspaces": "Workspaces",
+      "challengesWriteups": "Challenges & writeups",
+      "teams": "Équipes",
+      "integrations": "Intégrations plateformes",
+      "accountSecurity": "Compte & sécurité"
+    },
+    "resources": {
+      "title": "Ressources",
+      "apiReference": "Référence API",
+      "changelog": "Changelog",
+      "discordCommunity": "Communauté Discord"
+    },
+    "faq": {
+      "title": "{{category}} · FAQ",
+      "meta": "{{count}} questions · mis à jour {{when}}",
+      "wasHelpful": "Cette réponse vous a-t-elle aidé ?",
+      "yes": "Oui",
+      "no": "Non",
+      "readFullArticle": "Lire l'article complet"
+    },
+    "popularArticles": "Articles populaires",
+    "contact": {
+      "title": "Nous contacter",
+      "description": "Une question, un bug, une suggestion ? Écrivez-nous, une vraie personne lit chaque mail.",
+      "writeTo": "Écrire à {{email}}",
+      "responseTime": "Réponse sous 24 h ouvrées",
+      "hours": "Lun - ven, 9 h - 19 h (CET).",
+      "contextNote": "Le contexte de votre compte est joint automatiquement au mail."
+    },
+    "otherChannels": {
+      "title": "Autres canaux",
+      "discord": "Communauté Discord",
+      "discordHint": "Entraide entre utilisateurs",
+      "github": "GitHub Issues",
+      "githubHint": "Bugs & demandes de fonctionnalités",
+      "security": "Sécurité",
+      "securityHint": "Divulgation responsable · PGP"
+    },
+    "systemStatus": {
+      "title": "Statut système",
+      "services": {
+        "apiWebhooks": "API & Webhooks",
+        "platformSync": "Sync plateformes",
+        "webApp": "Application web",
+        "writeupRendering": "Rendu des writeups"
+      },
+      "lastIncident": "Dernier incident : {{when}}"
+    },
+    "guides": {
+      "title": "Guides pas à pas",
+      "description": "Des guides illustrés couvrant les flux les plus courants.",
+      "browse": "Parcourir les guides"
+    }
+  }
+}

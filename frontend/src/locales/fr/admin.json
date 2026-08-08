@@ -1,0 +1,192 @@
+{
+  "nav": {
+    "overview": "Vue d'ensemble",
+    "users": "Utilisateurs",
+    "workspaces": "Workspaces",
+    "teams": "Équipes",
+    "content": "Contenu",
+    "moderation": "Modération",
+    "integrations": "Intégrations",
+    "settings": "Paramètres",
+    "auditLog": "Journal d'audit",
+    "system": "Système",
+    "people": "Personnes"
+  },
+  "backToApp": "Retour à l'app",
+  "overview": {
+    "quickActions": "Actions rapides",
+    "recentAdminActions": "Actions admin récentes",
+    "recentActivity": "Activité récente",
+    "platformActivity": "Activité de la plateforme · 30 derniers jours",
+    "alerts": "Alertes",
+    "users": "Utilisateurs",
+    "activeUsers": "Actifs (30j)",
+    "mau": "MAU",
+    "signupsPerDay": "Inscriptions / jour",
+    "signups7d": "Inscriptions (7j)",
+    "activeWorkspaces": "Workspaces actifs",
+    "apiLatencyP95": "Latence API p95",
+    "latencyRange": "min {{min}} · max {{max}}",
+    "viewAll": "Voir tout"
+  },
+  "users": {
+    "title": "Utilisateurs",
+    "subtitle": "{{total}} comptes · {{active}} actifs (30j) · {{suspended}} suspendus · {{banned}} bannis",
+    "searchPlaceholder": "Rechercher utilisateur, workspace…",
+    "emailSearchPlaceholder": "Email, pseudo, IP…",
+    "columns": {
+      "user": "Utilisateur",
+      "role": "Rôle",
+      "status": "Statut",
+      "workspaces": "Workspaces",
+      "challenges": "Chals",
+      "signedUp": "Inscrit"
+    },
+    "status": {
+      "active": "Actif",
+      "suspended": "Suspendu",
+      "banned": "Banni",
+      "pending": "En attente"
+    },
+    "accountInfo": "Informations du compte",
+    "userId": "ID utilisateur",
+    "registrationMethod": "Méthode d'inscription",
+    "registrationEmailPassword": "Email + mot de passe",
+    "emailVerified": "Email vérifié",
+    "verifiedOn": "Vérifié le {{date}}",
+    "newsletter": "Newsletter",
+    "unsubscribed": "Désinscrit",
+    "superAdmin": "Super-admin",
+    "owner": "Owner",
+    "suspendedBy": "Suspendu par",
+    "reason": "Motif :",
+    "liftSuspension": "Lever la suspension",
+    "activeSessions": "Sessions actives",
+    "internalNotes": "Notes internes",
+    "actions": {
+      "impersonate": "Impersonate (lecture seule)",
+      "resetPassword": "Réinitialiser le mot de passe",
+      "forcePasswordReset": "Forcer la réinitialisation",
+      "banAndDelete": "Bannir + supprimer les données",
+      "transferSelection": "Transférer la sélection"
+    }
+  },
+  "workspacesTab": {
+    "title": "Workspaces",
+    "subtitle": "{{active}} actifs · {{archived}} archivés · {{flagged}} signalés",
+    "searchPlaceholder": "Nom, owner, plateforme…",
+    "byPlatform": "Workspaces par plateforme",
+    "activeWorkspaces": "Workspaces actifs",
+    "columns": {
+      "workspace": "Workspace",
+      "owner": "Owner",
+      "platform": "Plateforme",
+      "members": "Membres",
+      "created": "Créé"
+    }
+  },
+  "moderation": {
+    "title": "File de modération",
+    "subtitle": "{{pending}} signalements en attente · {{priority}} prioritaires · délai médian {{median}}",
+    "rulesTitle": "Règles de modération",
+    "autoActions": "Auto-actions",
+    "markAsReviewed": "Marquer en revue",
+    "viewTicket": "Voir le ticket",
+    "reasons": {
+      "nsfw": "Contenu NSFW",
+      "spam": "Spam",
+      "insults": "Insultes",
+      "plagiarism": "Plagiat",
+      "visibleFlag": "Flag visible"
+    },
+    "status": {
+      "pending": "En attente",
+      "inReview": "En revue",
+      "resolved": "Résolu",
+      "rejected": "Refusé"
+    },
+    "severity": {
+      "label": "Sévérité",
+      "low": "Faible",
+      "medium": "Moyenne",
+      "high": "Élevée"
+    },
+    "stats": {
+      "resolved7d": "Résolus (7j)",
+      "rejected7d": "Rejetés (7j)",
+      "pending": "En attente"
+    }
+  },
+  "integrations": {
+    "title": "Intégrations",
+    "subtitle": "Connecteurs avec les plateformes externes · {{active}} actives · {{degraded}} dégradées",
+    "columns": {
+      "platform": "Plateforme",
+      "status": "Statut",
+      "lastSync": "Dernier sync",
+      "lastEvent": "Dernier événement"
+    },
+    "status": {
+      "operational": "Opérationnel",
+      "degraded": "Dégradé",
+      "disabled": "Désactivé"
+    },
+    "webhook": "Webhook",
+    "configureSiem": "Configurer SIEM",
+    "mode": {
+      "auto": "Auto",
+      "manual": "Manuel",
+      "cron": "Cron",
+      "realtime": "Temps réel"
+    }
+  },
+  "settings": {
+    "title": "Paramètres système",
+    "subtitle": "Configuration globale de la plateforme · appliquée à tous les workspaces",
+    "general": "Général",
+    "platformName": "Nom de la plateforme",
+    "platformNameHint": "Affiché dans la barre latérale, les emails et les pages publiques.",
+    "publicUrl": "URL publique",
+    "defaultLanguage": "Langue par défaut",
+    "serverTimezone": "Fuseau horaire serveur",
+    "featureFlags": "Feature flags",
+    "rollout": "Rollout",
+    "audience": "Audience",
+    "security": {
+      "title": "Sécurité",
+      "force2faAdmins": "Forcer le 2FA pour les admins",
+      "force2faAll": "Forcer le 2FA pour tous les utilisateurs",
+      "blockTorExitNodes": "Bloquer les exit-nodes Tor",
+      "adminIpAllowlist": "IP allowlist pour la console admin",
+      "aggressiveRateLimit": "Rate-limiting agressif sur les soumissions de flag"
+    },
+    "maintenance": {
+      "title": "Maintenance",
+      "enableMaintenanceMode": "Activer le mode maintenance",
+      "purgeArchivedWorkspaces": "Purger les workspaces archivés",
+      "runPurge": "Lancer la purge",
+      "regenerateApiKeys": "Régénérer toutes les clés API"
+    },
+    "dangerZone": "Zone dangereuse"
+  },
+  "auditLog": {
+    "title": "Journal d'audit",
+    "subtitle": "Toutes les actions privilégiées · rétention 365 j · hash chaîné",
+    "eventCount": "{{count}} événements (24h)",
+    "searchPlaceholder": "action, cible, IP…",
+    "columns": {
+      "timestamp": "Horodatage",
+      "actor": "Acteur",
+      "action": "Action",
+      "target": "Cible",
+      "ip": "IP",
+      "source": "Source"
+    },
+    "sources": {
+      "console": "Console",
+      "api": "API",
+      "job": "Job",
+      "system": "system"
+    }
+  }
+}

@@ -1,0 +1,192 @@
+{
+  "nav": {
+    "overview": "Overview",
+    "users": "Users",
+    "workspaces": "Workspaces",
+    "teams": "Teams",
+    "content": "Content",
+    "moderation": "Moderation",
+    "integrations": "Integrations",
+    "settings": "Settings",
+    "auditLog": "Audit log",
+    "system": "System",
+    "people": "People"
+  },
+  "backToApp": "Back to app",
+  "overview": {
+    "quickActions": "Quick actions",
+    "recentAdminActions": "Recent admin actions",
+    "recentActivity": "Recent activity",
+    "platformActivity": "Platform activity · last 30 days",
+    "alerts": "Alerts",
+    "users": "Users",
+    "activeUsers": "Active (30d)",
+    "mau": "MAU",
+    "signupsPerDay": "Signups / day",
+    "signups7d": "Signups (7d)",
+    "activeWorkspaces": "Active workspaces",
+    "apiLatencyP95": "API latency p95",
+    "latencyRange": "min {{min}} · max {{max}}",
+    "viewAll": "View all"
+  },
+  "users": {
+    "title": "Users",
+    "subtitle": "{{total}} accounts · {{active}} active (30d) · {{suspended}} suspended · {{banned}} banned",
+    "searchPlaceholder": "Search user, workspace…",
+    "emailSearchPlaceholder": "Email, handle, IP…",
+    "columns": {
+      "user": "User",
+      "role": "Role",
+      "status": "Status",
+      "workspaces": "Workspaces",
+      "challenges": "Chals",
+      "signedUp": "Signed up"
+    },
+    "status": {
+      "active": "Active",
+      "suspended": "Suspended",
+      "banned": "Banned",
+      "pending": "Pending"
+    },
+    "accountInfo": "Account information",
+    "userId": "User ID",
+    "registrationMethod": "Registration method",
+    "registrationEmailPassword": "Email + password",
+    "emailVerified": "Email verified",
+    "verifiedOn": "Verified on {{date}}",
+    "newsletter": "Newsletter",
+    "unsubscribed": "Unsubscribed",
+    "superAdmin": "Super admin",
+    "owner": "Owner",
+    "suspendedBy": "Suspended by",
+    "reason": "Reason:",
+    "liftSuspension": "Lift suspension",
+    "activeSessions": "Active sessions",
+    "internalNotes": "Internal notes",
+    "actions": {
+      "impersonate": "Impersonate (read-only)",
+      "resetPassword": "Reset password",
+      "forcePasswordReset": "Force password reset",
+      "banAndDelete": "Ban + delete data",
+      "transferSelection": "Transfer selection"
+    }
+  },
+  "workspacesTab": {
+    "title": "Workspaces",
+    "subtitle": "{{active}} active · {{archived}} archived · {{flagged}} flagged",
+    "searchPlaceholder": "Name, owner, platform…",
+    "byPlatform": "Workspaces by platform",
+    "activeWorkspaces": "Active workspaces",
+    "columns": {
+      "workspace": "Workspace",
+      "owner": "Owner",
+      "platform": "Platform",
+      "members": "Members",
+      "created": "Created"
+    }
+  },
+  "moderation": {
+    "title": "Moderation queue",
+    "subtitle": "{{pending}} pending reports · {{priority}} high priority · median delay {{median}}",
+    "rulesTitle": "Moderation rules",
+    "autoActions": "Auto-actions",
+    "markAsReviewed": "Mark as reviewed",
+    "viewTicket": "View ticket",
+    "reasons": {
+      "nsfw": "NSFW content",
+      "spam": "Spam",
+      "insults": "Insults",
+      "plagiarism": "Plagiarism",
+      "visibleFlag": "Visible flag"
+    },
+    "status": {
+      "pending": "Pending",
+      "inReview": "In review",
+      "resolved": "Resolved",
+      "rejected": "Rejected"
+    },
+    "severity": {
+      "label": "Severity",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "stats": {
+      "resolved7d": "Resolved (7d)",
+      "rejected7d": "Rejected (7d)",
+      "pending": "Pending"
+    }
+  },
+  "integrations": {
+    "title": "Integrations",
+    "subtitle": "Connectors with external platforms · {{active}} active · {{degraded}} degraded",
+    "columns": {
+      "platform": "Platform",
+      "status": "Status",
+      "lastSync": "Last sync",
+      "lastEvent": "Last event"
+    },
+    "status": {
+      "operational": "Operational",
+      "degraded": "Degraded",
+      "disabled": "Disabled"
+    },
+    "webhook": "Webhook",
+    "configureSiem": "Configure SIEM",
+    "mode": {
+      "auto": "Auto",
+      "manual": "Manual",
+      "cron": "Cron",
+      "realtime": "Real time"
+    }
+  },
+  "settings": {
+    "title": "System parameters",
+    "subtitle": "Global platform configuration · applied to all workspaces",
+    "general": "General",
+    "platformName": "Platform name",
+    "platformNameHint": "Shown in the sidebar, emails and public pages.",
+    "publicUrl": "Public URL",
+    "defaultLanguage": "Default language",
+    "serverTimezone": "Server timezone",
+    "featureFlags": "Feature flags",
+    "rollout": "Rollout",
+    "audience": "Audience",
+    "security": {
+      "title": "Security",
+      "force2faAdmins": "Force 2FA for admins",
+      "force2faAll": "Force 2FA for all users",
+      "blockTorExitNodes": "Block Tor exit nodes",
+      "adminIpAllowlist": "IP allowlist for the admin console",
+      "aggressiveRateLimit": "Aggressive rate limiting on flag submissions"
+    },
+    "maintenance": {
+      "title": "Maintenance",
+      "enableMaintenanceMode": "Enable maintenance mode",
+      "purgeArchivedWorkspaces": "Purge archived workspaces",
+      "runPurge": "Run purge",
+      "regenerateApiKeys": "Regenerate all API keys"
+    },
+    "dangerZone": "Danger zone"
+  },
+  "auditLog": {
+    "title": "Audit log",
+    "subtitle": "All privileged actions · 365-day retention · chained hash",
+    "eventCount": "{{count}} events (24h)",
+    "searchPlaceholder": "action, target, IP…",
+    "columns": {
+      "timestamp": "Timestamp",
+      "actor": "Actor",
+      "action": "Action",
+      "target": "Target",
+      "ip": "IP",
+      "source": "Source"
+    },
+    "sources": {
+      "console": "Console",
+      "api": "API",
+      "job": "Job",
+      "system": "system"
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "list": {
+    "title": "Challenges",
+    "subtitle": "{{total}} challenges · {{solved}} solved · {{inProgress}} in progress · {{stuck}} stuck",
+    "newChallenge": "New challenge",
+    "searchPlaceholder": "Filter by name, tag, content...",
+    "viewModes": {
+      "list": "List",
+      "kanban": "Kanban"
+    },
+    "columns": {
+      "challenge": "Challenge",
+      "category": "Category",
+      "difficulty": "Difficulty",
+      "points": "Pts",
+      "status": "Status",
+      "assignee": "Assignee",
+      "writeup": "Writeup"
+    }
+  },
+  "filters": {
+    "category": "Category",
+    "status": "Status",
+    "difficulty": "Difficulty",
+    "assignee": "Assignee",
+    "all": "All",
+    "allFeminine": "All"
+  },
+  "categories": {
+    "web": "Web",
+    "pwn": "Pwn",
+    "crypto": "Crypto",
+    "reversing": "Reverse",
+    "forensics": "Forensics",
+    "forensicsShort": "Foren.",
+    "osint": "OSINT",
+    "misc": "Misc"
+  },
+  "status": {
+    "todo": "To do",
+    "inProgress": "In progress",
+    "stuck": "Stuck",
+    "solved": "Solved"
+  },
+  "difficulty": {
+    "easy": "Easy",
+    "medium": "Medium",
+    "hard": "Hard",
+    "insane": "Insane"
+  },
+  "detail": {
+    "viewWriteup": "View writeup",
+    "edit": "Edit",
+    "markSolved": "Mark as solved",
+    "createdBy": "Created by",
+    "timeSpent": "{{duration}} on this challenge",
+    "statement": "Statement",
+    "tabs": {
+      "notes": "Notes",
+      "files": "Files",
+      "writeups": "Writeups",
+      "history": "History"
+    },
+    "newNote": "New note",
+    "sidebar": {
+      "status": "Status",
+      "assignedTo": "Assigned to",
+      "systemTags": "System tags",
+      "customTags": "Custom tags",
+      "addTag": "+ add",
+      "attachedFiles": "Attached files",
+      "writeup": "Writeup",
+      "activity": "Activity",
+      "activityMeta": "{{duration}} tracked · {{count}} watchers",
+      "continueWriting": "Continue writing",
+      "draftMeta": "Draft · {{count}} words",
+      "lastEdited": "Last edited {{when}} by {{author}}"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "title": "Recent activity",
+  "live": "Live",
+  "events": {
+    "solved": "solved",
+    "writeupPublished": "published the writeup for",
+    "started": "started",
+    "joinedWorkspace": "joined the workspace",
+    "blocked": "marked as stuck",
+    "noteAdded": "added a note on",
+    "memberJoined": "joined the team",
+    "challengeCreated": "created the challenge",
+    "flagSubmitted": "submitted a flag",
+    "commented": "commented on"
+  },
+  "meta": {
+    "pointsGained": "+{{points}} pts",
+    "published": "published",
+    "started": "started",
+    "markedStuck": "marked as stuck"
+  },
+  "empty": "No activity yet",
+  "emptyHint": "Team activity will appear here in real time."
+}

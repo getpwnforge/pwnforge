@@ -1,0 +1,319 @@
+{
+  "nav": {
+    "profile": "Profile",
+    "preferences": "Preferences",
+    "appearance": "Appearance",
+    "notifications": "Notifications",
+    "security": "Security",
+    "sessions": "Sessions",
+    "connections": "Connections",
+    "api": "API & tokens",
+    "deleteAccount": "Delete my account"
+  },
+  "profile": {
+    "title": "Profile",
+    "publicIdentity": "Public identity",
+    "changePhoto": "Change photo",
+    "photoHint": "PNG or JPG. Recommended: 400×400.",
+    "handleHint": "Visible to your teams and on public leaderboards.",
+    "bio": "Bio",
+    "externalLinks": "External links",
+    "linkLabels": {
+      "github": "GitHub",
+      "website": "Website",
+      "hackthebox": "HackTheBox",
+      "tryhackme": "TryHackMe"
+    },
+    "email": {
+      "title": "Email",
+      "primaryVerified": "Primary email · verified",
+      "secondary": "Secondary email",
+      "addEmail": "Add an email"
+    }
+  },
+  "preferences": {
+    "title": "Preferences",
+    "languageRegion": {
+      "title": "Language & region",
+      "interfaceLanguage": "Interface language",
+      "timezone": "Timezone",
+      "timezoneHint": "Used for timestamps and reminders.",
+      "dateFormat": "Date format",
+      "dateFormatOptions": {
+        "ddmmyyyy": "DD/MM/YYYY",
+        "mmddyyyy": "MM/DD/YYYY",
+        "iso": "YYYY-MM-DD"
+      },
+      "timeFormat": "Time format",
+      "timeFormatOptions": {
+        "24h": "24h",
+        "12h": "12h"
+      },
+      "firstDayOfWeek": "First day of the week"
+    },
+    "startNavigation": {
+      "title": "Startup & navigation",
+      "defaultWorkspace": "Default workspace",
+      "defaultWorkspaceHint": "Opened automatically on sign-in.",
+      "homePage": "Home page",
+      "homePageHint": "Shown when opening a workspace.",
+      "homePageOptions": {
+        "dashboard": "Dashboard",
+        "challenges": "Challenges",
+        "myStats": "My statistics"
+      },
+      "displayDensity": "Display density",
+      "densityOptions": {
+        "comfortable": "Comfortable",
+        "compact": "Compact"
+      }
+    },
+    "challengesWriteups": {
+      "title": "Challenges & writeups",
+      "defaultSort": "Default challenge sort",
+      "sortOptions": {
+        "points": "Points (descending)",
+        "difficulty": "Difficulty",
+        "recent": "Recently added"
+      },
+      "hideSolved": "Hide solved challenges",
+      "hideSolvedHint": "Automatically collapses them in the list.",
+      "confirmFlag": "Confirm before submitting a flag",
+      "autoSaveDrafts": "Auto-save drafts",
+      "autoSaveDraftsHint": "Every 10 seconds while writing."
+    }
+  },
+  "appearance": {
+    "title": "Appearance",
+    "theme": {
+      "title": "Theme",
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "colorsTypography": {
+      "title": "Colors & typography",
+      "accentColor": "Accent color",
+      "accentColorHint": "Buttons, links and active states.",
+      "interfaceFont": "Interface font",
+      "editorFont": "Editor font",
+      "editorFontHint": "Markdown / writeup editing.",
+      "textSize": "Text size",
+      "textSizeOptions": {
+        "small": "Small",
+        "normal": "Normal",
+        "large": "Large"
+      }
+    },
+    "comfort": {
+      "title": "Comfort",
+      "reduceAnimations": "Reduce animations",
+      "reduceAnimationsHint": "Also respects the system \"prefers-reduced-motion\" setting.",
+      "compactTables": "Compact tables",
+      "compactTablesHint": "Reduces row height in lists.",
+      "alwaysShowSidebar": "Always show sidebar"
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "perEvent": {
+      "title": "Per event",
+      "columns": {
+        "event": "Event",
+        "email": "Email",
+        "push": "Push",
+        "inApp": "In-app"
+      },
+      "events": {
+        "mentionInWriteup": "Mention in a writeup",
+        "challengeSolvedByTeammate": "Challenge solved by a teammate",
+        "teamOrWorkspaceInvitation": "Team / workspace invitation",
+        "newTeamMember": "New member in a team",
+        "commentOnMyWriteup": "Comment on my writeup",
+        "weeklySummary": "Weekly summary",
+        "productAnnouncements": "Product announcements & news"
+      }
+    },
+    "doNotDisturb": {
+      "title": "Do not disturb",
+      "quietHours": "Quiet hours",
+      "quietHoursHint": "No push notifications during this window.",
+      "digestFrequency": "Email digest frequency",
+      "digestOptions": {
+        "weekly": "Weekly (Monday)",
+        "daily": "Daily",
+        "never": "Never"
+      },
+      "suspendAll": "Suspend all notifications",
+      "suspendAllHint": "Manual reactivation."
+    }
+  },
+  "security": {
+    "title": "Security",
+    "password": {
+      "title": "Password",
+      "label": "Password",
+      "lastChanged": "Last changed {{when}}.",
+      "strength": "Password strength"
+    },
+    "twoFactor": {
+      "title": "Two-factor authentication",
+      "authenticatorApp": "Authenticator app (TOTP)",
+      "reconfigure": "Reconfigure",
+      "backupCodes": "Backup codes",
+      "backupCodesHint": "{{remaining}} codes left out of {{total}}.",
+      "securityKeys": "Security keys (FIDO2 / WebAuthn)",
+      "addKey": "Add a key"
+    },
+    "recentActivity": {
+      "title": "Recent security activity",
+      "events": {
+        "loginSuccess": "Successful sign-in",
+        "newFidoKey": "New FIDO2 key added",
+        "passwordChanged": "Password changed",
+        "loginBlocked": "Sign-in attempt blocked"
+      },
+      "fromSettings": "From settings",
+      "unusualLocation": "Unusual location"
+    },
+    "dangerZone": {
+      "title": "Danger zone",
+      "signOutAll": "Sign out of all sessions",
+      "signOutAllHint": "You will need to sign in again on all your devices."
+    }
+  },
+  "sessions": {
+    "title": "Sessions",
+    "activeCount": "{{count}} active sessions across your devices.",
+    "signOutOthers": "Sign out other sessions",
+    "columns": {
+      "device": "Device",
+      "location": "Location",
+      "ipAddress": "IP address",
+      "lastActivity": "Last activity"
+    },
+    "current": "Current"
+  },
+  "connections": {
+    "title": "Connections",
+    "subtitle": "Accounts and platforms linked to your PwnForge profile. Syncing feeds your statistics.",
+    "sync": "Sync",
+    "descriptions": {
+      "github": "Sign-in and developer identity",
+      "hackthebox": "Syncs machines & ranks",
+      "tryhackme": "Syncs rooms & streak",
+      "rootme": "Syncs points & ranking",
+      "discord": "Notifications & community identity",
+      "google": "SSO sign-in",
+      "ctftime": "Imports your CTF history"
+    },
+    "lastSync": "last sync {{when}}"
+  },
+  "api": {
+    "title": "API & tokens",
+    "subtitle": "Personal access tokens authenticate the API and your scripts. Treat them like passwords.",
+    "generateToken": "Generate a token",
+    "columns": {
+      "name": "Name",
+      "scopes": "Scopes",
+      "created": "Created",
+      "lastUsed": "Last used",
+      "expiration": "Expiration"
+    },
+    "noExpiration": "No expiration",
+    "usage": {
+      "title": "API usage",
+      "requestsThisMonth": "Requests this month",
+      "reference": "See the <link>API reference</link> for available endpoints."
+    }
+  },
+  "dangerZone": {
+    "title": "Danger zone",
+    "deleteAccount": "Delete my account",
+    "deleteAccountHint": "Irreversible. All your personal data will be erased."
+  },
+  "help": {
+    "title": "How can we help you?",
+    "subtitle": "Search the documentation, browse the FAQ or contact our team.",
+    "searchPlaceholder": "Search help...",
+    "suggestions": "Suggestions:",
+    "tiles": {
+      "gettingStarted": {
+        "title": "Get started",
+        "description": "The 5-minute guide to setting up your first workspace.",
+        "action": "Read the guide"
+      },
+      "documentation": {
+        "title": "Documentation",
+        "description": "Full reference: workspaces, teams, API, integrations.",
+        "action": "Open the docs"
+      },
+      "writeUs": {
+        "title": "Write to us",
+        "description": "Reply within 24 business hours (Mon-Fri).",
+        "action": "Open my mail client"
+      },
+      "platformStatus": {
+        "title": "Platform status",
+        "description": "All services operational.",
+        "action": "See status"
+      }
+    },
+    "categories": {
+      "title": "Categories",
+      "gettingStarted": "Get started",
+      "workspaces": "Workspaces",
+      "challengesWriteups": "Challenges & writeups",
+      "teams": "Teams",
+      "integrations": "Platform integrations",
+      "accountSecurity": "Account & security"
+    },
+    "resources": {
+      "title": "Resources",
+      "apiReference": "API reference",
+      "changelog": "Changelog",
+      "discordCommunity": "Discord community"
+    },
+    "faq": {
+      "title": "{{category}} · FAQ",
+      "meta": "{{count}} questions · updated {{when}}",
+      "wasHelpful": "Was this answer helpful?",
+      "yes": "Yes",
+      "no": "No",
+      "readFullArticle": "Read the full article"
+    },
+    "popularArticles": "Popular articles",
+    "contact": {
+      "title": "Contact us",
+      "description": "A question, a bug, a suggestion? Write to us, a real person reads every email.",
+      "writeTo": "Write to {{email}}",
+      "responseTime": "Reply within 24 business hours",
+      "hours": "Mon - Fri, 9am - 7pm (CET).",
+      "contextNote": "Your account context is attached to the email automatically."
+    },
+    "otherChannels": {
+      "title": "Other channels",
+      "discord": "Discord community",
+      "discordHint": "Peer-to-peer support",
+      "github": "GitHub Issues",
+      "githubHint": "Bugs & feature requests",
+      "security": "Security",
+      "securityHint": "Responsible disclosure · PGP"
+    },
+    "systemStatus": {
+      "title": "System status",
+      "services": {
+        "apiWebhooks": "API & Webhooks",
+        "platformSync": "Platform sync",
+        "webApp": "Web application",
+        "writeupRendering": "Writeup rendering"
+      },
+      "lastIncident": "Last incident: {{when}}"
+    },
+    "guides": {
+      "title": "Step-by-step guides",
+      "description": "Illustrated guides covering the most common flows.",
+      "browse": "Browse the guides"
+    }
+  }
+}
