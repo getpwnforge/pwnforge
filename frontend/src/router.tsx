@@ -19,9 +19,9 @@ import { ActivityItem } from "@/components/activity/ActivityItem";
 
 
 // Dev (temporary) pages for testing and prototyping. Remove these once the real pages exist.
-import { ComponentsPage } from "@/pages/dev/ComponentsPage";
-import { MarkdownPreview } from "./components/writeups/MarkdownPreview";
-import { MARKDOWN_SAMPLE } from "./pages/dev/markdown-sample";
+// import { ComponentsPage } from "@/pages/dev/ComponentsPage";
+// import { MarkdownPreview } from "./components/writeups/MarkdownPreview";
+// import { MARKDOWN_SAMPLE } from "./pages/dev/markdown-sample";
 
 
 // Temporary stand-in until the real pages exist (Phase 2+).
@@ -40,8 +40,8 @@ const activityExample = {
 
 export const router = createBrowserRouter([
 
-  { path: "/dev/components", element: <ComponentsPage /> },
-  { path: "/dev/md", element: <MarkdownPreview content={MARKDOWN_SAMPLE}  /> },
+  // { path: "/dev/components", element: <ComponentsPage /> },
+  // { path: "/dev/md", element: <MarkdownPreview content={MARKDOWN_SAMPLE}  /> },
 
   // Public routes (wrap in LandingShell / AuthShell later)
   {
