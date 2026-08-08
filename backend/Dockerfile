@@ -5,15 +5,15 @@ FROM rust:1.97-slim-bookworm AS chef
 ARG UID=1000
 ARG GID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential pkg-config curl \
+    build-essential curl pkg-config \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked
-RUN (groupadd -g ${GID} appuser || true) \
-    && (useradd -u ${UID} -g ${GID} -m -s /bin/sh appuser || true) \
+RUN (groupadd -g "${GID}" appuser || true) \
+    && (useradd -u "${UID}" -g "${GID}" -m -s /bin/sh appuser || true) \
     && mkdir -p /app/target \
-    && chown -R ${UID}:${GID} /app /usr/local/cargo
+    && chown -R "${UID}":"${GID}" /app /usr/local/cargo
 WORKDIR /app
-USER ${UID}:${GID}
+USER "${UID}":"${GID}"
 
 FROM chef AS planner
 COPY . .
