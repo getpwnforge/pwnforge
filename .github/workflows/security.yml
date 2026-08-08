@@ -17,7 +17,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - name: Filter paths
         id: filter
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
@@ -39,7 +39,7 @@ jobs:
     if: needs.changes.outputs.backend == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -54,7 +54,7 @@ jobs:
     if: needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
 
       - name: Enable Corepack
         # See ci.yml for why: sidesteps pnpm/action-setup's package_json_file bug
@@ -92,7 +92,7 @@ jobs:
       matrix:
         language: ["rust", "javascript-typescript"]
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         if: |
           (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
           (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
