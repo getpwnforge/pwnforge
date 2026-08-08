@@ -1,0 +1,404 @@
+/* ===========================================================================
+   PwnForge — Global stylesheet (Tailwind v4 + shadcn/ui)
+   Single entry point. The @theme block below IS the configuration; there is
+   no tailwind.config.ts.
+
+   Naming: the brand color is "ember", NOT "accent". shadcn reserves the word
+   "accent" for its subtle hover surface (menu item hover, etc.), so the brand
+   maps to shadcn's --primary instead. See the bridge block for details.
+
+   Namespace rules (Tailwind v4):
+     --color-*      -> bg-*, text-*, border-*, ring-*, fill-*, stroke-*
+     --font-*       -> font-*
+     --text-*       -> text-* (FONT SIZE, not color)
+     --tracking-*   -> tracking-*
+     --leading-*    -> leading-*
+     --radius-*     -> rounded-*
+     --shadow-*     -> shadow-*
+     --container-*  -> max-w-*
+   =========================================================================== */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+
+/* shadcn components may use dark: utilities internally. The whole app is dark,
+   so <html> carries class="dark" permanently and this variant stays active. */
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* =========================================================================
+     1. EMBER — brand color (hue 38). This is the renamed "accent" family.
+     Canonical hex: #EB5927. Use the hex only where CSS cannot reach:
+     SVG assets, favicon, manifest.json theme_color, email templates, OG images.
+     ========================================================================= */
+  --color-ember: oklch(65% 0.19 38);
+  --color-ember-hover: oklch(72% 0.175 38);
+  --color-ember-soft: oklch(24% 0.08 38);
+  --color-ember-border: oklch(38% 0.13 38);
+  --color-ember-text: oklch(76% 0.145 38);
+  --color-ember-contrast: #1a0e06; /* dark label on solid ember fill */
+
+  /* =========================================================================
+     2. NEUTRALS — Zinc scale
+     ========================================================================= */
+  --color-bg: #09090b;
+  --color-bg-elev: #111114;
+  --color-surface: #16161a;
+  --color-surface-2: #1f1f24;
+  --color-border: #26262c;
+  --color-border-strong: #3a3a42;
+  --color-text: #f4f4f5;
+  --color-text-muted: #9a9aa3;
+  --color-text-subtle: #5a5a63;
+
+  /* =========================================================================
+     3. SEMANTIC — base / soft / text triplets. Chroma capped at sRGB gamut.
+     ========================================================================= */
+  --color-success: oklch(68% 0.18 142);
+  --color-success-soft: oklch(22% 0.07 142);
+  --color-success-text: oklch(75% 0.15 142);
+
+  --color-warning: oklch(75% 0.155 85);
+  --color-warning-soft: oklch(24% 0.052 85);
+  --color-warning-text: oklch(80% 0.14 85);
+
+  /* Base at 56% so it separates from ember, --color-ws-rose and --color-cat-pwn. */
+  --color-danger: oklch(56% 0.22 22);
+  --color-danger-soft: oklch(22% 0.09 22);
+  --color-danger-text: oklch(72% 0.18 22);
+  --color-danger-contrast: #f4f4f5; /* light label, unlike ember */
+
+  --color-info: oklch(68% 0.16 240);
+  --color-info-soft: oklch(22% 0.053 240);
+  --color-info-text: oklch(76% 0.14 240);
+
+  /* =========================================================================
+     4. CTF CATEGORY COLORS — badge and dot only, never background fills
+     ========================================================================= */
+  --color-cat-web: #3b82f6;
+  --color-cat-pwn: #ef4444;
+  --color-cat-crypto: #a855f7;
+  --color-cat-reversing: #14b8a6;
+  --color-cat-forensics: #f59e0b;
+  --color-cat-osint: #ec4899;
+  --color-cat-misc: #64748b;
+
+  /* =========================================================================
+     5. WORKSPACE TILE COLORS — user-selectable
+        Deterministic assignment from workspace name, but user can override.
+     ========================================================================= */
+  --color-ws-ember: var(--color-ember);
+  --color-ws-blue: #3b82f6;
+  --color-ws-violet: #8b5cf6;
+  --color-ws-teal: #14b8a6;
+  --color-ws-rose: #f43f5e;
+  --color-ws-amber: #f59e0b;
+
+  /* =========================================================================
+     6. DIFFICULTY SCALE — filled bars only
+     ========================================================================= */
+  --color-diff-easy: oklch(72% 0.14 150);
+  --color-diff-medium: oklch(78% 0.14 70);
+  --color-diff-hard: oklch(68% 0.2 25);
+  --color-diff-insane: oklch(60% 0.22 320);
+
+  /* =========================================================================
+     7. AVATAR PALETTE — deterministic assignment from user id
+     ========================================================================= */
+  --color-avatar-1-bg: oklch(40% 0.1 75);
+  --color-avatar-1-fg: oklch(88% 0.13 80);
+  --color-avatar-2-bg: oklch(38% 0.12 150);
+  --color-avatar-2-fg: oklch(85% 0.13 150);
+  --color-avatar-3-bg: oklch(38% 0.11 200);
+  --color-avatar-3-fg: oklch(85% 0.12 200);
+  --color-avatar-4-bg: oklch(38% 0.13 250);
+  --color-avatar-4-fg: oklch(85% 0.13 250);
+  --color-avatar-5-bg: oklch(38% 0.13 280);
+  --color-avatar-5-fg: oklch(85% 0.13 280);
+  --color-avatar-6-bg: oklch(38% 0.13 340);
+  --color-avatar-6-fg: oklch(85% 0.13 340);
+
+  /* =========================================================================
+     8. ACTIVITY HEATMAP — ember ramp, 4 levels above the empty cell
+     ========================================================================= */
+  --color-heat-0: #1f1f24;
+  --color-heat-1: oklch(30% 0.06 38);
+  --color-heat-2: oklch(42% 0.11 38);
+  --color-heat-3: oklch(54% 0.16 38);
+  --color-heat-4: var(--color-ember);
+
+  /* =========================================================================
+     9. CODE / MARKDOWN SYNTAX
+     ========================================================================= */
+  --color-code-bg: #050507;
+  --color-code-text: #e2e2e5;
+  --color-code-kw: #d4b0f5;
+  --color-code-str: #b5e59a;
+  --color-code-com: #6c6c75;
+  --color-code-fn: #8fcbf3;
+  --color-code-num: #f0b98c;
+
+  /* =========================================================================
+     10. TYPOGRAPHY — Geist via fontsource (self-hosted, no external request)
+     ========================================================================= */
+  --font-sans:
+    "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-mono:
+    "Geist Mono Variable", ui-monospace, "SF Mono", "Cascadia Code", Menlo,
+    monospace;
+
+  /* Font sizes OVERRIDE the Tailwind defaults: dense UI, base is 14px. */
+  --text-display-lg: 3.75rem;  /* 60px */
+  --text-display: 2.125rem;    /* 34px */
+  --text-display-sm: 1.75rem;  /* 28px */
+  --text-stat: 1.625rem;       /* 26px */
+  --text-h1: 1.5rem;           /* 24px */
+  --text-page: 1.375rem;       /* 22px */
+  --text-h2: 1.125rem;         /* 18px */
+  --text-h3: 0.9375rem;        /* 15px */
+  --text-base: 0.875rem;       /* 14px */
+  --text-sm: 0.8125rem;        /* 13px */
+  --text-xs: 0.75rem;          /* 12px */
+  --text-nav: 0.6875rem;       /* 11px */
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-base: 1.45;
+
+  --tracking-hero: -0.035em;
+  --tracking-head: -0.02em;
+  --tracking-nav: 0.06em; /* uppercase nav labels */
+  --tracking-large: 0.12em;
+
+  /* =========================================================================
+     11. BORDER RADIUS — explicit px scale, not shadcn's calc() derivation
+     ========================================================================= */
+  --radius-sm: 4px; /* tags, kbd, small chips */
+  --radius-base: 6px; /* buttons, inputs, badges, nav items */
+  --radius-md: 8px; /* cards, elevated blocks, code blocks */
+  --radius-lg: 12px; /* auth panel, hero card */
+  --radius-xl: 16px;
+
+  /* =========================================================================
+     12. MAX-WIDTHS — the --container-* namespace feeds max-w-*
+     ========================================================================= */
+  --container-page: 1200px;
+  --container-challenges: 1240px;
+  --container-workspaces: 1100px;
+  --container-settings: 720px;
+  --container-auth: 360px;
+  --container-landing: 1080px;
+  --container-writeup: 800px;
+
+  /* =========================================================================
+     13. ELEVATION — subtle drop shadows only, no gradients, no glow
+     ========================================================================= */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-base: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow-ring: 0 0 0 3px var(--color-ember-soft); /* focus ring */
+}
+
+/* ===========================================================================
+   Layout chrome that must NOT generate utilities. Consumed by hand-written CSS
+   and grid templates, never as a class.
+   Also --radius: kept so any shadcn component referencing var(--radius)
+   directly resolves to the 6px base.
+   =========================================================================== */
+:root {
+  --sidebar-w: 17rem;   /* 272px */
+  --sidebar-w-collapsed:  4rem;   /* 64px */
+  --chrome-h: 3rem;   /* 48px */
+  --row-h: 2.75rem;     /* 44px */
+  --border-w: 1px;
+  --radius: 6px;
+  font-family: var(--font-sans);
+}
+
+/* ===========================================================================
+   shadcn/ui bridge.
+   Maps shadcn's semantic token names onto the PwnForge palette. Only names
+   that shadcn components actually consume are mapped; everything points at a
+   PwnForge token, so no light-mode defaults survive and the app is dark by
+   construction.
+
+   KEY DECISION:
+     ember  -> --primary            (the loud brand action color)
+     accent -> --color-surface-2    (shadcn's neutral hover surface, NOT ember)
+   =========================================================================== */
+@theme inline {
+  /* Surfaces */
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text);
+  --color-card: var(--color-bg-elev);
+  --color-card-foreground: var(--color-text);
+  --color-popover: var(--color-bg-elev);
+  --color-popover-foreground: var(--color-text);
+
+  /* Brand action -> primary (ember) */
+  --color-primary: var(--color-ember);
+  --color-primary-foreground: var(--color-ember-contrast);
+
+  /* Neutral roles */
+  --color-secondary: var(--color-surface);
+  --color-secondary-foreground: var(--color-text);
+  --color-muted: var(--color-surface);
+  --color-muted-foreground: var(--color-text-muted);
+
+  /* shadcn "accent" = neutral hover surface. Deliberately NOT ember. */
+  --color-accent: var(--color-surface-2);
+  --color-accent-foreground: var(--color-text);
+
+  /* Destructive */
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: var(--color-danger-contrast);
+
+  /* Borders / inputs / focus ring */
+  --color-input: var(--color-border-strong);
+  --color-ring: var(--color-ember);
+
+  /* Sidebar (shadcn Sidebar component) — mapped to the PwnForge palette */
+  --color-sidebar: var(--color-bg);
+  --color-sidebar-foreground: var(--color-text);
+  --color-sidebar-primary: var(--color-ember);
+  --color-sidebar-primary-foreground: var(--color-ember-contrast);
+  --color-sidebar-accent: var(--color-surface-2);
+  --color-sidebar-accent-foreground: var(--color-text);
+  --color-sidebar-border: var(--color-border);
+  --color-sidebar-ring: var(--color-ember);
+
+  /* Charts (shadcn Chart component) — drawn from the PwnForge palette */
+  --color-chart-1: var(--color-ember);
+  --color-chart-2: var(--color-info);
+  --color-chart-3: var(--color-success);
+  --color-chart-4: var(--color-warning);
+  --color-chart-5: var(--color-ws-violet);
+}
+
+/* ===========================================================================
+   Base layer. Preflight already handles the reset, so this is only the
+   project-specific typographic and color-scheme setup.
+   =========================================================================== */
+@layer base {
+  :root {
+    /* Native scrollbars, form controls and autofill render dark */
+    color-scheme: dark;
+    --nav-h: 4.5rem;
+  }
+
+  * {
+    /* shadcn default: border color and outline color fall back to the tokens */
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: clamp(14px, 0.208vw + 12px, 20px);
+    line-height: var(--leading-base);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "cv11"; /* Geist stylistic alternates */
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground text-base;
+  }
+
+  /* Every displayed number aligns: scores, points, ranks, stats */
+  :where(table, .stat, .metric, [data-numeric]) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus is always visible and always uses the ember ring */
+  :focus-visible:not([data-slot]) {
+    outline: none;
+    box-shadow: var(--shadow-ring);
+    border-color: var(--color-ember);
+  }
+
+  :target {
+    scroll-margin-top: 5rem;
+  }
+
+  section[id] {
+    scroll-margin-top: calc(var(--nav-h) + 1rem);
+  }
+
+  .md-preview {
+    line-height: 1.65;
+    color: var(--color-text);
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3.5);
+    max-width: var(--container-writeup);
+  }
+
+  .md-preview > * + * { margin-top: calc(var(--spacing) * 3); }
+
+  .md-preview h1 { font-size: var(--text-2xl); font-weight: 600; letter-spacing: -0.02em; }
+  .md-preview h2 {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    margin-top: calc(var(--spacing) * 6);
+    padding-bottom: var(--spacing-1);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .md-preview h3 { font-size: var(--text-sm); font-weight: 600; letter-spacing: -0.01em; }
+  .md-preview p  { margin-bottom: var(--spacing-2-5); }
+  .md-preview ul { padding-left: var(--spacing-5-5); list-style: disc; }
+  .md-preview ol { padding-left: var(--spacing-5-5); list-style: decimal; }
+  .md-preview ul.contains-task-list { list-style: none; padding-left: 0; }
+
+  .md-preview code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--color-surface-2);
+    padding: 1px var(--spacing-1);
+    border-radius: var(--radius-xs);
+  }
+
+  .md-preview pre {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    background: var(--color-code-bg);
+    color: var(--color-code-fg);
+    padding: var(--spacing-3) var(--spacing-3-5);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+  }
+  .md-preview pre code { background: none; padding: 0; font-size: inherit; }
+
+  .md-preview blockquote {
+    border-left: 3px solid var(--color-ember);
+    padding-left: calc(var(--spacing) * 2);
+    color: var(--color-text-muted);
+  }
+
+  .md-preview table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: var(--spacing-3);
+    font-size: var(--text-sm);
+  }
+
+  .md-preview th,
+  .md-preview td {
+    border: 1px solid var(--color-border);
+    padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2.5);
+    text-align: left;
+  }
+
+  .md-preview th {
+    background: var(--color-surface-2);
+    color: var(--color-text-muted);
+    font-weight: 500;
+  }
+}
