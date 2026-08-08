@@ -1,0 +1,46 @@
+{
+  "auth": {
+    "invalid_credentials": "Email ou mot de passe incorrect",
+    "account_suspended": "Ce compte a été suspendu",
+    "email_not_verified": "Adresse email non vérifiée",
+    "invalid_token": "Lien invalide ou expiré",
+    "totp_invalid": "Code de vérification incorrect",
+    "rate_limited": "Trop de tentatives, réessayez plus tard"
+  },
+  "workspace": {
+    "not_found": "Workspace introuvable",
+    "slug_taken": "Ce slug est déjà utilisé",
+    "locked": "Ce workspace est verrouillé"
+  },
+  "team": {
+    "not_found": "Équipe introuvable",
+    "slug_taken": "Ce slug est déjà utilisé",
+    "invitation_expired": "Cette invitation a expiré",
+    "already_member": "Vous êtes déjà membre de cette équipe"
+  },
+  "challenge": {
+    "not_found": "Challenge introuvable",
+    "flag_incorrect": "Flag incorrect"
+  },
+  "writeup": {
+    "not_found": "Writeup introuvable"
+  },
+  "upload": {
+    "too_large": "Fichier trop volumineux",
+    "unsupported_type": "Type de fichier non pris en charge"
+  },
+  "validation": {
+    "required": "Ce champ est obligatoire",
+    "email_invalid": "Adresse email invalide",
+    "password_too_weak": "Mot de passe trop faible",
+    "too_long": "Valeur trop longue",
+    "too_short": "Valeur trop courte"
+  },
+  "generic": {
+    "forbidden": "Action non autorisée",
+    "not_found": "Ressource introuvable",
+    "conflict": "Cette action entre en conflit avec l'état actuel",
+    "server_error": "Une erreur est survenue, merci de réessayer",
+    "network": "Connexion impossible, vérifiez votre réseau"
+  }
+}

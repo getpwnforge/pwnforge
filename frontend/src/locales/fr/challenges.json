@@ -1,0 +1,80 @@
+{
+  "list": {
+    "title": "Challenges",
+    "subtitle": "{{total}} challenges · {{solved}} résolus · {{inProgress}} en cours · {{stuck}} bloqués",
+    "newChallenge": "Nouveau challenge",
+    "searchPlaceholder": "Filtrer par nom, tag, contenu...",
+    "viewModes": {
+      "list": "Liste",
+      "kanban": "Kanban"
+    },
+    "columns": {
+      "challenge": "Challenge",
+      "category": "Catégorie",
+      "difficulty": "Difficulté",
+      "points": "Pts",
+      "status": "Statut",
+      "assignee": "Assigné",
+      "writeup": "Writeup"
+    }
+  },
+  "filters": {
+    "category": "Catégorie",
+    "status": "Statut",
+    "difficulty": "Difficulté",
+    "assignee": "Assigné",
+    "all": "Tous",
+    "allFeminine": "Toutes"
+  },
+  "categories": {
+    "web": "Web",
+    "pwn": "Pwn",
+    "crypto": "Crypto",
+    "reversing": "Reverse",
+    "forensics": "Forensic",
+    "forensicsShort": "Foren.",
+    "osint": "OSINT",
+    "misc": "Misc"
+  },
+  "status": {
+    "todo": "À faire",
+    "inProgress": "En cours",
+    "stuck": "Bloqué",
+    "solved": "Résolu"
+  },
+  "difficulty": {
+    "easy": "Facile",
+    "medium": "Moyen",
+    "hard": "Difficile",
+    "insane": "Insane"
+  },
+  "detail": {
+    "viewWriteup": "Voir le writeup",
+    "edit": "Éditer",
+    "markSolved": "Marquer résolu",
+    "createdBy": "Créé par",
+    "timeSpent": "{{duration}} sur ce challenge",
+    "statement": "Énoncé",
+    "tabs": {
+      "notes": "Notes",
+      "files": "Fichiers",
+      "writeups": "Writeups",
+      "history": "Historique"
+    },
+    "newNote": "Nouvelle note",
+    "sidebar": {
+      "status": "Statut",
+      "assignedTo": "Assigné à",
+      "systemTags": "Tags système",
+      "customTags": "Tags personnalisés",
+      "addTag": "+ ajouter",
+      "attachedFiles": "Fichiers joints",
+      "writeup": "Writeup",
+      "activity": "Activité",
+      "activityMeta": "{{duration}} chronométré · {{count}} watchers",
+      "continueWriting": "Continuer l'écriture",
+      "draftMeta": "Brouillon · {{count}} mots",
+      "lastEdited": "Dernière modif. {{when}} par {{author}}"
+    }
+  }
+}

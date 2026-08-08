@@ -1,0 +1,129 @@
+{
+  "nav": {
+    "product": "Product",
+    "solutions": "Solutions",
+    "community": "Community",
+    "docs": "Docs",
+    "signIn": "Sign in",
+    "getStarted": "Get started"
+  },
+  "hero": {
+    "badge": "New: HTB & TryHackMe sync",
+    "title": "The HQ for your <ember>CTFs</ember> and your red team.",
+    "subtitle": "PwnForge organises your challenges, your writeups and your team in one clear space. From solo HTB grinding to a 48h jeopardy CTF, keep everyone in sync.",
+    "primaryCta": "Create a workspace",
+    "secondaryCta": "Watch the demo",
+    "trust": {
+      "selfHostable": "Self-hosting available",
+      "openSource": "Open source, AGPL v3",
+      "exportAnytime": "Export your data at any time"
+    }
+  },
+  "platforms": {
+    "title": "Works with your platforms"
+  },
+  "product": {
+    "eyebrow": "Product",
+    "title": "Built for how red teams actually work.",
+    "features": {
+      "workspaces": {
+        "title": "Workspaces per platform or CTF",
+        "description": "A dedicated space for every event or platform: HTB, THM, jeopardy. Solo or as a team, with its own challenges, tags and permissions."
+      },
+      "kanban": {
+        "title": "Challenge kanban",
+        "description": "Track every challenge from \"to do\" to \"solved\", assign teammates, categorise with system and custom tags."
+      },
+      "writeups": {
+        "title": "Markdown writeups",
+        "description": "Split Markdown / preview editor. Private draft or published to the whole team. Notes and attachments included."
+      },
+      "realtime": {
+        "title": "Real-time dashboard",
+        "description": "The activity feed shows who solved what, flags landing, new members, live during the event."
+      },
+      "teams": {
+        "title": "Teams & invitations",
+        "description": "Invitation links, permission levels (Owner, Admin, Member, Viewer), and linking teams to workspaces."
+      },
+      "stats": {
+        "title": "Statistics",
+        "description": "Progress by category, by difficulty, team velocity and detailed personal stats."
+      }
+    }
+  },
+  "solutions": {
+    "eyebrow": "Solutions",
+    "title": "One tool, four ways to <ember>pwn</ember>.",
+    "subtitle": "From the solo player to the corporate red team, PwnForge adapts to your team's size and pace.",
+    "cases": {
+      "solo": {
+        "tag": "Individual",
+        "title": "Solo player",
+        "description": "Grind HTB, THM or Root-Me at your own pace. Keep your writeups sorted by category and find any technique in seconds."
+      },
+      "ctfTeam": {
+        "tag": "Competition",
+        "title": "CTF team",
+        "description": "Coordinate 5 to 50 players during a 48h jeopardy. Who takes what, who is stuck, which flags land, live."
+      },
+      "studentClub": {
+        "tag": "Training",
+        "title": "Student club",
+        "description": "Train newcomers, follow each member's progress and build a writeup base that outlives every intake."
+      },
+      "redTeam": {
+        "tag": "Enterprise",
+        "title": "Professional red team",
+        "description": "Centralise engagements, methodology and team knowledge in a private space, self-hostable if needed."
+      }
+    }
+  },
+  "community": {
+    "eyebrow": "Community",
+    "title": "Join the teams that are climbing.",
+    "stats": {
+      "activeTeams": "active teams",
+      "countries": "countries",
+      "publishedWriteups": "published writeups",
+      "ctfCovered": "CTFs covered"
+    }
+  },
+  "finalCta": {
+    "title": "Ready to pwn your next flag?",
+    "subtitle": "Create your first workspace in under a minute.",
+    "button": "Get started"
+  },
+  "footer": {
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "security": "Security",
+    "status": "Status",
+    "contact": "Contact",
+    "copyright": "© {{year}} PwnForge",
+    "copyrightRange": "© {{startYear}}-{{year}} PwnForge",
+    "licensePrefix": "Licensed under",
+    "licenseName": "AGPL v3",
+    "resources": {
+      "title": "Resources",
+      "docs": "Docs",
+      "api": "API Reference",
+      "selfhosted": "Self-hosted",
+      "changelog": "Changelog",
+      "status": "Status"
+    },
+    "community": {
+      "title": "Community",
+      "github": "GitHub",
+      "discord": "Discord",
+      "contributing": "Contribute"
+    },
+    "legal": {
+      "title": "Legal",
+      "privacy": "Privacy",
+      "terms": "Terms",
+      "security": "Security",
+      "contact": "Contact Us"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "title": "Activité récente",
+  "live": "Live",
+  "events": {
+    "solved": "a résolu",
+    "writeupPublished": "a publié le writeup de",
+    "started": "a démarré",
+    "joinedWorkspace": "a rejoint le workspace",
+    "blocked": "a marqué comme bloqué",
+    "noteAdded": "a ajouté une note sur",
+    "memberJoined": "a rejoint l'équipe",
+    "challengeCreated": "a créé le challenge",
+    "flagSubmitted": "a soumis un flag",
+    "commented": "a commenté"
+  },
+  "meta": {
+    "pointsGained": "+{{points}} pts",
+    "published": "publié",
+    "started": "démarré",
+    "markedStuck": "marqué comme bloqué"
+  },
+  "empty": "Aucune activité pour l'instant",
+  "emptyHint": "L'activité de l'équipe apparaîtra ici en temps réel."
+}

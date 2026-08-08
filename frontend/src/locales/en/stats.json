@@ -1,0 +1,76 @@
+{
+  "dashboard": {
+    "competitionRunning": "Competition running · ends in {{duration}}",
+    "subtitle": "Team competition · live scoreboard · {{solved}} / {{total}} solved",
+    "invite": "Invite",
+    "newChallenge": "Challenge",
+    "score": "Score",
+    "rank": "Rank",
+    "solvedChallenges": "Solved challenges",
+    "inProgress": "In progress",
+    "inProgressBreakdown": "{{stuck}} stuck · {{active}} active",
+    "scoreDelta": "+{{points}} ({{period}})",
+    "rankDelta": "+{{count}} places",
+    "progressByCategory": "Progress by category",
+    "topContributors": "Top contributors",
+    "eventEnd": "Event ends",
+    "challengesShort": "{{count}} ch."
+  },
+  "workspace": {
+    "title": "Workspace statistics",
+    "subtitle": "Global view of the team's performance on this CTF.",
+    "ranges": {
+      "24h": "24h",
+      "7d": "7d",
+      "fullCtf": "Full CTF"
+    },
+    "totalScore": "Total score",
+    "firstBloods": "First bloods",
+    "totalTeamTime": "Total team time",
+    "timePerMember": "~{{duration}} / member",
+    "currentRank": "Current rank",
+    "rankDelta": "+{{count}} places in {{period}}",
+    "scoreOverTime": "Score over time",
+    "resolutionsByCategory": "Solves by category",
+    "contributionByMember": "Contribution by member",
+    "columns": {
+      "member": "Member",
+      "role": "Role",
+      "solved": "Solved",
+      "points": "Points",
+      "writeups": "Writeups",
+      "time": "Time",
+      "mainCategory": "Main category"
+    }
+  },
+  "personal": {
+    "title": "My statistics",
+    "profileMeta": "member since {{date}} · {{teams}} teams · {{workspaces}} workspaces",
+    "solvedChallenges": "Solved challenges",
+    "solvedDelta": "+{{count}} this month",
+    "publishedWriteups": "Published writeups",
+    "pendingDrafts": "{{count}} pending drafts",
+    "totalTime": "Total time",
+    "averagePerChallenge": "~{{duration}} / challenge on average",
+    "currentStreak": "Current streak",
+    "streakDays": "{{count}}d",
+    "record_one": "Record: {{count}} day",
+    "record_other": "Record: {{count}} days",
+    "activity365Days": "Activity over the last 365 days",
+    "heatmapLess": "Less",
+    "heatmapMore": "More",
+    "categoryBreakdown": "Breakdown by category",
+    "total": "Total",
+    "solvedByMonth": "Solved by month",
+    "byPlatform": "By platform",
+    "recentlySolved": "Recently solved",
+    "badges": "Badges & achievements",
+    "columns": {
+      "challenge": "Challenge",
+      "workspace": "Workspace",
+      "difficulty": "Diff.",
+      "time": "Time",
+      "date": "Date"
+    }
+  }
+}

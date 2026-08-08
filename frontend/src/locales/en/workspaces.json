@@ -1,0 +1,111 @@
+{
+  "list": {
+    "title": "Workspaces",
+    "subtitle": "All your spaces, by platform and by CTF.",
+    "searchPlaceholder": "Search a workspace...",
+    "newWorkspace": "New workspace",
+    "import": "Import",
+    "filters": "Filters",
+    "tabs": {
+      "all": "All",
+      "active": "Active",
+      "archived": "Archived"
+    },
+    "favorites": "Favorites",
+    "allWorkspaces": "All workspaces",
+    "newCard": {
+      "title": "New workspace",
+      "hint": "Platform, CTF or personal"
+    }
+  },
+  "create": {
+    "title": "New workspace",
+    "subtitle": "A workspace is a platform, a CTF, or a personal challenge.",
+    "submit": "Create workspace",
+    "steps": {
+      "type": "1 · Type",
+      "details": "2 · Details",
+      "mode": "3 · Working mode"
+    },
+    "type": {
+      "platform": "Platform",
+      "platformHint": "Ongoing: HTB, THM, Root-Me. No event end date.",
+      "ctfEvent": "CTF / Event",
+      "ctfEventHint": "Limited time: live scoreboard and event end."
+    },
+    "platformSource": "Platform / source",
+    "platformOptions": {
+      "other": "Other"
+    },
+    "mode": {
+      "solo": "Solo",
+      "soloHint": "You alone. Private notes by default.",
+      "team": "Team",
+      "teamHint": "Shared with an existing team. Role-based permissions."
+    },
+    "associatedTeam": "Associated team",
+    "teamMeta": "{{count}} members · You are {{role}}"
+  },
+  "card": {
+    "solvedRatio": "{{solved}} / {{total}} solved",
+    "you": "You"
+  },
+  "settings": {
+    "pageTitle": "General settings",
+    "nav": {
+      "general": "General",
+      "visibility": "Visibility",
+      "tagsCategories": "Tags & categories",
+      "integrations": "Integrations",
+      "notifications": "Notifications",
+      "webhooks": "Webhooks",
+      "importExport": "Import / Export",
+      "dangerZone": "Danger zone"
+    },
+    "identity": {
+      "title": "Identity",
+      "workspaceName": "Workspace name",
+      "slug": "Slug",
+      "description": "Description",
+      "color": "Color",
+      "icon": "Icon"
+    },
+    "modeTeam": {
+      "title": "Mode & team",
+      "workspaceType": "Workspace type",
+      "workspaceTypeHint": "Solo: you alone. Team: shared with a team.",
+      "associatedTeam": "Associated team",
+      "associatedTeamHint": "Members and roles come from this team."
+    },
+    "event": {
+      "title": "Event",
+      "start": "Start",
+      "end": "End",
+      "lockAfterEnd": "Lock after end",
+      "lockAfterEndHint": "Prevents editing challenges and writeups after the event ends."
+    },
+    "writeupVisibility": {
+      "title": "Writeup visibility",
+      "defaultLabel": "By default, writeups are",
+      "defaultHint": "You can always publish individually per writeup.",
+      "draft": "Draft",
+      "teamVisible": "Visible to team"
+    }
+  },
+  "members": {
+    "title": "Workspace members",
+    "subtitle": "{{count}} members · team \"{{team}}\" linked.",
+    "inviteLink": "Invitation link",
+    "activeInviteLink": "Invitation link active",
+    "linkRole": "Role: {{role}}",
+    "linkExpiry": "Expires in {{duration}}",
+    "columns": {
+      "member": "Member",
+      "handle": "Handle",
+      "role": "Role",
+      "solved": "Solved",
+      "status": "Status",
+      "joined": "Joined"
+    }
+  }
+}

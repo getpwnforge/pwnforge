@@ -1,0 +1,50 @@
+{
+  "editor": {
+    "draftSaved": "Brouillon · sauvegardé",
+    "fullscreenPreview": "Aperçu plein écran",
+    "publishToTeam": "Publier à l'équipe",
+    "meta": "Markdown · {{words}} mots · {{minutes}} min de lecture",
+    "modes": {
+      "edit": "Édition",
+      "split": "Split",
+      "preview": "Aperçu"
+    },
+    "toolbar": {
+      "bold": "Gras",
+      "italic": "Italique",
+      "heading": "Titre",
+      "link": "Lien",
+      "inlineCode": "Code inline",
+      "codeBlock": "Bloc de code",
+      "quote": "Citation",
+      "bulletList": "Liste à puces",
+      "numberedList": "Liste numérotée",
+      "taskList": "Liste de tâches",
+      "image": "Image",
+      "table": "Tableau"
+    }
+  },
+  "status": {
+    "draft": "Brouillon",
+    "published": "Publié",
+    "teamVisible": "Visible équipe"
+  },
+  "template": {
+    "reconnaissance": "Reconnaissance",
+    "vulnerabilityIdentification": "Identification de la vulnérabilité",
+    "exploitationPlan": "Plan d'exploitation",
+    "finalExploit": "Exploit final"
+  },
+  "library": {
+    "title": "Writeups",
+    "searchPlaceholder": "Rechercher un writeup...",
+    "empty": "Aucun writeup pour l'instant",
+    "emptyHint": "Rédigez votre premier writeup depuis un challenge."
+  },
+  "comments": {
+    "title": "Commentaires",
+    "placeholder": "Ajouter un commentaire...",
+    "submit": "Commenter",
+    "empty": "Aucun commentaire"
+  }
+}

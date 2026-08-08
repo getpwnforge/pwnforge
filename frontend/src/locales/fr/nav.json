@@ -1,0 +1,52 @@
+{
+  "sidebar": {
+    "dashboard": "Dashboard",
+    "challenges": "Challenges",
+    "writeups": "Writeups",
+    "stats": "Statistiques",
+    "members": "Membres",
+    "settings": "Paramètres",
+    "workspaces": "Workspaces",
+    "teams": "Équipes",
+    "myStats": "Mes stats",
+    "help": "Aide & support",
+    "expand": "Développer",
+    "collapse": "Réduire"
+  },
+  "sections": {
+    "workspace": "Workspace",
+    "activeTags": "Tags actifs",
+    "navigate": "Naviguer",
+    "personalSpace": "Espace personnel",
+    "recentWorkspaces": "Workspaces récents",
+    "account": "Compte",
+    "danger": "Danger"
+  },
+  "search": {
+    "placeholder": "Rechercher...",
+    "noResults": "Aucun résultat.",
+    "recent": "Workspaces récents"
+  },
+  "allWorkspaces": "Tous les workspaces",
+  "myTeams": "Mes équipes",
+  "noWorkspaceOpen": "Aucun workspace ouvert",
+  "switchWorkspace": "Changer de workspace",
+  "workspacesTypes": {
+    "team": "Équipe",
+    "solo": "Solo"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "noNew": "Aucune nouvelle notification",
+    "noNewDesc": "Vous êtes à jour. Les nouvelles notifications apparaîtront ici.",
+    "markAllRead": "Tout marquer comme lu",
+    "viewAll": "Voir toutes les notifications"
+  },
+  "userMenu": {
+    "profile": "Mon profil",
+    "stats": "Mes stats",
+    "settings": "Paramètres",
+    "help": "Aide & support",
+    "logout": "Se déconnecter"
+  }
+}

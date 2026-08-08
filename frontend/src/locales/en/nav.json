@@ -1,0 +1,52 @@
+{
+  "sidebar": {
+    "dashboard": "Dashboard",
+    "challenges": "Challenges",
+    "writeups": "Writeups",
+    "stats": "Statistics",
+    "members": "Members",
+    "settings": "Settings",
+    "workspaces": "Workspaces",
+    "teams": "Teams",
+    "myStats": "My stats",
+    "help": "Help & support",
+    "expand": "Expand",
+    "collapse": "Collapse"
+  },
+  "sections": {
+    "workspace": "Workspace",
+    "activeTags": "Active tags",
+    "navigate": "Navigate",
+    "personalSpace": "Personal space",
+    "recentWorkspaces": "Recent workspaces",
+    "account": "Account",
+    "danger": "Danger"
+  },
+  "search": {
+    "placeholder": "Search...",
+    "noResults": "No results found.",
+    "recent": "Recent workspaces"
+  },
+  "allWorkspaces": "All workspaces",
+  "myTeams": "My teams",
+  "noWorkspaceOpen": "No workspace open",
+  "switchWorkspace": "Switch workspace",
+  "workspacesTypes": {
+    "team": "Team",
+    "solo": "Solo"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "noNew": "No new notifications",
+    "noNewDesc": "You're all caught up. New notifications will appear here.",
+    "markAllRead": "Mark all as read",
+    "viewAll": "View all notifications"
+  },
+  "userMenu":{
+    "profile": "My profile",
+    "stats": "My stats",
+    "settings": "Settings",
+    "help": "Help & support",
+    "logout": "Log out"
+  }
+}

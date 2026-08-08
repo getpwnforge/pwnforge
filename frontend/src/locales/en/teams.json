@@ -1,0 +1,162 @@
+{
+  "list": {
+    "title": "Teams",
+    "subtitle": "Your permanent groups. A team can be linked to several workspaces.",
+    "newTeam": "New team",
+    "createTeam": "Create a team",
+    "createTeamHint": "Invite with a link afterwards",
+    "meta": "{{members}} members · {{workspaces}} workspaces · active {{lastActive}}",
+    "workspacesButton": "Workspaces",
+    "pendingInvitations": "Pending invitations · {{count}}",
+    "invitedBy": "Invited by @{{handle}} · expires {{expiry}}"
+  },
+  "detail": {
+    "subtitle": "{{members}} members · {{workspaces}} workspaces · created in {{date}}",
+    "inviteLink": "Invitation link",
+    "tabs": {
+      "members": "Members",
+      "workspaces": "Workspaces",
+      "roles": "Roles & permissions",
+      "invites": "Invitations",
+      "settings": "Settings"
+    },
+    "membersFilterPlaceholder": "Filter members...",
+    "addMember": "Add a member",
+    "columns": {
+      "member": "Member",
+      "role": "Role",
+      "workspaces": "Workspaces",
+      "lastActivity": "Last activity"
+    },
+    "editPermissions": "Edit permissions",
+    "linkedWorkspaces": "Linked workspaces"
+  },
+  "roles": {
+    "captain": "Captain",
+    "admin": "Admin",
+    "member": "Member",
+    "viewer": "Viewer",
+    "descriptions": {
+      "captain": "Full control, including deleting the team.",
+      "admin": "Manages members, workspaces and integrations.",
+      "member": "Creates challenges, writes and publishes writeups.",
+      "viewer": "Read-only access to every workspace."
+    },
+    "captainUniqueHint": "The Captain role is unique and cannot be restricted."
+  },
+  "permissions": {
+    "matrixTitle": "Permission matrix",
+    "permission": "Permission",
+    "customRole": "Custom role",
+    "allowed": "Allowed",
+    "notAllowed": "Not allowed",
+    "groups": {
+      "challenges": "Challenges",
+      "writeups": "Writeups",
+      "workspaces": "Workspaces",
+      "members": "Members",
+      "team": "Team",
+      "read": "Read"
+    },
+    "rows": {
+      "challengeCreateEdit": "Create & edit",
+      "challengeClaimSolve": "Claim / mark as solved",
+      "challengeDelete": "Delete",
+      "writeupDraft": "Write a draft",
+      "writeupPublish": "Publish",
+      "writeupDeleteOthers": "Delete other people's",
+      "workspaceCreateLink": "Create & link",
+      "workspaceArchiveUnlink": "Archive / unlink",
+      "memberInvite": "Invite",
+      "memberChangeRoles": "Change roles",
+      "memberRemove": "Remove a member",
+      "teamEditSettings": "Edit settings",
+      "teamManageIntegrations": "Manage integrations",
+      "teamDelete": "Delete the team",
+      "viewChallengesWriteups": "View challenges & writeups"
+    }
+  },
+  "workspacesTab": {
+    "linkedWorkspaces": "Linked workspaces",
+    "linkedWorkspacesHint": "{{active}} active · {{archived}} archived/permanent",
+    "solvedChallenges": "Solved challenges",
+    "involvedMembers": "Involved members",
+    "wholeTeamActive": "The whole team is active",
+    "averageProgress": "Average progress",
+    "acrossAllWorkspaces": "Across all workspaces",
+    "filterPlaceholder": "Filter workspaces...",
+    "linkWorkspace": "Link a workspace",
+    "columns": {
+      "workspace": "Workspace",
+      "status": "Status",
+      "linkedMembers": "Linked members",
+      "progress": "Progress",
+      "lastActivity": "Last activity"
+    },
+    "status": {
+      "inProgress": "In progress",
+      "finished": "Finished",
+      "archived": "Archived",
+      "permanent": "Permanent"
+    }
+  },
+  "invitations": {
+    "linkTitle": "Team invitation link",
+    "linkRole": "Role: {{role}}",
+    "linkExpiry": "Expires in {{count}} d",
+    "inviteByEmail": "Invite by email",
+    "inviteByEmailPlaceholder": "email addresses, comma-separated",
+    "pending": "Pending invitations",
+    "columns": {
+      "recipient": "Recipient",
+      "role": "Role",
+      "invitedBy": "Invited by",
+      "sent": "Sent",
+      "expires": "Expires"
+    },
+    "joinedRecentlyViaLink": "Recently joined via link"
+  },
+  "settings": {
+    "identity": {
+      "title": "Team identity",
+      "teamName": "Team name",
+      "slug": "Slug",
+      "description": "Description",
+      "colorHint": "Team color, used in the monogram and badges."
+    },
+    "membersRoles": {
+      "title": "Members & default roles",
+      "defaultRole": "Default role for new members",
+      "defaultRoleHint": "Applied to anyone joining via the invitation link.",
+      "manualApproval": "Manually approve requests",
+      "manualApprovalHint": "New join requests must be approved by an Admin.",
+      "allowMembersCreateWorkspaces": "Allow members to create workspaces",
+      "allowMembersCreateWorkspacesHint": "Otherwise, only Captain and Admin can create them."
+    },
+    "visibility": {
+      "title": "Visibility",
+      "publicProfile": "Public team profile",
+      "publicProfileHint": "Shows a public page with the name, logo and track record.",
+      "discoverable": "Discoverable in search",
+      "discoverableHint": "The team appears in PwnForge search results.",
+      "showLeaderboard": "Show member leaderboard",
+      "showLeaderboardHint": "Publishes the internal leaderboard on the public profile."
+    },
+    "notifications": {
+      "title": "Team notifications",
+      "weeklySummary": "Weekly summary",
+      "weeklySummaryHint": "A recap of team activity every Monday morning.",
+      "discordChannel": "Linked Discord channel",
+      "discordChannelHint": "Posts solves and published writeups to the chosen channel."
+    },
+    "dangerZone": {
+      "title": "Danger zone",
+      "leaveTeam": "Leave the team",
+      "leaveTeamHint": "You lose access to all linked workspaces.",
+      "transferOwnership": "Transfer ownership",
+      "transferOwnershipHint": "Designate another member as team Captain.",
+      "deleteTeam": "Delete the team",
+      "deleteTeamHint": "Irreversible. Linked workspaces become orphaned."
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "editor": {
+    "draftSaved": "Draft · saved",
+    "fullscreenPreview": "Fullscreen preview",
+    "publishToTeam": "Publish to team",
+    "meta": "Markdown · {{words}} words · {{minutes}} min read",
+    "modes": {
+      "edit": "Edit",
+      "split": "Split",
+      "preview": "Preview"
+    },
+    "toolbar": {
+      "bold": "Bold",
+      "italic": "Italic",
+      "heading": "Heading",
+      "link": "Link",
+      "inlineCode": "Inline code",
+      "codeBlock": "Code block",
+      "quote": "Quote",
+      "bulletList": "Bullet list",
+      "numberedList": "Numbered list",
+      "taskList": "Task list",
+      "image": "Image",
+      "table": "Table"
+    }
+  },
+  "status": {
+    "draft": "Draft",
+    "published": "Published",
+    "teamVisible": "Team visible"
+  },
+  "template": {
+    "reconnaissance": "Reconnaissance",
+    "vulnerabilityIdentification": "Vulnerability identification",
+    "exploitationPlan": "Exploitation plan",
+    "finalExploit": "Final exploit"
+  },
+  "library": {
+    "title": "Writeups",
+    "searchPlaceholder": "Search a writeup...",
+    "empty": "No writeups yet",
+    "emptyHint": "Write your first writeup from a challenge."
+  },
+  "comments": {
+    "title": "Comments",
+    "placeholder": "Add a comment...",
+    "submit": "Comment",
+    "empty": "No comments"
+  }
+}

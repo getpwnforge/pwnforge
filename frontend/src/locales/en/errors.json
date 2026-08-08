@@ -1,0 +1,46 @@
+{
+  "auth": {
+    "invalid_credentials": "Incorrect email or password",
+    "account_suspended": "This account has been suspended",
+    "email_not_verified": "Email address not verified",
+    "invalid_token": "Invalid or expired link",
+    "totp_invalid": "Incorrect verification code",
+    "rate_limited": "Too many attempts, try again later"
+  },
+  "workspace": {
+    "not_found": "Workspace not found",
+    "slug_taken": "This slug is already taken",
+    "locked": "This workspace is locked"
+  },
+  "team": {
+    "not_found": "Team not found",
+    "slug_taken": "This slug is already taken",
+    "invitation_expired": "This invitation has expired",
+    "already_member": "You are already a member of this team"
+  },
+  "challenge": {
+    "not_found": "Challenge not found",
+    "flag_incorrect": "Incorrect flag"
+  },
+  "writeup": {
+    "not_found": "Writeup not found"
+  },
+  "upload": {
+    "too_large": "File is too large",
+    "unsupported_type": "Unsupported file type"
+  },
+  "validation": {
+    "required": "This field is required",
+    "email_invalid": "Invalid email address",
+    "password_too_weak": "Password is too weak",
+    "too_long": "Value is too long",
+    "too_short": "Value is too short"
+  },
+  "generic": {
+    "forbidden": "This action is not allowed",
+    "not_found": "Resource not found",
+    "conflict": "This action conflicts with the current state",
+    "server_error": "Something went wrong, please try again",
+    "network": "Cannot connect, check your network"
+  }
+}
