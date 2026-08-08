@@ -9,8 +9,8 @@ updates:
       day: "monday"
     open-pull-requests-limit: 10
     labels:
-      - "dependencies"
-      - "rust"
+      - "area/deps"
+      - "area/backend"
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -28,8 +28,8 @@ updates:
       day: "monday"
     open-pull-requests-limit: 10
     labels:
-      - "dependencies"
-      - "frontend"
+      - "area/deps"
+      - "area/frontend"
     commit-message:
       prefix: "chore(deps)"
     groups:
@@ -45,8 +45,8 @@ updates:
     schedule:
       interval: "weekly"
     labels:
-      - "dependencies"
-      - "docker"
+      - "area/deps"
+      - "area/backend"
 
   - package-ecosystem: "docker"
     directory: "/frontend"
@@ -54,8 +54,8 @@ updates:
     schedule:
       interval: "weekly"
     labels:
-      - "dependencies"
-      - "docker"
+      - "area/deps"
+      - "area/docker"
 
   # GitHub Actions workflows themselves
   - package-ecosystem: "github-actions"
@@ -64,5 +64,5 @@ updates:
     schedule:
       interval: "weekly"
     labels:
-      - "dependencies"
-      - "ci"
+      - "area/deps"
+      - "area/ci"
