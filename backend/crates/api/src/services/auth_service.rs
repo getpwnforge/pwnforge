@@ -163,18 +163,15 @@ pub async fn login(
     let (user, login_email) = if identifier.contains('@') {
         let normalized = normalize_email(identifier);
 
-        // Two separate queries: find_also_related trips over the citext select_as
-        // aliasing in sea-orm 2.0.
-        let email = user_emails::Entity::find()
+        let found = user_emails::Entity::find()
             .filter(user_emails::Column::Email.eq(normalized))
+            .find_also_related(users::Entity)
             .one(db)
-            .await?;
+            .await?
+            .and_then(|(email, user)| user.map(|u| (u, email)));
 
-        match email {
-            Some(email) => {
-                let user = users::Entity::find_by_id(email.user_id).one(db).await?;
-                (user, Some(email))
-            }
+        match found {
+            Some((user, email)) => (Some(user), Some(email)),
             None => (None, None),
         }
     } else {
@@ -365,6 +362,22 @@ pub async fn logout(db: &DatabaseConnection, refresh_token: &str) -> Result<(), 
     .await?;
 
     Ok(())
+}
+
+pub async fn current_user(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<(users::Model, user_emails::Model), AuthError> {
+    let user = users::Entity::find_by_id(user_id)
+        .one(db)
+        .await?
+        .ok_or(AuthError::InvalidCredentials)?;
+
+    let email = primary_email(db, user_id)
+        .await?
+        .ok_or(AuthError::InvalidCredentials)?;
+
+    Ok((user, email))
 }
 
 async fn is_reserved_username(db: &DatabaseConnection, username: &str) -> Result<bool, DbErr> {
