@@ -9,7 +9,6 @@ pub struct Model {
         primary_key,
         auto_increment = false,
         column_type = "custom(\"citext\")",
-        select_as = "text",
         save_as = "citext"
     )]
     pub username: String,

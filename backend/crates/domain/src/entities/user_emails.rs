@@ -8,12 +8,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub user_id: Uuid,
-    #[sea_orm(
-        column_type = "custom(\"citext\")",
-        select_as = "text",
-        save_as = "citext",
-        unique
-    )]
+    #[sea_orm(column_type = "custom(\"citext\")", save_as = "citext", unique)]
     pub email: String,
     pub is_primary: bool,
     pub created_at: DateTimeWithTimeZone,

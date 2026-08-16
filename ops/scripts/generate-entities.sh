@@ -146,6 +146,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Patch 5: removing 'select_as' on citext columns
+# ---------------------------------------------------------------------------
+# The generator emits select_as = "text" for custom types. That turns the column
+# into a CAST expression, and find_also_related then panics in apply_alias
+# ("cannot apply alias for expr other than Column or AsEnum", combine.rs:72).
+# The cast is not needed for reads: citext decodes as text without it.
+# See https://github.com/SeaQL/sea-orm/discussions/1750 and https://github.com/SeaQL/sea-orm/issues/3174
+
+echo "==> Patch 5: removing 'select_as' on citext columns"
+
+perl -0pi -e 's/\s*select_as = "text",//g' "$ENTITIES_DIR"/*.rs
+
+# ---------------------------------------------------------------------------
 # Verification
 # ---------------------------------------------------------------------------
 

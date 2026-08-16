@@ -9,12 +9,7 @@ pub struct Model {
     pub id: Uuid,
     #[sea_orm(column_type = "Text")]
     pub password_hash: String,
-    #[sea_orm(
-        column_type = "custom(\"citext\")",
-        select_as = "text",
-        save_as = "citext",
-        unique
-    )]
+    #[sea_orm(column_type = "custom(\"citext\")", save_as = "citext", unique)]
     pub username: String,
     #[sea_orm(column_type = "Text", nullable)]
     pub first_name: Option<String>,
