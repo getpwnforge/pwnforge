@@ -14,7 +14,7 @@ name = "migration"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio.workspace = true
 dotenvy.workspace = true
 
 [dependencies.sea-orm-migration]
