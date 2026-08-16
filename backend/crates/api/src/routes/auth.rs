@@ -1,12 +1,13 @@
 // crates/api/src/routes/auth.rs
 use crate::config::Config;
+use crate::middleware::auth::AuthUser;
 use crate::middleware::client_ip::ClientIp;
 use crate::services::jwt_service;
 use crate::services::rate_limit_service::{self, RateLimitDecision};
 use crate::{error::AppError, services::auth_service, state::AppState};
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, header};
-use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get, routing::post};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use domain::dto::auth::{LoginRequest, RegisterRequest, UserResponse};
 use sea_orm::prelude::IpNetwork;
@@ -20,6 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/login", post(login))
         .route("/refresh", post(refresh))
         .route("/logout", post(logout))
+        .route("/me", get(me))
 }
 
 async fn register(
@@ -134,6 +136,11 @@ async fn logout(
         clear_auth_cookies(jar, &state.config),
         StatusCode::NO_CONTENT,
     ))
+}
+
+async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserResponse>, AppError> {
+    let (model, email) = auth_service::current_user(&state.db, user.id).await?;
+    Ok(Json(UserResponse::new(model, email)))
 }
 
 fn set_auth_cookies(jar: CookieJar, config: &Config, access: &str, refresh: &str) -> CookieJar {

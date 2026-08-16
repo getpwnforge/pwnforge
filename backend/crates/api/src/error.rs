@@ -22,6 +22,9 @@ pub enum AppError {
 
     #[error("unauthorized")]
     Unauthorized,
+
+    #[error(transparent)]
+    Db(#[from] sea_orm::DbErr),
 }
 
 impl IntoResponse for AppError {
@@ -98,6 +101,15 @@ impl IntoResponse for AppError {
                 Json(json!({ "error": "unauthorized" })),
             )
                 .into_response(),
+
+            AppError::Db(err) => {
+                tracing::error!(error = ?err, "database error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "internal_error" })),
+                )
+                    .into_response()
+            }
         }
     }
 }
