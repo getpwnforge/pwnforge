@@ -7,6 +7,7 @@ pub mod auth_tokens;
 pub mod blocked_emails_domains;
 pub mod instance_alerts;
 pub mod instance_audit_logs;
+pub mod instance_settings;
 pub mod refresh_tokens;
 pub mod reserved_usernames;
 pub mod user_emails;

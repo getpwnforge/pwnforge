@@ -354,6 +354,16 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_auth_tokens_expires_at")
+                    .table(AuthTokens::Table)
+                    .col(AuthTokens::ExpiresAt)
+                    .to_owned(),
+            )
+            .await?;
+
         // REFRESH TOKENS TABLE
         manager
             .create_table(
@@ -368,7 +378,7 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(RefreshTokens::UserId).uuid().not_null())
-                    .col(ColumnDef::new(RefreshTokens::TokenHash).text().not_null())
+                    .col(ColumnDef::new(RefreshTokens::TokenHash).text().not_null().unique_key())
                     .col(
                         ColumnDef::new(RefreshTokens::ExpiresAt)
                             .timestamp_with_time_zone()
@@ -392,6 +402,37 @@ impl MigrationTrait for Migration {
                             .to(Users::Table, Users::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_refresh_tokens_expires_at")
+                    .table(RefreshTokens::Table)
+                    .col(RefreshTokens::ExpiresAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_refresh_tokens_revoked_at")
+                    .table(RefreshTokens::Table)
+                    .col(RefreshTokens::RevokedAt)
+                    .and_where(Expr::col(RefreshTokens::RevokedAt).is_not_null())
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_refresh_tokens_user_id")
+                    .table(RefreshTokens::Table)
+                    .col(RefreshTokens::UserId)
                     .to_owned(),
             )
             .await?;

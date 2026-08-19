@@ -8,7 +8,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub user_id: Uuid,
-    #[sea_orm(column_type = "Text")]
+    #[sea_orm(column_type = "Text", unique)]
     pub token_hash: String,
     pub expires_at: DateTimeWithTimeZone,
     #[sea_orm(column_type = "Text", nullable)]
