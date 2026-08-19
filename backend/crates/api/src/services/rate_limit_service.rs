@@ -67,13 +67,7 @@ pub async fn check_login_attempt(
     )
     .await?;
 
-    let by_ip = check_window(
-        redis,
-        &login_ip_key(ip),
-        LOGIN_IP_LIMIT,
-        LOGIN_WINDOW_SECS,
-    )
-    .await?;
+    let by_ip = check_window(redis, &login_ip_key(ip), LOGIN_IP_LIMIT, LOGIN_WINDOW_SECS).await?;
 
     Ok(most_restrictive(by_identifier, by_ip))
 }
@@ -110,14 +104,20 @@ pub async fn check_password_forgot(
     )
     .await?;
 
-    let by_ip = check_window(redis, &forgot_ip_key(ip), FORGOT_IP_LIMIT, FORGOT_WINDOW_SECS).await?;
+    let by_ip = check_window(
+        redis,
+        &forgot_ip_key(ip),
+        FORGOT_IP_LIMIT,
+        FORGOT_WINDOW_SECS,
+    )
+    .await?;
 
     Ok(most_restrictive(by_email, by_ip))
 }
 
 pub async fn check_password_reset(
     redis: &mut ConnectionManager,
-    ip: IpAddr
+    ip: IpAddr,
 ) -> Result<RateLimitDecision, redis::RedisError> {
     check_window(redis, &reset_ip_key(ip), RESET_IP_LIMIT, RESET_WINDOW_SECS).await
 }
@@ -156,7 +156,13 @@ pub async fn check_setup_test_email(
     redis: &mut ConnectionManager,
     ip: IpAddr,
 ) -> Result<RateLimitDecision, redis::RedisError> {
-    check_window(redis, &setup_test_email_ip_key(ip), SETUP_TEST_EMAIL_IP_LIMIT, SETUP_TEST_EMAIL_WINDOW_SECS).await
+    check_window(
+        redis,
+        &setup_test_email_ip_key(ip),
+        SETUP_TEST_EMAIL_IP_LIMIT,
+        SETUP_TEST_EMAIL_WINDOW_SECS,
+    )
+    .await
 }
 
 /// Returns the blocking decision when either window tripped, keeping the
@@ -166,7 +172,14 @@ fn most_restrictive(a: RateLimitDecision, b: RateLimitDecision) -> RateLimitDeci
     use RateLimitDecision::*;
 
     match (a, b) {
-        (Limited { retry_after_secs: x }, Limited { retry_after_secs: y }) => Limited {
+        (
+            Limited {
+                retry_after_secs: x,
+            },
+            Limited {
+                retry_after_secs: y,
+            },
+        ) => Limited {
             retry_after_secs: x.max(y),
         },
         (Limited { retry_after_secs }, _) | (_, Limited { retry_after_secs }) => {

@@ -3,9 +3,9 @@ use crate::services::{
     audit_service::{self, AuditContext, AuditError, AuditTarget},
     auth_service::{self, AuthError},
     email_service::EmailError,
-    token_service,
-    password_service::{self, PasswordError},
     instance_service::{self, SETTINGS_ID},
+    password_service::{self, PasswordError},
+    token_service,
 };
 use chrono::Utc;
 use domain::{
@@ -14,8 +14,7 @@ use domain::{
     types::AuditAction,
 };
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait,
-    QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QuerySelect, Set, TransactionTrait,
 };
 use std::str::FromStr;
 use subtle::ConstantTimeEq;
@@ -94,32 +93,36 @@ pub fn verify_token(expected: Option<&str>, presented: &str) -> Result<(), Setup
 /// SMTP fields stay None unless that backend is active: showing a stale host
 /// on a Resend instance would confuse rather than help.
 pub fn email_config(config: &Config) -> EmailConfigResponse {
-    let (backend, smtp_host, smtp_port, smtp_tls, smtp_auth, resend_key_hint) = match config.email_backend {
-        EmailBackend::Console => ("console", None, None, None, false, None),
+    let (backend, smtp_host, smtp_port, smtp_tls, smtp_auth, resend_key_hint) =
+        match config.email_backend {
+            EmailBackend::Console => ("console", None, None, None, false, None),
 
-        EmailBackend::Smtp => (
-            "smtp",
-            Some(config.smtp_host.clone()),
-            Some(config.smtp_port),
-            Some(
-                match config.smtp_tls {
-                    SmtpTls::Implicit => "implicit",
-                    SmtpTls::StartTls => "starttls",
-                    SmtpTls::None => "none",
-                }
-                .to_owned(),
+            EmailBackend::Smtp => (
+                "smtp",
+                Some(config.smtp_host.clone()),
+                Some(config.smtp_port),
+                Some(
+                    match config.smtp_tls {
+                        SmtpTls::Implicit => "implicit",
+                        SmtpTls::StartTls => "starttls",
+                        SmtpTls::None => "none",
+                    }
+                    .to_owned(),
+                ),
+                // Whether credentials are configured, never what they are.
+                !config.smtp_username.is_empty(),
+                None,
             ),
-            // Whether credentials are configured, never what they are.
-            !config.smtp_username.is_empty(),
-            None,
-        ),
 
-        EmailBackend::Resend => (
-            "resend",
-            None, None, None, false,
-            key_hint(&config.resend_api_key),
-        ),
-    };
+            EmailBackend::Resend => (
+                "resend",
+                None,
+                None,
+                None,
+                false,
+                key_hint(&config.resend_api_key),
+            ),
+        };
 
     EmailConfigResponse {
         backend: backend.to_owned(),
@@ -212,7 +215,10 @@ pub async fn complete(
         &transaction,
         AuditAction::InstanceSetupCompleted,
         &audit_ctx,
-        AuditTarget { user_id: Some(user.id), ..Default::default() },
+        AuditTarget {
+            user_id: Some(user.id),
+            ..Default::default()
+        },
         None,
         serde_json::json!({}),
     )

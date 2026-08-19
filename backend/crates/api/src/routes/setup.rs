@@ -11,7 +11,11 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    Json, Router, extract::{ConnectInfo, State}, http::{HeaderMap, StatusCode, header}, response::{IntoResponse, Response}, routing::{get, post}
+    Json, Router,
+    extract::{ConnectInfo, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::{get, post},
 };
 use domain::dto::{
     auth::UserResponse,
@@ -63,7 +67,8 @@ async fn test_email(
 
     let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
 
-    match rate_limit_service::check_setup_test_email(&mut state.redis.clone(), rate_limit_ip).await {
+    match rate_limit_service::check_setup_test_email(&mut state.redis.clone(), rate_limit_ip).await
+    {
         Ok(RateLimitDecision::Limited { retry_after_secs }) => {
             return Err(AppError::RateLimited { retry_after_secs });
         }
@@ -116,7 +121,6 @@ async fn complete(
     let (user, email) = setup_service::complete(&state.db, &state.config, &ctx, payload).await?;
 
     Ok((StatusCode::CREATED, Json(UserResponse::new(user, email))))
-
 }
 
 /// Request metadata for the audit entry. Same shape as the session context

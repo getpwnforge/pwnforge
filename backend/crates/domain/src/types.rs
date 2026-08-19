@@ -57,7 +57,7 @@ impl RevokedReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     EmailVerification,
-    PasswordReset
+    PasswordReset,
 }
 
 impl TokenKind {

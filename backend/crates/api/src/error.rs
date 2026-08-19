@@ -1,5 +1,9 @@
 // crates/api/src/error.rs
-use crate::services::{auth_service::AuthError, auth_token_service::AuthTokenError, blocked_email_service::BlockedEmailError, email_service::EmailError, instance_service::InstanceError, session_service::SessionError, setup_service::SetupError};
+use crate::services::{
+    auth_service::AuthError, auth_token_service::AuthTokenError,
+    blocked_email_service::BlockedEmailError, email_service::EmailError,
+    instance_service::InstanceError, session_service::SessionError, setup_service::SetupError,
+};
 use axum::{
     Json,
     http::StatusCode,
@@ -70,7 +74,9 @@ impl IntoResponse for AppError {
                     AuthError::BlockedEmail(BlockedEmailError::DomainNotAllowed) => {
                         (StatusCode::UNPROCESSABLE_ENTITY, "email_domain_not_allowed")
                     }
-                    AuthError::PublicSignupDisabled => (StatusCode::FORBIDDEN, "public_signup_disabled"),
+                    AuthError::PublicSignupDisabled => {
+                        (StatusCode::FORBIDDEN, "public_signup_disabled")
+                    }
                     AuthError::InvalidCredentials => {
                         (StatusCode::UNAUTHORIZED, "invalid_credentials")
                     }
@@ -99,9 +105,15 @@ impl IntoResponse for AppError {
                         (StatusCode::UNPROCESSABLE_ENTITY, "password_unchanged")
                     }
                     AuthError::AuthToken(err) => match err {
-                        AuthTokenError::NotFound => (StatusCode::UNPROCESSABLE_ENTITY, "token_invalid"),
-                        AuthTokenError::Expired => (StatusCode::UNPROCESSABLE_ENTITY, "token_expired"),
-                        AuthTokenError::Consumed => (StatusCode::UNPROCESSABLE_ENTITY, "token_consumed"),
+                        AuthTokenError::NotFound => {
+                            (StatusCode::UNPROCESSABLE_ENTITY, "token_invalid")
+                        }
+                        AuthTokenError::Expired => {
+                            (StatusCode::UNPROCESSABLE_ENTITY, "token_expired")
+                        }
+                        AuthTokenError::Consumed => {
+                            (StatusCode::UNPROCESSABLE_ENTITY, "token_consumed")
+                        }
                         AuthTokenError::Db(_) => {
                             tracing::error!(error = ?err, "auth token store failure");
                             (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
@@ -167,11 +179,15 @@ impl IntoResponse for AppError {
 
                     // Only the register rules that can actually fire here. The rest of
                     // AuthError has no meaning during setup.
-                    SetupError::Auth(AuthError::UsernameTaken) => (StatusCode::CONFLICT, "username_taken"),
+                    SetupError::Auth(AuthError::UsernameTaken) => {
+                        (StatusCode::CONFLICT, "username_taken")
+                    }
                     SetupError::Auth(AuthError::UsernameReserved) => {
                         (StatusCode::CONFLICT, "username_reserved")
                     }
-                    SetupError::Auth(AuthError::EmailTaken) => (StatusCode::CONFLICT, "email_taken"),
+                    SetupError::Auth(AuthError::EmailTaken) => {
+                        (StatusCode::CONFLICT, "email_taken")
+                    }
                     SetupError::Auth(AuthError::PasswordCompromised) => {
                         (StatusCode::UNPROCESSABLE_ENTITY, "password_compromised")
                     }
@@ -203,8 +219,6 @@ impl IntoResponse for AppError {
                 )
                     .into_response()
             }
-
-
         }
     }
 }

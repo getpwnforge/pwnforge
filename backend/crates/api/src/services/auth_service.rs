@@ -1,8 +1,8 @@
 // crates/api/src/services/auth_service.rs
-use super::{blocked_email_service, jwt_service, password_service, session_service, email_service};
-use crate::services::{auth_token_service, instance_service};
-use crate::{config::Config};
+use super::{blocked_email_service, email_service, jwt_service, password_service, session_service};
+use crate::config::Config;
 use crate::services::blocked_email_service::BlockedEmailError;
+use crate::services::{auth_token_service, instance_service};
 use chrono::Utc;
 use domain::{
     dto::auth::{LoggedInUser, LoginRequest, RegisterRequest, RegisteredUser, SessionContext},
@@ -11,9 +11,7 @@ use domain::{
 use jsonwebtoken::EncodingKey;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
-    TransactionTrait,
-    prelude::{DateTimeWithTimeZone},
-    sea_query::Expr,
+    TransactionTrait, prelude::DateTimeWithTimeZone, sea_query::Expr,
 };
 use sea_orm::{DbErr, SqlErr};
 use thiserror::Error;
@@ -165,13 +163,9 @@ pub async fn register(
     .await
     {
         Ok(token) => {
-            if let Err(err) = email_service::send_email_verification(
-                config,
-                &email.email,
-                &user.locale,
-                &token,
-            )
-            .await
+            if let Err(err) =
+                email_service::send_email_verification(config, &email.email, &user.locale, &token)
+                    .await
             {
                 tracing::error!(error = ?err, user_id = %user.id, "failed to send verification email");
             }
@@ -262,7 +256,6 @@ pub async fn refresh(
     refresh_token: &str,
     ctx: SessionContext,
 ) -> Result<LoggedInUser, AuthError> {
-
     let new_refresh_token = session_service::rotate(db, refresh_token, ctx).await?;
 
     let user = users::Entity::find_by_id(new_refresh_token.user_id)
@@ -318,23 +311,31 @@ pub async fn password_forgot(
     let email = normalize_email(email);
 
     let found = user_emails::Entity::find()
-            .filter(user_emails::Column::Email.eq(email.clone()))
-            .find_also_related(users::Entity)
-            .one(db)
-            .await?
-            .and_then(|(email, user)| user.map(|u| (u, email)));
+        .filter(user_emails::Column::Email.eq(email.clone()))
+        .find_also_related(users::Entity)
+        .one(db)
+        .await?
+        .and_then(|(email, user)| user.map(|u| (u, email)));
 
     match found {
         Some((user, email_row)) => {
             // Do not reveal whether the email exists. The caller should always get a success response.
             // Log the attempt for monitoring, but do not return an error to the user.
             if check_account_suspended(&user).is_some() {
-                tracing::warn!("Password reset requested for suspended account: {} ({})", user.id, email);
+                tracing::warn!(
+                    "Password reset requested for suspended account: {} ({})",
+                    user.id,
+                    email
+                );
                 return Ok(());
             }
 
             if email_row.verified_at.is_none() {
-                tracing::warn!("Password reset requested for unverified email: {} ({})", user.id, email);
+                tracing::warn!(
+                    "Password reset requested for unverified email: {} ({})",
+                    user.id,
+                    email
+                );
                 return Ok(());
             }
 
@@ -356,7 +357,8 @@ pub async fn password_forgot(
             };
 
             if let Err(err) =
-                email_service::send_password_reset(config, &email_row.email, &user.locale, &token).await
+                email_service::send_password_reset(config, &email_row.email, &user.locale, &token)
+                    .await
             {
                 tracing::error!(error = ?err, user_id = %user.id, "failed to send password reset email");
             }
@@ -382,18 +384,18 @@ pub async fn password_reset(
     // Check if the password is already compromised
     reject_if_compromised(config, &new_password).await?;
 
-    let token = auth_token_service::consume(db, secret, domain::types::TokenKind::PasswordReset).await?;
+    let token =
+        auth_token_service::consume(db, secret, domain::types::TokenKind::PasswordReset).await?;
     let user = users::Entity::find_by_id(token.user_id)
         .one(db)
         .await?
         .ok_or(AuthError::InvalidCredentials)?;
 
-    let email_row = user_emails::Entity::find_by_id(
-        token.email_id.ok_or(AuthError::InvalidCredentials)?,
-    )
-    .one(db)
-    .await?
-    .ok_or(AuthError::InvalidCredentials)?;
+    let email_row =
+        user_emails::Entity::find_by_id(token.email_id.ok_or(AuthError::InvalidCredentials)?)
+            .one(db)
+            .await?
+            .ok_or(AuthError::InvalidCredentials)?;
 
     let hashed_password = password_service::hash_password(new_password).await?;
 
@@ -404,7 +406,13 @@ pub async fn password_reset(
         .exec(&txn)
         .await?;
 
-    session_service::revoke_all(&txn, user.id, domain::types::RevokedReason::PasswordReset, None).await?;
+    session_service::revoke_all(
+        &txn,
+        user.id,
+        domain::types::RevokedReason::PasswordReset,
+        None,
+    )
+    .await?;
 
     txn.commit().await?;
     // TODO(2.13): audit entry, and notify the user by mail.
@@ -456,7 +464,6 @@ pub async fn password_change(
         return Err(AuthError::InvalidCredentials);
     }
 
-
     let hashed_password = password_service::hash_password(new_password).await?;
 
     let txn = db.begin().await?;
@@ -475,7 +482,13 @@ pub async fn password_change(
         .exec(&txn)
         .await?;
 
-    session_service::revoke_all(&txn, user.id, domain::types::RevokedReason::PasswordChange, except).await?;
+    session_service::revoke_all(
+        &txn,
+        user.id,
+        domain::types::RevokedReason::PasswordChange,
+        except,
+    )
+    .await?;
 
     txn.commit().await?;
     // TODO(2.13): audit entry and notification mail.
@@ -499,7 +512,9 @@ pub async fn password_change(
 
 /// Marks an address as verified.
 pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), AuthError> {
-    let token = auth_token_service::consume(db, secret, domain::types::TokenKind::EmailVerification).await?;
+    let token =
+        auth_token_service::consume(db, secret, domain::types::TokenKind::EmailVerification)
+            .await?;
 
     let email_id = token.email_id.ok_or(AuthError::InvalidCredentials)?;
 
@@ -549,7 +564,6 @@ pub async fn resend_verification(
 
     Ok(())
 }
-
 
 pub(crate) fn suspension_error(
     suspended_at: Option<DateTimeWithTimeZone>,

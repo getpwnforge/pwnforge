@@ -8,7 +8,8 @@ pub struct Model {
     #[sea_orm(
         primary_key,
         auto_increment = false,
-        column_type = "custom(\"citext\")", save_as = "citext"
+        column_type = "custom(\"citext\")",
+        save_as = "citext"
     )]
     pub domain: String,
     #[sea_orm(column_type = "Text", nullable)]

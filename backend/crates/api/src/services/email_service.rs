@@ -1,10 +1,9 @@
 use crate::config::{Config, EmailBackend, SmtpTls};
+use askama::Template;
 use lettre::{
-    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
-    message::MultiPart,
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::MultiPart,
     transport::smtp::authentication::Credentials,
 };
-use askama::Template;
 use rust_i18n::t;
 use thiserror::Error;
 
@@ -148,7 +147,6 @@ pub async fn send_password_reset(
     let footer = t!("email.common.footer", locale = locale).to_string();
     let subject = t!("email.password_reset.subject", locale = locale).to_string();
 
-
     let html = PasswordResetHtml {
         locale: locale.to_string(),
         greeting: greeting.clone(),
@@ -216,7 +214,6 @@ pub async fn send_email_verification(
     .render()?;
 
     send(config, to, &subject, &html, &text).await
-
 }
 
 pub async fn send_security_alert(
@@ -242,8 +239,12 @@ pub async fn send_security_alert(
 
     // Absent values get a translated placeholder rather than an empty cell:
     // a blank row reads as a rendering bug, not as missing information.
-    let ip_address = ip_address.map(str::to_owned).unwrap_or_else(|| unknown.clone());
-    let user_agent = user_agent.map(str::to_owned).unwrap_or_else(|| unknown.clone());
+    let ip_address = ip_address
+        .map(str::to_owned)
+        .unwrap_or_else(|| unknown.clone());
+    let user_agent = user_agent
+        .map(str::to_owned)
+        .unwrap_or_else(|| unknown.clone());
 
     let html = SecurityAlertHtml {
         locale: locale.to_owned(),
@@ -339,7 +340,9 @@ async fn send(
                 .await?;
 
             if !response.status().is_success() {
-                return Err(EmailError::Rejected(response.text().await.unwrap_or_default()));
+                return Err(EmailError::Rejected(
+                    response.text().await.unwrap_or_default(),
+                ));
             }
 
             Ok(())
@@ -352,7 +355,9 @@ async fn send(
 fn smtp_transport(config: &Config) -> Result<AsyncSmtpTransport<Tokio1Executor>, EmailError> {
     let mut builder = match config.smtp_tls {
         SmtpTls::Implicit => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)?,
-        SmtpTls::StartTls => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)?,
+        SmtpTls::StartTls => {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)?
+        }
         SmtpTls::None => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host),
     }
     .port(config.smtp_port);
@@ -367,7 +372,6 @@ fn smtp_transport(config: &Config) -> Result<AsyncSmtpTransport<Tokio1Executor>,
 
     Ok(builder.build())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -393,7 +397,10 @@ mod tests {
 
             assert!(html.contains(link), "link missing in {locale}");
             // Catches a variable that was never substituted.
-            assert!(!html.contains("{{"), "unsubstituted placeholder in {locale}");
+            assert!(
+                !html.contains("{{"),
+                "unsubstituted placeholder in {locale}"
+            );
             assert!(html.contains(&format!(r#"lang="{locale}""#)));
         }
     }

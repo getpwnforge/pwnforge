@@ -1,7 +1,10 @@
 // crates/api/src/middleware/setup.rs
-use crate::{services::setup_service::{self, SetupError}, state::AppState, error::AppError};
+use crate::{
+    error::AppError,
+    services::setup_service::{self, SetupError},
+    state::AppState,
+};
 use axum::{extract::FromRequestParts, http::request::Parts};
-
 
 /// Proof that the caller holds the boot token.
 ///

@@ -1,9 +1,5 @@
 use domain::{entities::instance_audit_logs, types::AuditAction};
-use sea_orm::{
-    ConnectionTrait, Set, ActiveModelTrait,
-    prelude::IpNetwork,
-    DbErr,
-};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, Set, prelude::IpNetwork};
 use thiserror::Error;
 use uuid::Uuid;
 

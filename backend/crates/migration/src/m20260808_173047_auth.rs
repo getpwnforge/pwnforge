@@ -378,7 +378,12 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(RefreshTokens::UserId).uuid().not_null())
-                    .col(ColumnDef::new(RefreshTokens::TokenHash).text().not_null().unique_key())
+                    .col(
+                        ColumnDef::new(RefreshTokens::TokenHash)
+                            .text()
+                            .not_null()
+                            .unique_key(),
+                    )
                     .col(
                         ColumnDef::new(RefreshTokens::ExpiresAt)
                             .timestamp_with_time_zone()

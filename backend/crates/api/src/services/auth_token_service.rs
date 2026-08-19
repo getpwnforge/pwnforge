@@ -1,14 +1,10 @@
 // crates/api/src/services/auth_token_service.rs
 use crate::services::token_service::{self, OpaqueToken};
 use chrono::{Duration, Utc};
-use domain::{
-    entities::{auth_tokens},
-    types::{TokenKind},
-};
+use domain::{entities::auth_tokens, types::TokenKind};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, Set, TransactionTrait,
-    sea_query::Expr,
-    DbErr
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
+    QueryFilter, Set, TransactionTrait, sea_query::Expr,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -30,7 +26,12 @@ pub enum AuthTokenError {
 
 /// Called by password_forgot, email verification send and resend.
 /// Calls invalidate_pending first.
-pub async fn issue(db: &DatabaseConnection, user_id: Uuid, email_id: Uuid, kind: TokenKind) -> Result<String, AuthTokenError> {
+pub async fn issue(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    email_id: Uuid,
+    kind: TokenKind,
+) -> Result<String, AuthTokenError> {
     let txn = db.begin().await?;
 
     invalidate_pending(&txn, user_id, kind).await?;
@@ -55,8 +56,11 @@ pub async fn issue(db: &DatabaseConnection, user_id: Uuid, email_id: Uuid, kind:
 }
 
 /// Called by password_reset and email_verify. Marks used_at.
-pub async fn consume(db: &DatabaseConnection, secret: &str, kind: TokenKind) -> Result<auth_tokens::Model, AuthTokenError> {
-
+pub async fn consume(
+    db: &DatabaseConnection,
+    secret: &str,
+    kind: TokenKind,
+) -> Result<auth_tokens::Model, AuthTokenError> {
     let secret_hash = token_service::hash_opaque_token(secret);
 
     let token = auth_tokens::Entity::find()
@@ -85,7 +89,11 @@ pub async fn consume(db: &DatabaseConnection, secret: &str, kind: TokenKind) -> 
 }
 
 // Private, called by issue: only one live link per kind.
-async fn invalidate_pending(txn: &DatabaseTransaction, user_id: Uuid, kind: TokenKind) -> Result<(), DbErr> {
+async fn invalidate_pending(
+    txn: &DatabaseTransaction,
+    user_id: Uuid,
+    kind: TokenKind,
+) -> Result<(), DbErr> {
     auth_tokens::Entity::update_many()
         .col_expr(auth_tokens::Column::UsedAt, Expr::current_timestamp())
         .filter(auth_tokens::Column::UserId.eq(user_id))
@@ -99,10 +107,8 @@ async fn invalidate_pending(txn: &DatabaseTransaction, user_id: Uuid, kind: Toke
 
 // Private: 1h for a reset, 24h for a verification.
 fn ttl_for(kind: TokenKind) -> Duration {
-
     match kind {
         TokenKind::EmailVerification => Duration::hours(24),
         TokenKind::PasswordReset => Duration::hours(1),
     }
-
 }

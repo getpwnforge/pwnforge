@@ -2,7 +2,6 @@ use crate::dto::auth::USERNAME_RE;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-
 /// Answered without a token: the frontend needs it to decide whether to show
 /// the wizard at all, before it has anything to authenticate with.
 #[derive(Serialize)]

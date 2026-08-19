@@ -1,9 +1,11 @@
 // domain/src/dto/auth.rs
 use crate::entities::{user_emails, users};
 use regex::Regex;
-use sea_orm::{entity::prelude::IpNetwork, prelude::DateTimeUtc, sea_query::value::prelude::rust_decimal::str};
+use sea_orm::{
+    entity::prelude::IpNetwork, prelude::DateTimeUtc, sea_query::value::prelude::rust_decimal::str,
+};
 use serde::{Deserialize, Serialize};
-use std::{sync::LazyLock};
+use std::sync::LazyLock;
 use uuid::Uuid;
 use validator::Validate;
 

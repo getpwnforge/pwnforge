@@ -54,7 +54,7 @@ impl MigrationTrait for Migration {
                     )
                     .col(
                         ColumnDef::new(InstanceSettings::SetupCompletedAt)
-                            .timestamp_with_time_zone()
+                            .timestamp_with_time_zone(),
                     )
                     .col(
                         ColumnDef::new(InstanceSettings::UpdatedAt)
@@ -76,7 +76,11 @@ impl MigrationTrait for Migration {
                     .into_table(InstanceSettings::Table)
                     .columns([InstanceSettings::Id])
                     .values_panic([1.into()])
-                    .on_conflict(OnConflict::column(InstanceSettings::Id).do_nothing().to_owned())
+                    .on_conflict(
+                        OnConflict::column(InstanceSettings::Id)
+                            .do_nothing()
+                            .to_owned(),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -90,7 +94,6 @@ impl MigrationTrait for Migration {
             .await?;
 
         Ok(())
-
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {

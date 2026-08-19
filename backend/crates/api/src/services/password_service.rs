@@ -1,13 +1,13 @@
 // crates/api/src/services/password_service.rs
 use argon2::password_hash::{
-    PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::{OsRng, RngCore},
+    PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+    rand_core::{OsRng, RngCore},
 };
 use argon2::{Algorithm, Argon2, Params, Version};
+use sha1::{Digest, Sha1};
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
-use sha1::{Digest, Sha1};
 use thiserror::Error;
-
 
 const API_URL: &str = "https://api.pwnedpasswords.com/range";
 const TIMEOUT: Duration = Duration::from_secs(3);
@@ -35,9 +35,6 @@ pub enum PasswordError {
 pub enum HibpError {
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
-
-    #[error("request timed out")]
-    Timeout,
 }
 
 /// Returns a reference to a static Argon2 instance with the recommended parameters.
@@ -137,6 +134,7 @@ pub static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
 /// without leaving a sentinel value in the column: verify_password keeps its
 /// usual behaviour and timing, and no code path has to special-case an
 /// "unusable" password.
+#[expect(dead_code, reason = "consumed by the sessions list (2.13 frontend)")]
 pub async fn unusable_hash() -> Result<String, PasswordError> {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);

@@ -1,16 +1,17 @@
 // crates/api/src/services/session_service.rs
-use crate::services::{audit_service::{self, AuditContext, AuditError, AuditTarget}, jwt_service, token_service};
+use crate::services::{
+    audit_service::{self, AuditContext, AuditError, AuditTarget},
+    jwt_service, token_service,
+};
 use chrono::Utc;
 use domain::{
-    entities::{refresh_tokens},
-    dto::auth::{RotatedSession, SessionContext, IssuedSession},
+    dto::auth::{IssuedSession, RotatedSession, SessionContext},
+    entities::refresh_tokens,
     types::RevokedReason,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
-    TransactionTrait, ConnectionTrait,
-    sea_query::Expr,
-    DbErr,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
+    QueryFilter, Set, TransactionTrait, sea_query::Expr,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -34,7 +35,11 @@ pub enum SessionError {
 }
 
 /// Called by auth_service::login and, later, the OAuth callback.
-pub async fn issue(db: &DatabaseConnection, user_id: Uuid, ctx: SessionContext) -> Result<IssuedSession, SessionError> {
+pub async fn issue(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    ctx: SessionContext,
+) -> Result<IssuedSession, SessionError> {
     let refresh_token = token_service::generate_opaque_token();
 
     // Store the refresh token in the database, associated with the user.
@@ -53,23 +58,32 @@ pub async fn issue(db: &DatabaseConnection, user_id: Uuid, ctx: SessionContext) 
     .insert(db)
     .await?;
 
-    Ok(IssuedSession { secret: refresh_token.secret, session_id: issued_session.id })
+    Ok(IssuedSession {
+        secret: refresh_token.secret,
+        session_id: issued_session.id,
+    })
 }
 
 /// Called by auth_service::refresh. Calls revoke_all internally when it
 /// detects a replayed token.
-pub async fn rotate(db: &DatabaseConnection, presented: &str, ctx: SessionContext) -> Result<RotatedSession, SessionError> {
-    let token = find_by_secret(db, presented).await?.ok_or(SessionError::NotFound)?;
+pub async fn rotate(
+    db: &DatabaseConnection,
+    presented: &str,
+    ctx: SessionContext,
+) -> Result<RotatedSession, SessionError> {
+    let token = find_by_secret(db, presented)
+        .await?
+        .ok_or(SessionError::NotFound)?;
 
     // Reuse of a revoked token means the chain has been duplicated: either an
     // attacker or the legitimate user is replaying a copy. Revoke every live
     // token of this user so both are forced to re-authenticate.
     if token.revoked_at.is_some() {
-        let was_rotated =
-            token.revoked_reason.as_deref() == Some(RevokedReason::Rotated.as_str());
+        let was_rotated = token.revoked_reason.as_deref() == Some(RevokedReason::Rotated.as_str());
 
         if was_rotated {
-            let sessions_revoked = revoke_all(db, token.user_id, RevokedReason::ReuseDetected, None).await?;
+            let sessions_revoked =
+                revoke_all(db, token.user_id, RevokedReason::ReuseDetected, None).await?;
             tracing::warn!(
                 user_id = %token.user_id,
                 "refresh token reuse detected, all sessions revoked"
@@ -144,8 +158,14 @@ pub async fn rotate(db: &DatabaseConnection, presented: &str, ctx: SessionContex
 }
 
 /// Called by auth_service::logout. Idempotent.
-pub async fn revoke(db: &DatabaseConnection, presented: &str, reason: RevokedReason) -> Result<(), SessionError> {
-    let token = find_by_secret(db, presented).await?.ok_or(SessionError::NotFound)?;
+pub async fn revoke(
+    db: &DatabaseConnection,
+    presented: &str,
+    reason: RevokedReason,
+) -> Result<(), SessionError> {
+    let token = find_by_secret(db, presented)
+        .await?
+        .ok_or(SessionError::NotFound)?;
 
     if token.revoked_at.is_some() {
         return Ok(());
@@ -165,23 +185,33 @@ pub async fn revoke(db: &DatabaseConnection, presented: &str, reason: RevokedRea
 
 /// Called by rotate (reuse), password_reset, password_change,
 /// admin_service::suspend_user (2.13) and the CLI (2.24).
-pub async fn revoke_all<C: ConnectionTrait>(db: &C, user_id: Uuid, reason: RevokedReason, except: Option<Uuid>) -> Result<u64, SessionError> {
+pub async fn revoke_all<C: ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+    reason: RevokedReason,
+    except: Option<Uuid>,
+) -> Result<u64, SessionError> {
     let update_result = refresh_tokens::Entity::update_many()
-            .col_expr(refresh_tokens::Column::RevokedAt, Expr::current_timestamp())
-            .col_expr(
-            refresh_tokens::Column::RevokedReason, Expr::value(reason.as_str().to_owned())
-            )
-            .filter(refresh_tokens::Column::UserId.eq(user_id))
-            .filter(refresh_tokens::Column::RevokedAt.is_null())
-            .filter(refresh_tokens::Column::Id.ne(except.unwrap_or_else(Uuid::nil)))
-            .exec(db)
-            .await?;
+        .col_expr(refresh_tokens::Column::RevokedAt, Expr::current_timestamp())
+        .col_expr(
+            refresh_tokens::Column::RevokedReason,
+            Expr::value(reason.as_str().to_owned()),
+        )
+        .filter(refresh_tokens::Column::UserId.eq(user_id))
+        .filter(refresh_tokens::Column::RevokedAt.is_null())
+        .filter(refresh_tokens::Column::Id.ne(except.unwrap_or_else(Uuid::nil)))
+        .exec(db)
+        .await?;
 
     Ok(update_result.rows_affected)
 }
 
 /// List all active (non-revoked, non-expired) refresh tokens for a user. Used by the CLI and the web UI.
-pub async fn list_active(db: &DatabaseConnection, user_id: Uuid) -> Result<Vec<refresh_tokens::Model>, SessionError> {
+#[expect(dead_code, reason = "consumed by the sessions list (2.13 frontend)")]
+pub async fn list_active(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<Vec<refresh_tokens::Model>, SessionError> {
     let tokens = refresh_tokens::Entity::find()
         .filter(refresh_tokens::Column::UserId.eq(user_id))
         .filter(refresh_tokens::Column::RevokedAt.is_null())
@@ -213,12 +243,14 @@ pub async fn find_session_id(
     Ok(id)
 }
 
-async fn find_by_secret(db: &DatabaseConnection, presented: &str) -> Result<Option<refresh_tokens::Model>, DbErr> {
+async fn find_by_secret(
+    db: &DatabaseConnection,
+    presented: &str,
+) -> Result<Option<refresh_tokens::Model>, DbErr> {
     let token_hash = token_service::hash_opaque_token(presented);
 
     refresh_tokens::Entity::find()
         .filter(refresh_tokens::Column::TokenHash.eq(token_hash))
         .one(db)
         .await
-
 }

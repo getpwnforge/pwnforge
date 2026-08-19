@@ -1,17 +1,27 @@
 // crates/api/src/routes/auth.rs
 use crate::config::Config;
 use crate::middleware::{auth::AuthUser, client_ip::ClientIp};
-use crate::services::{jwt_service, rate_limit_service::{self, RateLimitDecision}};
+use crate::services::{
+    jwt_service,
+    rate_limit_service::{self, RateLimitDecision},
+};
 use crate::{error::AppError, services::auth_service, state::AppState};
 use axum::{
+    Json, Router,
     extract::ConnectInfo,
+    extract::State,
+    http::StatusCode,
     http::{HeaderMap, header},
-    Json, Router, extract::State, http::StatusCode, routing::get, routing::post,
+    routing::get,
+    routing::post,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use domain::dto::auth::{EmailVerifyRequest, LoginRequest, PasswordChangeRequest, PasswordForgotRequest, PasswordResetRequest, RegisterRequest, UserResponse, SessionContext};
+use domain::dto::auth::{
+    EmailVerifyRequest, LoginRequest, PasswordChangeRequest, PasswordForgotRequest,
+    PasswordResetRequest, RegisterRequest, SessionContext, UserResponse,
+};
 use sea_orm::prelude::IpNetwork;
-use std::net::{SocketAddr, IpAddr};
+use std::net::{IpAddr, SocketAddr};
 use time::Duration;
 use validator::Validate;
 
@@ -63,13 +73,7 @@ async fn login(
     }
 
     let ctx = session_context(&headers, client_ip);
-    let logged_in = auth_service::login(
-        &state.db,
-        payload,
-        &state.jwt_keys.encoding,
-        ctx,
-    )
-    .await?;
+    let logged_in = auth_service::login(&state.db, payload, &state.jwt_keys.encoding, ctx).await?;
 
     if let Err(err) = rate_limit_service::reset_login_attempts(&mut redis, &identifier).await {
         tracing::error!(error = ?err, "failed to reset login rate limit after successful login");
@@ -100,13 +104,8 @@ async fn refresh(
         .to_owned();
 
     let ctx = session_context(&headers, client_ip);
-    let refreshed = auth_service::refresh(
-        &state.db,
-        &state.jwt_keys.encoding,
-        &refresh_token,
-        ctx,
-    )
-    .await?;
+    let refreshed =
+        auth_service::refresh(&state.db, &state.jwt_keys.encoding, &refresh_token, ctx).await?;
 
     let jar = set_auth_cookies(
         jar,
@@ -149,7 +148,13 @@ async fn password_forgot(
 
     let rate_limit_ip = ip.unwrap_or_else(|| remote.ip());
 
-    match rate_limit_service::check_password_forgot(&mut state.redis.clone(), &payload.email, rate_limit_ip).await {
+    match rate_limit_service::check_password_forgot(
+        &mut state.redis.clone(),
+        &payload.email,
+        rate_limit_ip,
+    )
+    .await
+    {
         Ok(RateLimitDecision::Limited { retry_after_secs }) => {
             return Err(AppError::RateLimited { retry_after_secs });
         }
@@ -191,7 +196,14 @@ async fn password_reset(
 
     let ctx = session_context(&headers, ip);
 
-    auth_service::password_reset(&state.db, &state.config, &payload.token, payload.new_password, ctx).await?;
+    auth_service::password_reset(
+        &state.db,
+        &state.config,
+        &payload.token,
+        payload.new_password,
+        ctx,
+    )
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

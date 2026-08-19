@@ -1,7 +1,10 @@
 // crates/api/src/middleware/auth.rs
 use crate::{
     error::AppError,
-    services::{auth_service::{self, AuthError}, jwt_service},
+    services::{
+        auth_service::{self, AuthError},
+        jwt_service,
+    },
     state::AppState,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};

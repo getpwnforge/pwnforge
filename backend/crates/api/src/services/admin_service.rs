@@ -1,16 +1,24 @@
+#![expect(dead_code, reason = "consumed by the admin CLI (2.23 to 2.26)")]
 use crate::{
     config::Config,
     middleware::auth::suspension_cache_key,
     services::{
-        audit_service::{self, AuditContext, AuditError}, auth_service, auth_token_service::{self, AuthTokenError}, email_service::{self, EmailError}, password_service::{self, PasswordError}, session_service::{self, SessionError, revoke_all}
+        audit_service::{self, AuditContext, AuditError},
+        auth_service,
+        auth_token_service::{self, AuthTokenError},
+        email_service::{self, EmailError},
+        password_service::{self, PasswordError},
+        session_service::{self, SessionError, revoke_all},
     },
 };
 use domain::entities::users;
-use redis::{aio::ConnectionManager, AsyncCommands};
-use sea_orm::{ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, TransactionTrait, prelude::DateTimeWithTimeZone, sea_query::Expr};
+use redis::{AsyncCommands, aio::ConnectionManager};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait,
+    QueryFilter, TransactionTrait, prelude::DateTimeWithTimeZone, sea_query::Expr,
+};
 use thiserror::Error;
 use uuid::Uuid;
-
 
 #[derive(Debug, Error)]
 pub enum AdminError {
@@ -60,7 +68,6 @@ pub async fn suspend_user(
         .await?
         .ok_or(AdminError::UserNotFound)?;
 
-
     if Some(user.id) == ctx.actor_id {
         return Err(AdminError::SelfTarget);
     }
@@ -70,14 +77,22 @@ pub async fn suspend_user(
     users::Entity::update_many()
         .col_expr(users::Column::SuspendedAt, Expr::current_timestamp())
         .col_expr(users::Column::SuspendedUntil, Expr::value(until))
-        .col_expr(users::Column::SuspendedReason, Expr::value(reason.to_owned()))
+        .col_expr(
+            users::Column::SuspendedReason,
+            Expr::value(reason.to_owned()),
+        )
         .col_expr(users::Column::SuspendedBy, Expr::value(ctx.actor_id))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
         .await?;
 
-    let revoked_count = session_service::revoke_all(&txn, user.id, domain::types::RevokedReason::AdminRevoked, None)
-        .await?;
+    let revoked_count = session_service::revoke_all(
+        &txn,
+        user.id,
+        domain::types::RevokedReason::AdminRevoked,
+        None,
+    )
+    .await?;
 
     // Record the action after the session revocation, so the log entry is not lost if the transaction fails.
     audit_service::record(
@@ -128,14 +143,19 @@ pub async fn unsuspend_user(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
-        .col_expr(users::Column::SuspendedAt, Expr::value(None::<DateTimeWithTimeZone>))
-        .col_expr(users::Column::SuspendedUntil, Expr::value(None::<DateTimeWithTimeZone>))
+        .col_expr(
+            users::Column::SuspendedAt,
+            Expr::value(None::<DateTimeWithTimeZone>),
+        )
+        .col_expr(
+            users::Column::SuspendedUntil,
+            Expr::value(None::<DateTimeWithTimeZone>),
+        )
         .col_expr(users::Column::SuspendedReason, Expr::value(None::<String>))
         .col_expr(users::Column::SuspendedBy, Expr::value(None::<Uuid>))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
         .await?;
-
 
     // Record the action after the session revocation, so the log entry is not lost if the transaction fails.
     audit_service::record(
@@ -295,15 +315,19 @@ pub async fn force_password_reset(
 
     let txn = db.begin().await?;
 
-
     users::Entity::update_many()
         .col_expr(users::Column::PasswordHash, Expr::value(locked_hash))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
         .await?;
 
-    let session_count = revoke_all(&txn, user_id, domain::types::RevokedReason::AdminForcePasswordReset, None)
-        .await?;
+    let session_count = revoke_all(
+        &txn,
+        user_id,
+        domain::types::RevokedReason::AdminForcePasswordReset,
+        None,
+    )
+    .await?;
 
     audit_service::record(
         &txn,
@@ -315,7 +339,7 @@ pub async fn force_password_reset(
             workspace_id: None,
         },
         reason,
-        serde_json::json!({ "sessions_revoked": session_count })
+        serde_json::json!({ "sessions_revoked": session_count }),
     )
     .await?;
 
@@ -332,7 +356,9 @@ pub async fn force_password_reset(
     )
     .await?;
 
-    if let Err(err) = email_service::send_password_reset(config, &primary_email.email, &user.locale, &token).await {
+    if let Err(err) =
+        email_service::send_password_reset(config, &primary_email.email, &user.locale, &token).await
+    {
         tracing::warn!(error = ?err, %user_id, "failed to send password reset mail");
     }
 
@@ -353,8 +379,13 @@ pub async fn revoke_sessions(
     // then record UserSessionsRevokeAll with the count in meta.
     let txn = db.begin().await?;
 
-    let revoked_count = session_service::revoke_all(&txn, user_id, domain::types::RevokedReason::AdminRevoked, None)
-        .await?;
+    let revoked_count = session_service::revoke_all(
+        &txn,
+        user_id,
+        domain::types::RevokedReason::AdminRevoked,
+        None,
+    )
+    .await?;
 
     audit_service::record(
         &txn,
@@ -389,7 +420,7 @@ async fn admin_count<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
 /// Best effort by design: the cache is an optimisation, and its TTL bounds
 /// the damage of a failure here to thirty seconds.
 async fn invalidate_suspension_cache(redis: &mut ConnectionManager, user_id: Uuid) {
-        let key = suspension_cache_key(user_id);
+    let key = suspension_cache_key(user_id);
 
     if let Err(err) = redis.del::<_, ()>(&key).await {
         tracing::warn!(error = ?err, %user_id, "failed to invalidate suspension cache");

@@ -1,8 +1,10 @@
 // crates/api/src/tasks/cleanup.rs
 use crate::services::jwt_service;
 use chrono::Utc;
-use domain::entities::{refresh_tokens, auth_tokens};
-use sea_orm::{ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect, DbErr};
+use domain::entities::{auth_tokens, refresh_tokens};
+use sea_orm::{
+    ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
+};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -60,9 +62,7 @@ async fn clean_refresh_tokens(db: &DatabaseConnection) -> Result<u64, DbErr> {
             .filter(
                 Condition::any()
                     .add(refresh_tokens::Column::ExpiresAt.lt(now))
-                    .add(refresh_tokens::Column::RevokedAt.lt(
-                        cutoff,
-                    )),
+                    .add(refresh_tokens::Column::RevokedAt.lt(cutoff)),
             )
             .limit(BATCH_SIZE)
             .into_tuple()
