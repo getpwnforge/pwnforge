@@ -5,7 +5,8 @@ use axum::{Router, middleware};
 pub fn build_router(state: AppState) -> Router {
     let api_v1 = Router::new()
         .merge(routes::health::router())
-        .nest("/auth", routes::auth::router());
+        .nest("/auth", routes::auth::router())
+        .nest("/setup", routes::setup::router());
 
     Router::new()
         .nest("/api/v1", api_v1)

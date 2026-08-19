@@ -28,3 +28,17 @@ validator.workspace = true
 seed = { path = "../seed" }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 time = "0.3.55"
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "json",
+    "rustls",
+] }
+askama = "0.16.0"
+rust-i18n = "4.2.1"
+lettre = { version = "0.11.23", default-features = false, features = [
+    "builder",
+    "tokio1-rustls-tls",
+    "smtp-transport",
+] }
+sha1 = "0.11.0"
+chrono-tz = "0.10.4"
+subtle = "2.6.1"

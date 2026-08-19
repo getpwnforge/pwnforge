@@ -15,6 +15,10 @@ use state::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use crate::services::setup_service;
+
+rust_i18n::i18n!("locales", fallback = "en");
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -29,8 +33,8 @@ async fn main() -> anyhow::Result<()> {
     let redis_client = redis::Client::open(config.redis_url.as_str())?;
     let redis = redis_client.get_connection_manager().await?;
 
-    let encoding = jsonwebtoken::EncodingKey::from_secret(config.encryption_key.as_bytes());
-    let decoding = jsonwebtoken::DecodingKey::from_secret(config.encryption_key.as_bytes());
+    let encoding = jsonwebtoken::EncodingKey::from_secret(config.jwt_secret.as_bytes());
+    let decoding = jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes());
 
     // Run database migrations
     migration::Migrator::up(&db, None).await?;
@@ -38,11 +42,20 @@ async fn main() -> anyhow::Result<()> {
     // Run database seeding
     seed::run(&db).await?;
 
+    let setup_token = setup_service::issue_boot_token(&db, config.setup_token.as_deref()).await?;
+
+    if let Some(token) = &setup_token {
+        // warn! rather than info!: the operator must not miss it, and it is
+        // the one line that matters on a first boot.
+        tracing::warn!("Instance not set up yet. Open /setup and use token: {token}");
+    }
+
     let state = AppState {
         db: db.clone(),
         redis,
         config: Arc::new(config),
         jwt_keys: Arc::new(state::JwtKeys { encoding, decoding }),
+        setup_token: setup_token.map(Arc::new),
     };
 
     // Background cleanup: runs hourly for the lifetime of the process.

@@ -11,6 +11,7 @@ pub struct AppState {
     pub redis: ConnectionManager,
     pub config: Arc<Config>,
     pub jwt_keys: Arc<JwtKeys>,
+    pub setup_token: Option<Arc<String>>,
 }
 
 pub struct JwtKeys {
