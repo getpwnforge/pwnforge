@@ -1,0 +1,14 @@
+{% extends "layout.html.j2" %}
+
+{% block content %}
+<p>{{ greeting }}</p>
+<p>{{ body }}</p>
+<p style="padding:16px 0;">
+  <a href="{{ link }}"
+     style="display:inline-block;padding:12px 24px;background:#22c55e;color:#000;font-weight:bold;text-decoration:none;">
+    {{ cta }}
+  </a>
+</p>
+<p style="font-size:13px;color:#888;">{{ expiry }}</p>
+<p style="font-size:13px;color:#888;">{{ ignore_notice }}</p>
+{% endblock %}

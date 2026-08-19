@@ -1,0 +1,13 @@
+{# Plain text is not optional: some clients show it, and its absence hurts the
+   spam score. #}
+{{ greeting }}
+
+{{ body }}
+
+{{ cta }}: {{ link }}
+
+{{ expiry }}
+{{ ignore_notice }}
+
+--
+{{ footer }}

@@ -1,0 +1,101 @@
+# crates/api/locales/app.yml
+#
+# rust-i18n _version 2: one entry per key, every language grouped underneath.
+# A contributor adding a language sees immediately which keys are still
+# missing, which the one-file-per-language layout hides.
+#
+# Replaces en.yml and fr.yml: delete those two, the filename here does not
+# matter, only the _version marker does.
+
+_version: 2
+
+# --- Shared across every message ---
+
+email.common.greeting:
+  en: "Hi,"
+  fr: "Bonjour,"
+
+email.common.footer:
+  en: "You are receiving this because someone requested it on PwnForge."
+  fr: "Vous recevez ce message suite à une demande effectuée sur PwnForge."
+
+email.common.ignore_notice:
+  en: "If you did not request this, you can ignore this email."
+  fr: "Si vous n'êtes pas à l'origine de cette demande, ignorez ce message."
+
+email.common.unknown:
+  en: "Unknown"
+  fr: "Inconnu"
+
+email.common.label_when:
+  en: "When"
+  fr: "Date"
+
+email.common.label_ip:
+  en: "IP address"
+  fr: "Adresse IP"
+
+email.common.label_device:
+  en: "Device"
+  fr: "Appareil"
+
+# --- Password reset link ---
+
+email.password_reset.subject:
+  en: "Reset your PwnForge password"
+  fr: "Réinitialiser votre mot de passe PwnForge"
+
+email.password_reset.body:
+  en: "Someone asked to reset the password on your account."
+  fr: "Une réinitialisation du mot de passe de votre compte a été demandée."
+
+email.password_reset.cta:
+  en: "Set a new password"
+  fr: "Définir un nouveau mot de passe"
+
+email.password_reset.expiry:
+  en: "This link expires in one hour and can only be used once."
+  fr: "Ce lien expire dans une heure et ne peut servir qu'une fois."
+
+# --- Email verification link ---
+
+email.email_verification.subject:
+  en: "Confirm your email address"
+  fr: "Confirmez votre adresse email"
+
+email.email_verification.body:
+  en: "Confirm this address to finish setting up your account."
+  fr: "Confirmez cette adresse pour terminer la création de votre compte."
+
+email.email_verification.cta:
+  en: "Confirm my address"
+  fr: "Confirmer mon adresse"
+
+email.email_verification.expiry:
+  en: "This link expires in 24 hours."
+  fr: "Ce lien expire dans 24 heures."
+
+# --- Security alerts ---
+#
+# These carry no action link on purpose: an alert that asks the reader to click
+# is the exact shape a phishing message takes.
+
+email.security_alert.not_you:
+  en: "If this was not you, reset your password immediately and contact support."
+  fr: "Si vous n'êtes pas à l'origine de cette action, réinitialisez votre mot de passe immédiatement et contactez le support."
+
+email.security_alert.password_changed.subject:
+  en: "Your PwnForge password was changed"
+  fr: "Votre mot de passe PwnForge a été modifié"
+
+email.security_alert.password_changed.body:
+  en: "The password on your account was changed. Your other sessions have been signed out."
+  fr: "Le mot de passe de votre compte a été modifié. Vos autres sessions ont été déconnectées."
+
+email.security_alert.password_reset.subject:
+  en: "Your PwnForge password was reset"
+  fr: "Votre mot de passe PwnForge a été réinitialisé"
+
+email.security_alert.password_reset.body:
+  en: "Your password was reset using a link sent to this address. All sessions have been signed out."
+  fr: "Votre mot de passe a été réinitialisé via un lien envoyé à cette adresse. Toutes les sessions ont été déconnectées."
