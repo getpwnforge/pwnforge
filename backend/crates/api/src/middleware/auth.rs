@@ -1,12 +1,11 @@
 // crates/api/src/middleware/auth.rs
 use crate::{
     error::AppError,
-    services::{auth_service::AuthError, jwt_service},
+    services::{auth_service::{self, AuthError}, jwt_service},
     state::AppState,
 };
 use axum::{extract::FromRequestParts, http::request::Parts};
 use axum_extra::extract::CookieJar;
-use chrono::Utc;
 use domain::entities::users;
 use redis::AsyncCommands;
 use sea_orm::{EntityTrait, QuerySelect, prelude::DateTimeWithTimeZone};
@@ -64,20 +63,17 @@ struct SuspensionState {
 }
 
 impl SuspensionState {
-    /// Returns the error to reject with, or `None` when the account is usable.
-    /// A suspension with no `suspended_until` is permanent; one whose deadline
-    /// has passed is spent and no longer blocks.
     fn as_error(&self) -> Option<AuthError> {
-        self.suspended_at?;
-
-        match self.suspended_until {
-            Some(until) if until <= Utc::now() => None,
-            until => Some(AuthError::AccountSuspended {
-                until,
-                reason: self.suspended_reason.clone(),
-            }),
-        }
+        auth_service::suspension_error(
+            self.suspended_at,
+            self.suspended_until,
+            self.suspended_reason.clone(),
+        )
     }
+}
+
+pub(crate) fn suspension_cache_key(user_id: Uuid) -> String {
+    format!("user:{user_id}:suspension")
 }
 
 /// Resolves suspension state, reading through a short-lived Redis cache.
@@ -90,7 +86,7 @@ impl SuspensionState {
 /// requests would miss and the cache would buy nothing.
 async fn resolve_suspension(state: &AppState, user_id: Uuid) -> Result<SuspensionState, AppError> {
     let mut redis = state.redis.clone();
-    let key = format!("user:{user_id}:suspension");
+    let key = suspension_cache_key(user_id);
 
     let cached: Option<String> = redis.get(&key).await.unwrap_or(None);
 
@@ -133,6 +129,7 @@ async fn resolve_suspension(state: &AppState, user_id: Uuid) -> Result<Suspensio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     fn state(
         at: Option<DateTimeWithTimeZone>,

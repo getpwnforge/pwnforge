@@ -1,10 +1,16 @@
-// crates/api/src/services/auth_service.rs
+// crates/api/src/services/password_service.rs
 use argon2::password_hash::{
-    PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng,
+    PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::{OsRng, RngCore},
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use std::sync::{LazyLock, OnceLock};
+use std::time::Duration;
+use sha1::{Digest, Sha1};
 use thiserror::Error;
+
+
+const API_URL: &str = "https://api.pwnedpasswords.com/range";
+const TIMEOUT: Duration = Duration::from_secs(3);
 
 // OWASP recommends the following parameters for Argon2id:
 // - Memory cost: 19 MiB
@@ -18,13 +24,20 @@ const OUTPUT_HASH_LENGTH: usize = 32; // 32 bytes
 /// Errors that can occur during password hashing and verification.
 #[derive(Debug, Error)]
 pub enum PasswordError {
-    /// The Argon2 backend failed, or a stored hash could not be parsed.
     #[error("password hashing failed: {0}")]
     Hashing(#[from] argon2::password_hash::Error),
 
-    /// The blocking task was cancelled or panicked.
     #[error("password task failed to complete")]
     Join(#[from] tokio::task::JoinError),
+}
+
+#[derive(Debug, Error)]
+pub enum HibpError {
+    #[error("network error: {0}")]
+    Network(#[from] reqwest::Error),
+
+    #[error("request timed out")]
+    Timeout,
 }
 
 /// Returns a reference to a static Argon2 instance with the recommended parameters.
@@ -65,6 +78,32 @@ pub async fn hash_password(password: String) -> Result<String, PasswordError> {
     .await?
 }
 
+/// Checks a password against the Pwned Passwords range API using k-anonymity.
+///
+/// Network-bound, unlike the rest of this module. Kept here anyway because
+/// "is this password acceptable" is a property of the password, and callers
+/// should not have to know which third party answers that.
+pub async fn is_compromised(password: &str) -> Result<bool, HibpError> {
+    let hash = hex::encode_upper(Sha1::digest(password.as_bytes()));
+    let (prefix, suffix) = hash.split_at(5);
+
+    let body = reqwest::Client::new()
+        .get(format!("{API_URL}/{prefix}"))
+        // Asks the service to pad the response with fake entries, so the
+        // response size does not leak how many real matches exist.
+        .header("Add-Padding", "true")
+        .timeout(TIMEOUT)
+        .send()
+        .await?
+        .text()
+        .await?;
+
+    Ok(body
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .any(|(candidate, count)| candidate == suffix && count.trim() != "0"))
+}
+
 /// Verifies a plaintext password against a hashed password using Argon2id.
 ///
 /// Runs on a blocking thread pool: verification takes 50-100ms of CPU with the
@@ -94,9 +133,20 @@ pub static DUMMY_HASH: LazyLock<String> = LazyLock::new(|| {
         .to_string()
 });
 
+/// Produces a valid Argon2 hash of random bytes. Used to lock an account out
+/// without leaving a sentinel value in the column: verify_password keeps its
+/// usual behaviour and timing, and no code path has to special-case an
+/// "unusable" password.
+pub async fn unusable_hash() -> Result<String, PasswordError> {
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    hash_password(hex::encode(bytes)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn hash_then_verify_succeeds() {
@@ -125,5 +175,18 @@ mod tests {
     async fn malformed_hash_returns_error() {
         let result = verify_password("whatever".into(), "not-a-phc-string".into()).await;
         assert!(matches!(result, Err(PasswordError::Hashing(_))));
+    }
+
+    #[tokio::test]
+    #[ignore] // needs network access
+    async fn known_compromised_password_is_detected() {
+        assert!(is_compromised("password123").await.unwrap());
+    }
+
+    #[tokio::test]
+    #[ignore] // needs network access
+    async fn random_password_is_not_flagged() {
+        let unique = format!("pwnforge-{}", Uuid::now_v7());
+        assert!(!is_compromised(&unique).await.unwrap());
     }
 }

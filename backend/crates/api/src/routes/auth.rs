@@ -1,17 +1,17 @@
 // crates/api/src/routes/auth.rs
 use crate::config::Config;
-use crate::middleware::auth::AuthUser;
-use crate::middleware::client_ip::ClientIp;
-use crate::services::jwt_service;
-use crate::services::rate_limit_service::{self, RateLimitDecision};
+use crate::middleware::{auth::AuthUser, client_ip::ClientIp};
+use crate::services::{jwt_service, rate_limit_service::{self, RateLimitDecision}};
 use crate::{error::AppError, services::auth_service, state::AppState};
-use axum::extract::ConnectInfo;
-use axum::http::{HeaderMap, header};
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get, routing::post};
+use axum::{
+    extract::ConnectInfo,
+    http::{HeaderMap, header},
+    Json, Router, extract::State, http::StatusCode, routing::get, routing::post,
+};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use domain::dto::auth::{LoginRequest, RegisterRequest, UserResponse};
+use domain::dto::auth::{EmailVerifyRequest, LoginRequest, PasswordChangeRequest, PasswordForgotRequest, PasswordResetRequest, RegisterRequest, UserResponse, SessionContext};
 use sea_orm::prelude::IpNetwork;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use time::Duration;
 use validator::Validate;
 
@@ -22,6 +22,11 @@ pub fn router() -> Router<AppState> {
         .route("/refresh", post(refresh))
         .route("/logout", post(logout))
         .route("/me", get(me))
+        .route("/password/forgot", post(password_forgot))
+        .route("/password/reset", post(password_reset))
+        .route("/password/change", post(password_change))
+        .route("/email/verify", post(email_verify))
+        .route("/email/resend", post(email_resend))
 }
 
 async fn register(
@@ -57,17 +62,12 @@ async fn login(
         }
     }
 
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.chars().take(512).collect::<String>());
-    let ip_address = client_ip.map(IpNetwork::from);
+    let ctx = session_context(&headers, client_ip);
     let logged_in = auth_service::login(
         &state.db,
         payload,
         &state.jwt_keys.encoding,
-        user_agent,
-        ip_address,
+        ctx,
     )
     .await?;
 
@@ -98,17 +98,13 @@ async fn refresh(
         .ok_or(AppError::Unauthorized)?
         .value()
         .to_owned();
-    let ip_address = client_ip.map(IpNetwork::from);
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.chars().take(512).collect::<String>());
+
+    let ctx = session_context(&headers, client_ip);
     let refreshed = auth_service::refresh(
         &state.db,
         &state.jwt_keys.encoding,
         &refresh_token,
-        user_agent,
-        ip_address,
+        ctx,
     )
     .await?;
 
@@ -141,6 +137,126 @@ async fn logout(
 async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserResponse>, AppError> {
     let (model, email) = auth_service::current_user(&state.db, user.id).await?;
     Ok(Json(UserResponse::new(model, email)))
+}
+
+async fn password_forgot(
+    State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    Json(payload): Json<PasswordForgotRequest>,
+) -> Result<StatusCode, AppError> {
+    payload.validate()?;
+
+    let rate_limit_ip = ip.unwrap_or_else(|| remote.ip());
+
+    match rate_limit_service::check_password_forgot(&mut state.redis.clone(), &payload.email, rate_limit_ip).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            // Refuse rather than fail open: unlike login there is no password
+            // check underneath, so an unlimited endpoint here is a free mailer.
+            tracing::error!(error = ?err, "password reset rate limit unavailable, refusing");
+            return Err(AppError::ServiceUnavailable);
+        }
+    }
+
+    auth_service::password_forgot(&state.db, &state.config, &payload.email).await?;
+
+    // Always 202: the response must never depend on whether the account exists.
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn password_reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    Json(payload): Json<PasswordResetRequest>,
+) -> Result<StatusCode, AppError> {
+    payload.validate()?;
+
+    let rate_limit_ip = ip.unwrap_or_else(|| remote.ip());
+
+    match rate_limit_service::check_password_reset(&mut state.redis.clone(), rate_limit_ip).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            tracing::error!(error = ?err, "password reset rate limit unavailable, allowing request");
+        }
+    }
+
+    let ctx = session_context(&headers, ip);
+
+    auth_service::password_reset(&state.db, &state.config, &payload.token, payload.new_password, ctx).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn password_change(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
+    user: AuthUser,
+    jar: CookieJar,
+    Json(payload): Json<PasswordChangeRequest>,
+) -> Result<StatusCode, AppError> {
+    payload.validate()?;
+
+    // Absent is fine: without it every session is revoked, including this one.
+    let refresh_token = jar.get("refresh_token").map(|c| c.value().to_owned());
+
+    tracing::debug!(has_refresh = refresh_token.is_some(), "password change");
+
+    auth_service::password_change(
+        &state.db,
+        &state.config,
+        user.id,
+        refresh_token.as_deref(),
+        payload.current_password,
+        payload.new_password,
+        session_context(&headers, ip),
+    )
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn email_verify(
+    State(state): State<AppState>,
+    Json(payload): Json<EmailVerifyRequest>,
+) -> Result<StatusCode, AppError> {
+    // POST, not GET: mail clients and spam scanners prefetch links, and a GET
+    // would let them burn the token before the user clicks. The frontend page
+    // reads the token from the URL and posts it.
+    payload.validate()?;
+
+    auth_service::verify_email(&state.db, &payload.token).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn email_resend(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<StatusCode, AppError> {
+    // 1. Rate limit keyed on user_id: 1 per 60s, 5 per hour.
+    match rate_limit_service::check_email_resend(&mut state.redis.clone(), user.id).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            tracing::error!(error = ?err, "email resend rate limit unavailable, allowing request");
+        }
+    }
+    // 2. auth_service::resend_verification.
+    auth_service::resend_verification(&state.db, &state.config, user.id).await?;
+    // 3. 202.
+    Ok(StatusCode::ACCEPTED)
 }
 
 fn set_auth_cookies(jar: CookieJar, config: &Config, access: &str, refresh: &str) -> CookieJar {
@@ -182,4 +298,17 @@ fn clear_auth_cookies(jar: CookieJar, config: &Config) -> CookieJar {
         .build();
 
     jar.remove(access).remove(refresh)
+}
+
+fn session_context(headers: &HeaderMap, client_ip: Option<IpAddr>) -> SessionContext {
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        // Fully client-controlled: cap it before it reaches the database.
+        .map(|s| s.chars().take(512).collect::<String>());
+
+    SessionContext {
+        user_agent,
+        ip_address: client_ip.map(IpNetwork::from),
+    }
 }

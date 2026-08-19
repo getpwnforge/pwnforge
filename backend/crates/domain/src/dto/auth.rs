@@ -1,14 +1,14 @@
 // domain/src/dto/auth.rs
 use crate::entities::{user_emails, users};
 use regex::Regex;
-use sea_orm::prelude::DateTimeUtc;
+use sea_orm::{entity::prelude::IpNetwork, prelude::DateTimeUtc, sea_query::value::prelude::rust_decimal::str};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::{sync::LazyLock};
 use uuid::Uuid;
 use validator::Validate;
 
 // Alphanumeric, underscore and dash. Must start with a letter or digit.
-static USERNAME_RE: LazyLock<Regex> =
+pub static USERNAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").unwrap());
 
 pub struct RegisteredUser {
@@ -21,6 +21,22 @@ pub struct LoggedInUser {
     pub email: user_emails::Model,
     pub access_token: String,
     pub refresh_token: String,
+}
+
+pub struct SessionContext {
+    pub user_agent: Option<String>,
+    pub ip_address: Option<IpNetwork>,
+}
+
+pub struct IssuedSession {
+    pub secret: String,
+    pub session_id: Uuid,
+}
+
+pub struct RotatedSession {
+    pub user_id: Uuid,
+    pub secret: String,
+    pub session_id: Uuid,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -77,4 +93,38 @@ impl UserResponse {
             created_at: user.created_at.into(),
         }
     }
+}
+
+#[derive(Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordForgotRequest {
+    #[validate(email, length(max = 254))]
+    pub email: String,
+}
+
+#[derive(Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordResetRequest {
+    #[validate(length(min = 1, max = 128))]
+    pub token: String,
+
+    #[validate(length(min = 12, max = 128))]
+    pub new_password: String,
+}
+
+#[derive(Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordChangeRequest {
+    #[validate(length(max = 128))]
+    pub current_password: String,
+
+    #[validate(length(min = 12, max = 128))]
+    pub new_password: String,
+}
+
+#[derive(Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct EmailVerifyRequest {
+    #[validate(length(min = 1, max = 128))]
+    pub token: String,
 }
