@@ -9,4 +9,14 @@ ignore = [
   # binary. PwnForge does not deserialize rkyv archives anywhere.
   # Remove once rust_decimal moves to rkyv 0.8.
   "RUSTSEC-2026-0235",
+
+  # Transitive via jsonwebtoken's `rust_crypto` feature, which is monolithic:
+  # there is no way to enable HMAC without also pulling RSA. No fixed version
+  # exists upstream. PwnForge signs and verifies tokens with HS256 only, so the
+  # vulnerable RSA code path is compiled but never executed. Revisit if the
+  # instance ever adopts an asymmetric algorithm (RS256, PS256).
+  "RUSTSEC-2023-0071",
+
+  # Transitive build dependency, unmaintained but not vulnerable.
+  "RUSTSEC-2026-0173",
 ]

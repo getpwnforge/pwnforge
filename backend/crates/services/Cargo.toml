@@ -16,7 +16,7 @@ anyhow.workspace = true
 redis.workspace = true
 
 thiserror = "2.0.20"
-jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
 argon2 = "0.6.0"
 sha2 = "0.11.0"
 sha1 = "0.11.0"

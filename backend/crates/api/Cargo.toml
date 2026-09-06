@@ -19,7 +19,7 @@ migration = { path = "../migration" }
 uuid.workspace = true
 domain.workspace = true
 thiserror = "2.0.20"
-jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
 chrono.workspace = true
 validator.workspace = true
 seed = { path = "../seed" }

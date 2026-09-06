@@ -63,7 +63,7 @@ fn hasher() -> &'static Argon2<'static> {
 ///
 /// # Errors
 ///
-/// Returns [`PasswordError::Hashing`] if the Argon2 backend fails, or
+/// Returns [`PasswordError::Phc`] if the hash is malformed, or
 /// [`PasswordError::Join`] if the blocking task panicked.
 pub async fn hash_password(password: String) -> Result<String, PasswordError> {
     tokio::task::spawn_blocking(move || {
@@ -108,7 +108,7 @@ pub async fn is_compromised(password: &str) -> Result<bool, HibpError> {
 ///
 /// # Errors
 ///
-/// Returns [`PasswordError::Hashing`] if the Argon2 backend fails, or
+/// Returns [`PasswordError::Phc`] if the hash is malformed, or
 /// [`PasswordError::Join`] if the blocking task panicked.
 pub async fn verify_password(password: String, hash: String) -> Result<bool, PasswordError> {
     tokio::task::spawn_blocking(move || {
@@ -170,7 +170,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_hash_returns_error() {
         let result = verify_password("whatever".into(), "not-a-phc-string".into()).await;
-        assert!(matches!(result, Err(PasswordError::Hashing(_))));
+        assert!(matches!(result, Err(PasswordError::Phc(_))));
     }
 
     #[tokio::test]
