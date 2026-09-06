@@ -79,6 +79,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarRail, SidebarTrigger } from "../ui/sidebar";
 import { useSidebar } from "../ui/sidebar-context";
+import type { WsColor } from "@/lib/ws-color";
 
 
 function workspaceNav(id: string): NavItem[] {
@@ -391,6 +392,46 @@ function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   );
 }
 
+function WorkspaceTrigger({
+  workspace,
+  isLoading,
+}: Readonly<{
+  workspace: { name: string; type: string; platform?: string; color?: WsColor } | null;
+  isLoading: boolean;
+}>) {
+  const { t } = useTranslation("nav");
+
+  if (isLoading) return <TriggerSkeleton />;
+
+  if (!workspace) {
+    return (
+      <>
+        <div className="grid size-7.5 shrink-0 place-items-center rounded-md bg-surface-2 text-muted-foreground">
+          <Folder className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-text">
+            {t("sections.personalSpace")}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">{t("noWorkspaceOpen")}</div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <WsIcon name={workspace.name} color={workspace.color} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-text">{workspace.name}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {t(`workspacesTypes.${workspace.type}`)} · {workspace.platform}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const { t } = useTranslation('nav')
   const { isMobile } = useSidebar()
@@ -408,8 +449,6 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
     setOpen(false)
     navigate(`/w/${id}`)
   }
-
-  let triggerContent: React.ReactNode
 
   const commandList = (
     <Command>
@@ -465,41 +504,6 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
     </Command>
   )
 
-
-  if (currentId && isLoading) {
-    triggerContent = <TriggerSkeleton />
-  } else if (currentWorkspace) {
-    triggerContent = (
-      <>
-        <WsIcon name={currentWorkspace.name} color={currentWorkspace.color} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-text">
-            {currentWorkspace.name}
-          </div>
-          <div className="truncate text-xs text-muted-foreground">
-            {t(`workspacesTypes.${currentWorkspace.type}`)} · {currentWorkspace.platform}
-          </div>
-        </div>
-      </>
-    )
-  } else {
-    triggerContent = (
-      <>
-        <div className="grid size-7.5 shrink-0 place-items-center rounded-md bg-surface-2 text-muted-foreground">
-          <Folder className="size-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-text">
-            {t("sections.personalSpace")}
-          </div>
-          <div className="truncate text-xs text-muted-foreground">
-            {t("noWorkspaceOpen")}
-          </div>
-        </div>
-      </>
-    )
-  }
-
   if (collapsed) {
     let triggerIcon: React.ReactNode
 
@@ -538,7 +542,7 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
           aria-label={t("switchWorkspace")}
           className="flex w-full items-center gap-2.5 rounded-md border border-border-strong bg-surface p-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {triggerContent}
+          <WorkspaceTrigger workspace={currentWorkspace} isLoading={Boolean(currentId && isLoading)} />
           <ChevronDown
             className={`size-4 shrink-0 text-text-subtle transition-transform ${open ? "rotate-180" : ""}`}
           />

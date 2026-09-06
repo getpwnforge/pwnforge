@@ -7,7 +7,7 @@ interface TurnstileWidgetProps {
   onSuccess: (token: string) => void;
 }
 
-export function TurnstileWidget({ siteKey, widgetRef, onSuccess }: TurnstileWidgetProps) {
+export function TurnstileWidget({ siteKey, widgetRef, onSuccess }: Readonly<TurnstileWidgetProps>) {
   if (!siteKey) return null;
   return <Turnstile ref={widgetRef} siteKey={siteKey} onSuccess={onSuccess} />;
 }

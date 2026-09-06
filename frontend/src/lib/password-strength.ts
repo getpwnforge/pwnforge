@@ -22,8 +22,7 @@ let pending: Promise<boolean> | null = null;
 export function loadEstimator(): Promise<boolean> {
   if (estimator) return Promise.resolve(true);
 
-  if (!pending) {
-    pending = Promise.all([import("@zxcvbn-ts/core"), import("@zxcvbn-ts/language-common")])
+  pending ??= Promise.all([import("@zxcvbn-ts/core"), import("@zxcvbn-ts/language-common")])
       .then(([core, common]) => {
         // v4 dropped the `zxcvbn` / `zxcvbnOptions` singletons for a factory,
         // which is just as well: the options live on this instance instead of
@@ -41,7 +40,6 @@ export function loadEstimator(): Promise<boolean> {
         pending = null;
         return false;
       });
-  }
 
   return pending;
 }

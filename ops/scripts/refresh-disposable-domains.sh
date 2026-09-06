@@ -23,7 +23,7 @@ fi
 # change before it ever reaches the repo.
 LINE_COUNT=$(grep -cv -e '^[[:space:]]*$' -e '^[[:space:]]*#' "$TMP_FILE")
 
-if [ "$LINE_COUNT" -lt 3000 ] || [ "$LINE_COUNT" -gt 10000 ]; then
+if [[ "$LINE_COUNT" -lt 3000 ]] || [[ "$LINE_COUNT" -gt 10000 ]]; then
   echo "error: fetched list has $LINE_COUNT entries, expected between 3000 and 10000 — refusing to replace" >&2
   exit 1
 fi
