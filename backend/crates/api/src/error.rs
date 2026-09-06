@@ -1,21 +1,26 @@
 // crates/api/src/error.rs
-use crate::services::{
-    auth_service::AuthError, auth_token_service::AuthTokenError,
-    blocked_email_service::BlockedEmailError, email_service::EmailError,
-    instance_service::InstanceError, session_service::SessionError, setup_service::SetupError,
-};
 use axum::{
     Json,
+    extract::rejection::JsonRejection,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::json;
+use services::{
+    alert_service::AlertError, auth_service::AuthError, auth_token_service::AuthTokenError,
+    blocked_email_service::BlockedEmailError, contact_service::ContactError,
+    email_service::EmailError, instance_service::InstanceError, legal_service::LegalError,
+    session_service::SessionError, setup_service::SetupError,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error(transparent)]
     Validation(#[from] validator::ValidationErrors),
+
+    #[error(transparent)]
+    JsonBody(#[from] JsonRejection),
 
     #[error(transparent)]
     Auth(#[from] AuthError),
@@ -37,6 +42,15 @@ pub enum AppError {
 
     #[error(transparent)]
     Setup(#[from] SetupError),
+
+    #[error(transparent)]
+    Alert(#[from] AlertError),
+
+    #[error(transparent)]
+    Legal(#[from] LegalError),
+
+    #[error(transparent)]
+    Contact(#[from] ContactError),
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
@@ -65,6 +79,35 @@ impl IntoResponse for AppError {
                     .into_response()
             }
 
+            AppError::JsonBody(err) => {
+                // Logged, never returned: axum's message names the fields the
+                // endpoint expects, which hands a client-side schema to
+                // anyone probing the API. The log covers the only legitimate
+                // need for that detail, which is debugging.
+                tracing::debug!(error = ?err, "request body rejected");
+
+                let (status, code) = match &err {
+                    // Valid JSON, wrong shape: unknown field, wrong type,
+                    // missing required field. Same status as a validation
+                    // failure, since the request is well-formed but unusable.
+                    JsonRejection::JsonDataError(_) => {
+                        (StatusCode::UNPROCESSABLE_ENTITY, "invalid_body")
+                    }
+                    // Not valid JSON at all.
+                    JsonRejection::JsonSyntaxError(_) => {
+                        (StatusCode::BAD_REQUEST, "malformed_json")
+                    }
+                    JsonRejection::MissingJsonContentType(_) => {
+                        (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type")
+                    }
+                    // JsonRejection is non_exhaustive: BytesRejection today,
+                    // whatever axum adds tomorrow.
+                    _ => (StatusCode::BAD_REQUEST, "invalid_body"),
+                };
+
+                (status, Json(json!({ "error": code }))).into_response()
+            }
+
             AppError::Auth(err) => {
                 let (status, code) = match &err {
                     AuthError::UsernameTaken => (StatusCode::CONFLICT, "username_taken"),
@@ -77,12 +120,13 @@ impl IntoResponse for AppError {
                     AuthError::PublicSignupDisabled => {
                         (StatusCode::FORBIDDEN, "public_signup_disabled")
                     }
-                    AuthError::InvalidCredentials => {
+                    AuthError::InvalidCredentials
+                    | AuthError::AccountSuspended { .. }
+                    | AuthError::PendingDeletion => {
                         (StatusCode::UNAUTHORIZED, "invalid_credentials")
                     }
-                    AuthError::EmailNotVerified => (StatusCode::FORBIDDEN, "email_not_verified"),
-                    AuthError::AccountSuspended { .. } => {
-                        (StatusCode::FORBIDDEN, "account_suspended")
+                    AuthError::EmailNotVerified { .. } => {
+                        (StatusCode::FORBIDDEN, "email_not_verified")
                     }
                     AuthError::InvalidRefreshToken => {
                         (StatusCode::UNAUTHORIZED, "invalid_refresh_token")
@@ -119,6 +163,11 @@ impl IntoResponse for AppError {
                             (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
                         }
                     },
+                    AuthError::Legal(err) => {
+                        tracing::error!(error = ?err, "legal acceptance write failed during register");
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+                    AuthError::Turnstile(_) => (StatusCode::BAD_REQUEST, "turnstile_failed"),
                     // Internal failures: log the cause, return an opaque code.
                     _ => {
                         tracing::error!(error = ?err, "unhandled auth error");
@@ -126,7 +175,14 @@ impl IntoResponse for AppError {
                     }
                 };
 
-                (status, Json(json!({ "error": code }))).into_response()
+                let body = match err {
+                    AuthError::EmailNotVerified { resend_token } => {
+                        json!({ "error": code, "resend_token": resend_token })
+                    }
+                    _ => json!({ "error": code }),
+                };
+
+                (status, Json(body)).into_response()
             }
 
             AppError::RateLimited { retry_after_secs } => {
@@ -194,6 +250,9 @@ impl IntoResponse for AppError {
                     SetupError::Auth(AuthError::BlockedEmail(_)) => {
                         (StatusCode::UNPROCESSABLE_ENTITY, "email_domain_not_allowed")
                     }
+                    SetupError::Auth(AuthError::InvalidEmail) => {
+                        (StatusCode::UNPROCESSABLE_ENTITY, "invalid_email")
+                    }
 
                     _ => {
                         tracing::error!(error = ?err, "setup failure");
@@ -219,6 +278,64 @@ impl IntoResponse for AppError {
                 )
                     .into_response()
             }
+
+            AppError::Alert(err) => {
+                let (status, code) = match &err {
+                    AlertError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+                    AlertError::Audit(_) | AlertError::Db(_) => {
+                        tracing::error!(error = ?err, "alert store failure");
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+                };
+                (status, Json(json!({ "error": code }))).into_response()
+            }
+
+            AppError::Legal(err) => {
+                let (status, code) = match &err {
+                    LegalError::VersionStale => (StatusCode::CONFLICT, "legal_version_stale"),
+                    LegalError::AcceptanceRequired => {
+                        (StatusCode::FORBIDDEN, "legal_acceptance_required")
+                    }
+                    LegalError::Db(_) => {
+                        tracing::error!(error = ?err, "legal acceptance store failure");
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+                };
+
+                let body = match err {
+                    // Carry the current versions so the client can re-prompt
+                    // without a second round trip, same idea as the
+                    // resend_token on EmailNotVerified.
+                    LegalError::VersionStale => json!({
+                        "error": code,
+                        "current_terms_version": domain::legal::CURRENT_TERMS_VERSION,
+                        "current_privacy_version": domain::legal::CURRENT_PRIVACY_VERSION,
+                    }),
+                    _ => json!({ "error": code }),
+                };
+
+                (status, Json(body)).into_response()
+            }
+            AppError::Contact(err) => match &err {
+                ContactError::RateLimited { retry_after_secs } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({ "error": "rate_limited", "retry_after_secs": retry_after_secs })),
+                )
+                    .into_response(),
+                ContactError::Turnstile(_) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "turnstile_failed" })),
+                )
+                    .into_response(),
+                ContactError::Email(_) | ContactError::Redis(_) => {
+                    tracing::error!(error = ?err, "contact notification failed");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "internal_error" })),
+                    )
+                        .into_response()
+                }
+            },
         }
     }
 }

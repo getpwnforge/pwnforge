@@ -5,6 +5,10 @@ use axum::{Router, middleware};
 pub fn build_router(state: AppState) -> Router {
     let api_v1 = Router::new()
         .merge(routes::health::router())
+        .merge(routes::alerts::router())
+        .merge(routes::contact::router())
+        .nest("/instance", routes::instance::router())
+        .nest("/legal", routes::legal::router())
         .nest("/auth", routes::auth::router())
         .nest("/setup", routes::setup::router());
 

@@ -1,10 +1,10 @@
 // crates/api/src/tasks/cleanup.rs
-use crate::services::jwt_service;
 use chrono::Utc;
 use domain::entities::{auth_tokens, refresh_tokens};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
 };
+use services::{admin_service, jwt_service};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -47,6 +47,12 @@ async fn run_once(db: &DatabaseConnection) {
         Ok(n) if n > 0 => tracing::info!(deleted = n, "auth tokens cleaned"),
         Ok(_) => {}
         Err(err) => tracing::error!(error = ?err, "auth token cleanup failed"),
+    }
+
+    match admin_service::purge_scheduled_deletions(db).await {
+        Ok(n) if n > 0 => tracing::info!(purged = n, "scheduled account deletions purged"),
+        Ok(_) => {}
+        Err(err) => tracing::error!(error = ?err, "scheduled deletion purge failed"),
     }
 }
 

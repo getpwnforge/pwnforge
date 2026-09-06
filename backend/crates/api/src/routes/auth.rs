@@ -1,27 +1,21 @@
 // crates/api/src/routes/auth.rs
-use crate::config::Config;
-use crate::middleware::{auth::AuthUser, client_ip::ClientIp};
-use crate::services::{
-    jwt_service,
-    rate_limit_service::{self, RateLimitDecision},
-};
-use crate::{error::AppError, services::auth_service, state::AppState};
+use crate::middleware::{auth::AuthUser, client_ip::ClientIp, json::JsonBody, session_context};
+use crate::{error::AppError, state::AppState};
 use axum::{
-    Json, Router,
-    extract::ConnectInfo,
-    extract::State,
-    http::StatusCode,
-    http::{HeaderMap, header},
-    routing::get,
-    routing::post,
+    Json, Router, extract::ConnectInfo, extract::State, http::HeaderMap, http::StatusCode,
+    routing::get, routing::post,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use domain::dto::auth::{
-    EmailVerifyRequest, LoginRequest, PasswordChangeRequest, PasswordForgotRequest,
-    PasswordResetRequest, RegisterRequest, SessionContext, UserResponse,
+    EmailResendRequest, EmailVerifyRequest, LoginRequest, PasswordChangeRequest,
+    PasswordForgotRequest, PasswordResetRequest, RegisterRequest, UserResponse,
 };
-use sea_orm::prelude::IpNetwork;
-use std::net::{IpAddr, SocketAddr};
+use services::{
+    auth_service, jwt_service,
+    rate_limit_service::{self, RateLimitDecision},
+};
+use services::{config::Config, legal_service};
+use std::net::SocketAddr;
 use time::Duration;
 use validator::Validate;
 
@@ -41,10 +35,21 @@ pub fn router() -> Router<AppState> {
 
 async fn register(
     State(state): State<AppState>,
-    Json(payload): Json<RegisterRequest>,
+    headers: HeaderMap,
+    ClientIp(client_ip): ClientIp,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), AppError> {
     payload.validate()?;
-    let registered = auth_service::register(&state.db, &state.config, payload).await?;
+    legal_service::validate_input(&payload.legal)?;
+
+    // Same reasoning as login: a malformed X-Forwarded-For must not strip the
+    // IP that Turnstile verifies against.
+    let client_ip_resolved = client_ip.unwrap_or_else(|| remote.ip());
+
+    let ctx = session_context(&headers, client_ip);
+    let registered =
+        auth_service::register(&state.db, &state.config, payload, ctx, client_ip_resolved).await?;
     Ok((StatusCode::CREATED, Json(UserResponse::from(registered))))
 }
 
@@ -54,7 +59,7 @@ async fn login(
     headers: HeaderMap,
     ClientIp(client_ip): ClientIp,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    Json(payload): Json<LoginRequest>,
+    JsonBody(payload): JsonBody<LoginRequest>,
 ) -> Result<(CookieJar, Json<UserResponse>), AppError> {
     // Falls back to the raw TCP peer when the trusted-proxy chain does not
     // resolve a client IP, so a malformed X-Forwarded-For header cannot be
@@ -73,7 +78,15 @@ async fn login(
     }
 
     let ctx = session_context(&headers, client_ip);
-    let logged_in = auth_service::login(&state.db, payload, &state.jwt_keys.encoding, ctx).await?;
+    let logged_in = auth_service::login(
+        &state.db,
+        &state.config,
+        payload,
+        &state.jwt_keys.encoding,
+        ctx,
+        rate_limit_ip,
+    )
+    .await?;
 
     if let Err(err) = rate_limit_service::reset_login_attempts(&mut redis, &identifier).await {
         tracing::error!(error = ?err, "failed to reset login rate limit after successful login");
@@ -134,7 +147,7 @@ async fn logout(
 }
 
 async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserResponse>, AppError> {
-    let (model, email) = auth_service::current_user(&state.db, user.id).await?;
+    let (model, email) = auth_service::fetch_user(&state.db, user.id).await?;
     Ok(Json(UserResponse::new(model, email)))
 }
 
@@ -142,7 +155,7 @@ async fn password_forgot(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    Json(payload): Json<PasswordForgotRequest>,
+    JsonBody(payload): JsonBody<PasswordForgotRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
 
@@ -167,7 +180,14 @@ async fn password_forgot(
         }
     }
 
-    auth_service::password_forgot(&state.db, &state.config, &payload.email).await?;
+    auth_service::password_forgot(
+        &state.db,
+        &state.config,
+        &payload.email,
+        &payload.turnstile_token,
+        rate_limit_ip,
+    )
+    .await?;
 
     // Always 202: the response must never depend on whether the account exists.
     Ok(StatusCode::ACCEPTED)
@@ -178,7 +198,7 @@ async fn password_reset(
     headers: HeaderMap,
     ClientIp(ip): ClientIp,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    Json(payload): Json<PasswordResetRequest>,
+    JsonBody(payload): JsonBody<PasswordResetRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
 
@@ -214,7 +234,7 @@ async fn password_change(
     ClientIp(ip): ClientIp,
     user: AuthUser,
     jar: CookieJar,
-    Json(payload): Json<PasswordChangeRequest>,
+    JsonBody(payload): JsonBody<PasswordChangeRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
 
@@ -239,7 +259,7 @@ async fn password_change(
 
 async fn email_verify(
     State(state): State<AppState>,
-    Json(payload): Json<EmailVerifyRequest>,
+    JsonBody(payload): JsonBody<EmailVerifyRequest>,
 ) -> Result<StatusCode, AppError> {
     // POST, not GET: mail clients and spam scanners prefetch links, and a GET
     // would let them burn the token before the user clicks. The frontend page
@@ -253,10 +273,11 @@ async fn email_verify(
 
 async fn email_resend(
     State(state): State<AppState>,
-    user: AuthUser,
+    JsonBody(payload): JsonBody<EmailResendRequest>,
 ) -> Result<StatusCode, AppError> {
-    // 1. Rate limit keyed on user_id: 1 per 60s, 5 per hour.
-    match rate_limit_service::check_email_resend(&mut state.redis.clone(), user.id).await {
+    payload.validate()?;
+    // 1. Rate limit keyed on the opaque token: 1 per 60s, 5 per hour.
+    match rate_limit_service::check_email_resend(&mut state.redis.clone(), &payload.token).await {
         Ok(RateLimitDecision::Limited { retry_after_secs }) => {
             return Err(AppError::RateLimited { retry_after_secs });
         }
@@ -266,7 +287,7 @@ async fn email_resend(
         }
     }
     // 2. auth_service::resend_verification.
-    auth_service::resend_verification(&state.db, &state.config, user.id).await?;
+    auth_service::resend_verification(&state.db, &state.config, &payload.token).await?;
     // 3. 202.
     Ok(StatusCode::ACCEPTED)
 }
@@ -310,17 +331,4 @@ fn clear_auth_cookies(jar: CookieJar, config: &Config) -> CookieJar {
         .build();
 
     jar.remove(access).remove(refresh)
-}
-
-fn session_context(headers: &HeaderMap, client_ip: Option<IpAddr>) -> SessionContext {
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        // Fully client-controlled: cap it before it reaches the database.
-        .map(|s| s.chars().take(512).collect::<String>());
-
-    SessionContext {
-        user_agent,
-        ip_address: client_ip.map(IpNetwork::from),
-    }
 }

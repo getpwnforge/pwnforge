@@ -77,6 +77,9 @@ pub enum AuditAction {
     UserSuspend,
     UserUnsuspend,
     UserDeleteByAdmin,
+    UserDeletionScheduled,
+    UserPurged,
+    UserDeletionCancelled,
     UserPromoteAdmin,
     UserDemoteAdmin,
     UserPasswordResetForce,
@@ -85,6 +88,9 @@ pub enum AuditAction {
     SignupDisposableBlocked,
     SignupRateLimited,
     InstanceSetupCompleted,
+    AlertCreated,
+    AlertUpdated,
+    AlertDeleted,
 }
 
 impl AuditAction {
@@ -93,6 +99,9 @@ impl AuditAction {
             Self::UserSuspend => "user.suspend",
             Self::UserUnsuspend => "user.unsuspend",
             Self::UserDeleteByAdmin => "user.delete_by_admin",
+            Self::UserDeletionScheduled => "user.deletion_scheduled",
+            Self::UserPurged => "user.purged",
+            Self::UserDeletionCancelled => "user.deletion_cancelled",
             Self::UserPromoteAdmin => "user.promote_admin",
             Self::UserDemoteAdmin => "user.demote_admin",
             Self::UserPasswordResetForce => "user.password_reset_force",
@@ -101,6 +110,60 @@ impl AuditAction {
             Self::SignupDisposableBlocked => "signup.disposable_blocked",
             Self::SignupRateLimited => "signup.rate_limited",
             Self::InstanceSetupCompleted => "instance.setup_completed",
+            Self::AlertCreated => "alert.created",
+            Self::AlertUpdated => "alert.updated",
+            Self::AlertDeleted => "alert.deleted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertKind {
+    Info,
+    Warning,
+    Danger,
+    Maintenance,
+}
+
+impl AlertKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AlertKind::Info => "info",
+            AlertKind::Warning => "warning",
+            AlertKind::Danger => "danger",
+            AlertKind::Maintenance => "maintenance",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "info" => Some(AlertKind::Info),
+            "warning" => Some(AlertKind::Warning),
+            "danger" => Some(AlertKind::Danger),
+            "maintenance" => Some(AlertKind::Maintenance),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContactCategory {
+    General,
+    SelfHosting,
+    Billing,
+    Press,
+    Other,
+}
+
+impl ContactCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "General question",
+            Self::SelfHosting => "Self-hosting help",
+            Self::Billing => "Billing & sales",
+            Self::Press => "Press & partnerships",
+            Self::Other => "Other",
         }
     }
 }

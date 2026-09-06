@@ -1,18 +1,16 @@
 // crates/api/src/middleware/auth.rs
-use crate::{
-    error::AppError,
-    services::{
-        auth_service::{self, AuthError},
-        jwt_service,
-    },
-    state::AppState,
-};
+use crate::{error::AppError, state::AppState};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use axum_extra::extract::CookieJar;
 use domain::entities::users;
 use redis::AsyncCommands;
 use sea_orm::{EntityTrait, QuerySelect, prelude::DateTimeWithTimeZone};
 use serde::{Deserialize, Serialize};
+use services::{
+    admin_service::suspension_cache_key,
+    auth_service::{self, AuthError},
+    jwt_service,
+};
 use uuid::Uuid;
 
 /// Short enough that a suspension takes effect within seconds even if the
@@ -63,6 +61,7 @@ struct SuspensionState {
     suspended_at: Option<DateTimeWithTimeZone>,
     suspended_until: Option<DateTimeWithTimeZone>,
     suspended_reason: Option<String>,
+    purge_scheduled_at: Option<DateTimeWithTimeZone>,
 }
 
 impl SuspensionState {
@@ -71,13 +70,17 @@ impl SuspensionState {
             self.suspended_at,
             self.suspended_until,
             self.suspended_reason.clone(),
+            self.purge_scheduled_at,
         )
     }
 }
 
-pub(crate) fn suspension_cache_key(user_id: Uuid) -> String {
-    format!("user:{user_id}:suspension")
-}
+type SuspensionRow = (
+    Option<DateTimeWithTimeZone>,
+    Option<DateTimeWithTimeZone>,
+    Option<String>,
+    Option<DateTimeWithTimeZone>,
+);
 
 /// Resolves suspension state, reading through a short-lived Redis cache.
 ///
@@ -99,27 +102,26 @@ async fn resolve_suspension(state: &AppState, user_id: Uuid) -> Result<Suspensio
         return Ok(parsed);
     }
 
-    let row: Option<(
-        Option<DateTimeWithTimeZone>,
-        Option<DateTimeWithTimeZone>,
-        Option<String>,
-    )> = users::Entity::find_by_id(user_id)
+    let row: Option<SuspensionRow> = users::Entity::find_by_id(user_id)
         .select_only()
         .column(users::Column::SuspendedAt)
         .column(users::Column::SuspendedUntil)
         .column(users::Column::SuspendedReason)
+        .column(users::Column::PurgeScheduledAt)
         .into_tuple()
         .one(&state.db)
         .await?;
 
     // A valid token pointing at a row that no longer exists: the account was
     // deleted while the access token was still live.
-    let (suspended_at, suspended_until, suspended_reason) = row.ok_or(AppError::Unauthorized)?;
+    let (suspended_at, suspended_until, suspended_reason, purge_scheduled_at) =
+        row.ok_or(AppError::Unauthorized)?;
 
     let suspension = SuspensionState {
         suspended_at,
         suspended_until,
         suspended_reason,
+        purge_scheduled_at,
     };
 
     if let Ok(payload) = serde_json::to_string(&suspension) {
@@ -137,36 +139,38 @@ mod tests {
     fn state(
         at: Option<DateTimeWithTimeZone>,
         until: Option<DateTimeWithTimeZone>,
+        purge_scheduled_at: Option<DateTimeWithTimeZone>,
     ) -> SuspensionState {
         SuspensionState {
             suspended_at: at,
             suspended_until: until,
             suspended_reason: None,
+            purge_scheduled_at,
         }
     }
 
     #[test]
     fn active_account_is_not_rejected() {
-        assert!(state(None, None).as_error().is_none());
+        assert!(state(None, None, None).as_error().is_none());
     }
 
     #[test]
     fn permanent_suspension_is_rejected() {
         let at = Utc::now().into();
-        assert!(state(Some(at), None).as_error().is_some());
+        assert!(state(Some(at), None, None).as_error().is_some());
     }
 
     #[test]
     fn future_deadline_is_rejected() {
         let at = Utc::now().into();
         let until = (Utc::now() + chrono::Duration::days(1)).into();
-        assert!(state(Some(at), Some(until)).as_error().is_some());
+        assert!(state(Some(at), Some(until), None).as_error().is_some());
     }
 
     #[test]
     fn expired_suspension_does_not_block() {
         let at = (Utc::now() - chrono::Duration::days(2)).into();
         let until = (Utc::now() - chrono::Duration::days(1)).into();
-        assert!(state(Some(at), Some(until)).as_error().is_none());
+        assert!(state(Some(at), Some(until), None).as_error().is_none());
     }
 }
