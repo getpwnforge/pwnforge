@@ -18,6 +18,10 @@ enum Users {
     SuspendedUntil,
     SuspendedReason,
     SuspendedBy,
+    LegalTermsVersion,
+    LegalPrivacyVersion,
+    DeletionRequestedBy,
+    PurgeScheduledAt,
     CreatedAt,
     UpdatedAt,
     LastActivityAt,
@@ -33,6 +37,19 @@ enum UserEmails {
     CreatedAt,
     UpdatedAt,
     VerifiedAt,
+}
+
+#[derive(DeriveIden)]
+enum LegalAcceptances {
+    Table,
+    Id,
+    UserId,
+    Document,
+    Version,
+    Method,
+    AcceptedAt,
+    IpAddress,
+    UserAgent,
 }
 
 #[derive(DeriveIden)]
@@ -182,8 +199,12 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Users::SuspendedAt).timestamp_with_time_zone())
                     .col(ColumnDef::new(Users::SuspendedUntil).timestamp_with_time_zone())
+                    .col(ColumnDef::new(Users::DeletionRequestedBy).uuid())
+                    .col(ColumnDef::new(Users::PurgeScheduledAt).timestamp_with_time_zone())
                     .col(ColumnDef::new(Users::SuspendedReason).text())
                     .col(ColumnDef::new(Users::SuspendedBy).uuid())
+                    .col(ColumnDef::new(Users::LegalTermsVersion).text())
+                    .col(ColumnDef::new(Users::LegalPrivacyVersion).text())
                     .col(
                         ColumnDef::new(Users::CreatedAt)
                             .timestamp_with_time_zone()
@@ -204,6 +225,13 @@ impl MigrationTrait for Migration {
                             .to(Users::Table, Users::Id)
                             .on_delete(ForeignKeyAction::SetNull),
                     )
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_users_deletion_requested_by")
+                            .from(Users::Table, Users::DeletionRequestedBy)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::SetNull),
+                    )
                     .check((
                         "ck_suspension_consistency",
                         Expr::col(Users::SuspendedAt)
@@ -212,6 +240,12 @@ impl MigrationTrait for Migration {
                             .and(Expr::col(Users::SuspendedReason).is_null())
                             .and(Expr::col(Users::SuspendedBy).is_null())
                             .or(Expr::col(Users::SuspendedAt).is_not_null()),
+                    ))
+                    .check((
+                        "ck_deletion_consistency",
+                        Expr::col(Users::DeletionRequestedBy)
+                            .is_null()
+                            .or(Expr::col(Users::PurgeScheduledAt).is_not_null()),
                     ))
                     .to_owned(),
             )
@@ -224,6 +258,17 @@ impl MigrationTrait for Migration {
                     .table(Users::Table)
                     .col(Users::Id)
                     .and_where(Expr::col(Users::SuspendedAt).is_not_null())
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_users_purge_scheduled_at")
+                    .table(Users::Table)
+                    .col(Users::PurgeScheduledAt)
+                    .and_where(Expr::col(Users::PurgeScheduledAt).is_not_null())
                     .to_owned(),
             )
             .await?;
@@ -286,6 +331,67 @@ impl MigrationTrait for Migration {
                     .col(UserEmails::UserId)
                     .unique()
                     .and_where(Expr::col(UserEmails::IsPrimary).eq(true))
+                    .to_owned(),
+            )
+            .await?;
+
+        // LEGAL ACCEPTANCES TABLE
+        // Append-only. Rows are never updated or deleted individually, so the
+        // exact version accepted on a given date stays provable after later
+        // revisions of the documents.
+        manager
+            .create_table(
+                Table::create()
+                    .table(LegalAcceptances::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(LegalAcceptances::Id)
+                            .uuid()
+                            .not_null()
+                            .default(Expr::cust("uuidv7()"))
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(LegalAcceptances::UserId).uuid().not_null())
+                    // 'terms' or 'privacy'. Kept as text for consistency with
+                    // auth_tokens.kind; the closed set is enforced by the
+                    // LegalDocument enum on the Rust side.
+                    .col(ColumnDef::new(LegalAcceptances::Document).text().not_null())
+                    .col(ColumnDef::new(LegalAcceptances::Version).text().not_null())
+                    .col(
+                        ColumnDef::new(LegalAcceptances::Method)
+                            .text()
+                            .not_null()
+                            .default("explicit"),
+                    )
+                    .col(
+                        ColumnDef::new(LegalAcceptances::AcceptedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(ColumnDef::new(LegalAcceptances::IpAddress).inet())
+                    .col(ColumnDef::new(LegalAcceptances::UserAgent).text())
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_legal_acceptances_user_id")
+                            .from(LegalAcceptances::Table, LegalAcceptances::UserId)
+                            .to(Users::Table, Users::Id)
+                            .on_delete(ForeignKeyAction::Cascade),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Covers the DISTINCT ON (document) lookup in
+        // LegalService::latest_accepted.
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_legal_acceptances_user_document")
+                    .table(LegalAcceptances::Table)
+                    .col(LegalAcceptances::UserId)
+                    .col(LegalAcceptances::Document)
+                    .col((LegalAcceptances::AcceptedAt, IndexOrder::Desc))
                     .to_owned(),
             )
             .await?;
@@ -555,11 +661,7 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(InstanceAlerts::Kind).text().not_null())
-                    .col(
-                        ColumnDef::new(InstanceAlerts::Message)
-                            .json_binary()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(InstanceAlerts::Message).text().not_null())
                     .col(ColumnDef::new(InstanceAlerts::LinkUrl).text())
                     .col(
                         ColumnDef::new(InstanceAlerts::StartsAt)
@@ -724,6 +826,9 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .drop_table(Table::drop().table(AuthTokens::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(LegalAcceptances::Table).to_owned())
             .await?;
         manager
             .drop_table(Table::drop().table(UserEmails::Table).to_owned())

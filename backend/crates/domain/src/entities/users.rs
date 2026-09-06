@@ -26,9 +26,15 @@ pub struct Model {
     pub is_instance_admin: bool,
     pub suspended_at: Option<DateTimeWithTimeZone>,
     pub suspended_until: Option<DateTimeWithTimeZone>,
+    pub deletion_requested_by: Option<Uuid>,
+    pub purge_scheduled_at: Option<DateTimeWithTimeZone>,
     #[sea_orm(column_type = "Text", nullable)]
     pub suspended_reason: Option<String>,
     pub suspended_by: Option<Uuid>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub legal_terms_version: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub legal_privacy_version: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub last_activity_at: Option<DateTimeWithTimeZone>,
@@ -44,6 +50,8 @@ pub enum Relation {
     BlockedEmailsDomains,
     #[sea_orm(has_many = "super::instance_alerts::Entity")]
     InstanceAlerts,
+    #[sea_orm(has_many = "super::legal_acceptances::Entity")]
+    LegalAcceptances,
     #[sea_orm(has_many = "super::refresh_tokens::Entity")]
     RefreshTokens,
     #[sea_orm(has_many = "super::reserved_usernames::Entity")]
@@ -52,12 +60,20 @@ pub enum Relation {
     UserEmails,
     #[sea_orm(
         belongs_to = "Entity",
+        from = "Column::DeletionRequestedBy",
+        to = "Column::Id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    SelfRef2,
+    #[sea_orm(
+        belongs_to = "Entity",
         from = "Column::SuspendedBy",
         to = "Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    SelfRef,
+    SelfRef1,
 }
 
 impl Related<super::allowed_emails_domains::Entity> for Entity {
@@ -81,6 +97,12 @@ impl Related<super::blocked_emails_domains::Entity> for Entity {
 impl Related<super::instance_alerts::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::InstanceAlerts.def()
+    }
+}
+
+impl Related<super::legal_acceptances::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::LegalAcceptances.def()
     }
 }
 

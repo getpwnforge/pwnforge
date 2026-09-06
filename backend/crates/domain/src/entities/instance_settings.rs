@@ -12,6 +12,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub default_timezone: String,
     pub allow_public_signup: bool,
+    pub hide_landing_page: bool,
     pub setup_completed_at: Option<DateTimeWithTimeZone>,
     pub updated_at: DateTimeWithTimeZone,
 }

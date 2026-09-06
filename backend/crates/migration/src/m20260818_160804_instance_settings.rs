@@ -8,6 +8,7 @@ enum InstanceSettings {
     DefaultTimezone,
     AllowPublicSignup,
     SetupCompletedAt,
+    HideLandingPage,
     UpdatedAt,
 }
 
@@ -51,6 +52,12 @@ impl MigrationTrait for Migration {
                             .boolean()
                             .not_null()
                             .default(true),
+                    )
+                    .col(
+                        ColumnDef::new(InstanceSettings::HideLandingPage)
+                            .boolean()
+                            .not_null()
+                            .default(false),
                     )
                     .col(
                         ColumnDef::new(InstanceSettings::SetupCompletedAt)

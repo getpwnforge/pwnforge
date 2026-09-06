@@ -3,31 +3,31 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "instance_alerts")]
+#[sea_orm(table_name = "legal_acceptances")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    pub user_id: Uuid,
     #[sea_orm(column_type = "Text")]
-    pub kind: String,
+    pub document: String,
     #[sea_orm(column_type = "Text")]
-    pub message: String,
+    pub version: String,
+    #[sea_orm(column_type = "Text")]
+    pub method: String,
+    pub accepted_at: DateTimeWithTimeZone,
+    pub ip_address: Option<IpNetwork>,
     #[sea_orm(column_type = "Text", nullable)]
-    pub link_url: Option<String>,
-    pub starts_at: DateTimeWithTimeZone,
-    pub ends_at: Option<DateTimeWithTimeZone>,
-    pub is_active: bool,
-    pub created_by: Option<Uuid>,
-    pub created_at: DateTimeWithTimeZone,
+    pub user_agent: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
         belongs_to = "super::users::Entity",
-        from = "Column::CreatedBy",
+        from = "Column::UserId",
         to = "super::users::Column::Id",
         on_update = "NoAction",
-        on_delete = "SetNull"
+        on_delete = "Cascade"
     )]
     Users,
 }

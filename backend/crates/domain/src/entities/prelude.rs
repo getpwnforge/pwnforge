@@ -6,6 +6,7 @@ pub use super::blocked_emails_domains::Entity as BlockedEmailsDomains;
 pub use super::instance_alerts::Entity as InstanceAlerts;
 pub use super::instance_audit_logs::Entity as InstanceAuditLogs;
 pub use super::instance_settings::Entity as InstanceSettings;
+pub use super::legal_acceptances::Entity as LegalAcceptances;
 pub use super::refresh_tokens::Entity as RefreshTokens;
 pub use super::reserved_usernames::Entity as ReservedUsernames;
 pub use super::user_emails::Entity as UserEmails;

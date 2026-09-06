@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use sea_orm::DatabaseConnection;
 
 /// Embedded at compile time: the image ships with the list, nothing to mount.
-const DISPOSABLE_DOMAINS: &str = include_str!(concat!(
+pub const DISPOSABLE_DOMAINS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../data/disposable_email_blocklist.conf"
 ));
