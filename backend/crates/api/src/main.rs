@@ -1,23 +1,18 @@
 // crates/api/src/main.rs
 mod app;
-mod config;
 mod error;
 mod middleware;
 mod routes;
-mod services;
 mod state;
 mod tasks;
 
-use config::Config;
 use migration::MigratorTrait;
-use sea_orm::Database;
+use services::config::Config;
 use state::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::services::setup_service;
-
-rust_i18n::i18n!("locales", fallback = "en");
+use services::setup_service;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,9 +24,8 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let port = config.port;
 
-    let db = Database::connect(&config.database_url).await?;
-    let redis_client = redis::Client::open(config.redis_url.as_str())?;
-    let redis = redis_client.get_connection_manager().await?;
+    let db = services::connect_db(&config).await?;
+    let redis = services::connect_redis(&config).await?;
 
     let encoding = jsonwebtoken::EncodingKey::from_secret(config.jwt_secret.as_bytes());
     let decoding = jsonwebtoken::DecodingKey::from_secret(config.jwt_secret.as_bytes());

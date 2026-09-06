@@ -1,0 +1,19 @@
+{# Plain text is not optional: some clients show it, and its absence hurts the
+   spam score. No "if the button does not work" line here — this version is
+   that fallback, the URL is already on its own line. #}
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+
+{{ cta }}:
+{{ link }}
+
+{{ expiry }}
+{{ ignore_notice }}
+
+--
+{{ footer }}
+{{ footer_instance }} {{ public_url }}
+{{ footer_note }}

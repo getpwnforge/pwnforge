@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+services = { path = "../services" }
 axum = "0.8.9"
 tokio.workspace = true
 sea-orm.workspace = true
@@ -13,32 +14,14 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 dotenvy.workspace = true
 anyhow.workspace = true
-redis = { version = "1.4.1", features = ["tokio-comp", "connection-manager"] }
+redis.workspace = true
 migration = { path = "../migration" }
 uuid.workspace = true
-argon2 = { version = "0.5.3", features = ["std"] }
 domain.workspace = true
 thiserror = "2.0.20"
 jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 chrono.workspace = true
-sha2 = "0.11.0"
-base64 = "0.23.1"
-hex = "0.4.3"
 validator.workspace = true
 seed = { path = "../seed" }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 time = "0.3.55"
-reqwest = { version = "0.13.4", default-features = false, features = [
-    "json",
-    "rustls",
-] }
-askama = "0.16.0"
-rust-i18n = "4.2.1"
-lettre = { version = "0.11.23", default-features = false, features = [
-    "builder",
-    "tokio1-rustls-tls",
-    "smtp-transport",
-] }
-sha1 = "0.11.0"
-chrono-tz = "0.10.4"
-subtle = "2.6.1"

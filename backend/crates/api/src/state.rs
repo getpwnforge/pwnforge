@@ -1,8 +1,8 @@
 // crates/api/src/state.rs
-use crate::config::Config;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use redis::aio::ConnectionManager;
 use sea_orm::DatabaseConnection;
+use services::config::Config;
 use std::sync::Arc;
 
 #[derive(Clone)]

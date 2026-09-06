@@ -1,0 +1,311 @@
+# crates/api/locales/app.yml
+#
+# rust-i18n _version 2: one entry per key, every language grouped underneath.
+# A contributor adding a language sees immediately which keys are still
+# missing, which the one-file-per-language layout hides.
+#
+# Replaces en.yml and fr.yml: delete those two, the filename here does not
+# matter, only the _version marker does.
+
+_version: 2
+
+# --- Shared across every message ---
+
+email.common.greeting:
+  en: "Hi,"
+  fr: "Bonjour,"
+
+email.common.footer:
+  en: "You are receiving this because someone requested it on PwnForge."
+  fr: "Vous recevez ce message suite à une demande effectuée sur PwnForge."
+
+email.common.footer_instance:
+  en: "Sent by the PwnForge instance at"
+  fr: "Envoyé par l'instance PwnForge à l'adresse"
+
+email.common.footer_note:
+  en: "This is an automated transactional message. There is nothing to unsubscribe from — PwnForge does not send anything else."
+  fr: "Message transactionnel automatique. Il n'y a rien à désabonner : PwnForge n'envoie rien d'autre."
+
+email.common.fallback_notice:
+  en: "Button not working? Copy this address into your browser:"
+  fr: "Le bouton ne fonctionne pas ? Copiez cette adresse dans votre navigateur :"
+
+email.common.ignore_notice:
+  en: "If you did not request this, you can ignore this email."
+  fr: "Si vous n'êtes pas à l'origine de cette demande, ignorez ce message."
+
+email.common.unknown:
+  en: "Unknown"
+  fr: "Inconnu"
+
+email.common.label_when:
+  en: "When"
+  fr: "Date"
+
+email.common.label_ip:
+  en: "IP address"
+  fr: "Adresse IP"
+
+email.common.label_device:
+  en: "Device"
+  fr: "Appareil"
+
+# --- Password reset link ---
+
+email.password_reset.subject:
+  en: "Reset your PwnForge password"
+  fr: "Réinitialiser votre mot de passe PwnForge"
+
+email.password_reset.title:
+  en: "Reset your password"
+  fr: "Réinitialisez votre mot de passe"
+
+email.password_reset.preheader:
+  en: "A link to choose a new password, valid for one hour."
+  fr: "Un lien pour choisir un nouveau mot de passe, valable une heure."
+
+email.password_reset.body:
+  en: "Someone asked to reset the password on your account."
+  fr: "Une réinitialisation du mot de passe de votre compte a été demandée."
+
+email.password_reset.cta:
+  en: "Set a new password"
+  fr: "Définir un nouveau mot de passe"
+
+email.password_reset.expiry:
+  en: "This link expires in one hour and can only be used once."
+  fr: "Ce lien expire dans une heure et ne peut servir qu'une fois."
+
+# --- Email verification link ---
+
+email.email_verification.subject:
+  en: "Confirm your email address"
+  fr: "Confirmez votre adresse email"
+
+email.email_verification.title:
+  en: "Confirm your email address"
+  fr: "Confirmez votre adresse email"
+
+email.email_verification.preheader:
+  en: "One click to activate your account. The link is valid for 24 hours."
+  fr: "Un clic pour activer votre compte. Le lien est valable 24 heures."
+
+email.email_verification.body:
+  en: "Confirm this address to finish setting up your account."
+  fr: "Confirmez cette adresse pour terminer la création de votre compte."
+
+email.email_verification.cta:
+  en: "Confirm my address"
+  fr: "Confirmer mon adresse"
+
+email.email_verification.expiry:
+  en: "This link expires in 24 hours."
+  fr: "Ce lien expire dans 24 heures."
+
+# --- Security alerts ---
+#
+# These carry no action link on purpose: an alert that asks the reader to click
+# is the exact shape a phishing message takes.
+
+email.security_alert.not_you:
+  en: "If this was not you, reset your password immediately and contact support."
+  fr: "Si vous n'êtes pas à l'origine de cette action, réinitialisez votre mot de passe immédiatement et contactez le support."
+
+email.security_alert.no_action:
+  en: "If you made this change, there is nothing to do."
+  fr: "Si vous êtes à l'origine de ce changement, il n'y a rien à faire."
+
+email.security_alert.password_changed.title:
+  en: "Your password was changed"
+  fr: "Votre mot de passe a été modifié"
+
+email.security_alert.password_changed.preheader:
+  en: "Details of the change, and what to do if it was not you."
+  fr: "Détails du changement, et quoi faire si ce n'était pas vous."
+
+email.security_alert.password_reset.title:
+  en: "Your password was reset"
+  fr: "Votre mot de passe a été réinitialisé"
+
+email.security_alert.password_reset.preheader:
+  en: "Details of the reset, and what to do if it was not you."
+  fr: "Détails de la réinitialisation, et quoi faire si ce n'était pas vous."
+
+email.security_alert.password_changed.subject:
+  en: "Your PwnForge password was changed"
+  fr: "Votre mot de passe PwnForge a été modifié"
+
+email.security_alert.password_changed.body:
+  en: "The password on your account was changed. Your other sessions have been signed out."
+  fr: "Le mot de passe de votre compte a été modifié. Vos autres sessions ont été déconnectées."
+
+email.security_alert.password_reset.subject:
+  en: "Your PwnForge password was reset"
+  fr: "Votre mot de passe PwnForge a été réinitialisé"
+
+email.security_alert.password_reset.body:
+  en: "Your password was reset using a link sent to this address. All sessions have been signed out."
+  fr: "Votre mot de passe a été réinitialisé via un lien envoyé à cette adresse. Toutes les sessions ont été déconnectées."
+
+# --- Account moderation notices ---
+#
+# Same principle as security alerts: no action link. An admin action is not
+# something the reader can undo by clicking through this email anyway — the
+# reason (if any) lives in the audit log, communicated individually only if
+# the user appeals.
+
+email.account_notice.suspended.subject:
+  en: "Your account has been suspended"
+  fr: "Votre compte a été suspendu"
+
+email.account_notice.suspended.title:
+  en: "Account suspended"
+  fr: "Compte suspendu"
+
+email.account_notice.suspended.preheader:
+  en: "Your PwnForge account has been suspended by an administrator."
+  fr: "Votre compte PwnForge a été suspendu par un administrateur."
+
+email.account_notice.suspended.body:
+  en: "An administrator has suspended your account. You will not be able to sign in until it is reinstated. If you believe this is a mistake, contact support."
+  fr: "Un administrateur a suspendu votre compte. Vous ne pourrez pas vous connecter tant qu'il n'est pas réactivé. Si vous pensez qu'il s'agit d'une erreur, contactez le support."
+
+email.account_notice.unsuspended.subject:
+  en: "Your account has been reinstated"
+  fr: "Votre compte a été réactivé"
+
+email.account_notice.unsuspended.title:
+  en: "Account reinstated"
+  fr: "Compte réactivé"
+
+email.account_notice.unsuspended.preheader:
+  en: "Your PwnForge account is active again."
+  fr: "Votre compte PwnForge est de nouveau actif."
+
+email.account_notice.unsuspended.body:
+  en: "An administrator has reinstated your account. You can sign in again."
+  fr: "Un administrateur a réactivé votre compte. Vous pouvez à nouveau vous connecter."
+
+email.account_notice.deleted.subject:
+  en: "Your account has been deleted"
+  fr: "Votre compte a été supprimé"
+
+email.account_notice.deleted.title:
+  en: "Account deleted"
+  fr: "Compte supprimé"
+
+email.account_notice.deleted.preheader:
+  en: "Your PwnForge account has been permanently deleted."
+  fr: "Votre compte PwnForge a été définitivement supprimé."
+
+email.account_notice.deleted.body:
+  en: "An administrator has permanently deleted your account. This action cannot be undone."
+  fr: "Un administrateur a définitivement supprimé votre compte. Cette action est irréversible."
+
+email.account_notice.deletion_scheduled.subject:
+  en: "Your account is scheduled for deletion"
+  fr: "Votre compte est programmé pour suppression"
+
+email.account_notice.deletion_scheduled.title:
+  en: "Account deletion scheduled"
+  fr: "Suppression de compte programmée"
+
+email.account_notice.deletion_scheduled.preheader:
+  en: "Your account and data will be permanently erased in 30 days."
+  fr: "Votre compte et vos données seront définitivement effacés dans 30 jours."
+
+email.account_notice.deletion_scheduled.body:
+  en: "Your account has been scheduled for deletion. You can no longer sign in. All data will be permanently erased on the date below. If this was not intentional, contact support before that date."
+  fr: "Votre compte a été programmé pour suppression. Vous ne pouvez plus vous connecter. Toutes les données seront définitivement effacées à la date indiquée ci-dessous. Si cette action n'était pas intentionnelle, contactez le support avant cette date."
+
+email.account_notice.deletion_cancelled.subject:
+  en: "Your account deletion has been cancelled"
+  fr: "La suppression de votre compte a été annulée"
+
+email.account_notice.deletion_cancelled.title:
+  en: "Account deletion cancelled"
+  fr: "Suppression de compte annulée"
+
+email.account_notice.deletion_cancelled.preheader:
+  en: "Your account deletion has been cancelled."
+  fr: "La suppression de votre compte a été annulée."
+
+email.account_notice.deletion_cancelled.body:
+  en: "Your account deletion has been cancelled. You can sign in again."
+  fr: "La suppression de votre compte a été annulée. Vous pouvez vous connecter à nouveau."
+
+email.account_notice.label_purge_date:
+  en: "Deletion date"
+  fr: "Date de suppression"
+
+email.account_notice.promoted_admin.subject:
+  en: "You are now an instance administrator"
+  fr: "Vous êtes désormais administrateur de l'instance"
+
+email.account_notice.promoted_admin.title:
+  en: "Administrator access granted"
+  fr: "Droits d'administrateur accordés"
+
+email.account_notice.promoted_admin.preheader:
+  en: "You have been granted instance administrator rights."
+  fr: "Des droits d'administrateur d'instance vous ont été accordés."
+
+email.account_notice.promoted_admin.body:
+  en: "An administrator has granted your account instance-wide administrator rights. If you were not expecting this, contact support immediately."
+  fr: "Un administrateur a accordé à votre compte les droits d'administrateur sur l'ensemble de l'instance. Si vous ne vous attendiez pas à ce changement, contactez le support immédiatement."
+
+email.account_notice.demoted_admin.subject:
+  en: "Your administrator access has been revoked"
+  fr: "Vos droits d'administrateur ont été révoqués"
+
+email.account_notice.demoted_admin.title:
+  en: "Administrator access revoked"
+  fr: "Droits d'administrateur révoqués"
+
+email.account_notice.demoted_admin.preheader:
+  en: "Your instance administrator rights have been revoked."
+  fr: "Vos droits d'administrateur d'instance ont été révoqués."
+
+email.account_notice.demoted_admin.body:
+  en: "An administrator has revoked your instance-wide administrator rights."
+  fr: "Un administrateur a révoqué vos droits d'administrateur sur l'ensemble de l'instance."
+
+email.account_notice.label_account:
+  en: "Account"
+  fr: "Compte"
+
+email.account_notice.label_until:
+  en: "Until"
+  fr: "Jusqu'au"
+
+email.account_notice.permanent:
+  en: "Permanent (no end date)"
+  fr: "Permanent (aucune date de fin)"
+
+email.account_notice.label_contact:
+  en: "Questions? Contact support:"
+  fr: "Des questions ? Contactez le support :"
+
+# --- Contact support email ---
+email.contact_confirmation.title:
+  en: "Message received"
+  fr: "Message reçu"
+
+email.contact_confirmation.preheader:
+  en: "We'll get back to you soon."
+  fr: "Nous reviendrons vers vous rapidement."
+
+email.contact_confirmation.body:
+  en: "Thanks for reaching out. Your message has been received and will be reviewed shortly. If you'd like to add anything, just reply to this email."
+  fr: "Merci de nous avoir contactés. Votre message a bien été reçu et sera traité sous peu. Si vous souhaitez ajouter des informations, répondez simplement à cet email."
+
+# --- Setup wizard test message (English only, see email_service::send_test) ---
+
+email.test.title:
+  en: "Email is working"
+  fr: "Email is working"
+
+email.test.preheader:
+  en: "Transport check from your PwnForge setup wizard."
+  fr: "Transport check from your PwnForge setup wizard."
