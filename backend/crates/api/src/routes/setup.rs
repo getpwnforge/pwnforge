@@ -1,13 +1,7 @@
 // crates/api/src/routes/setup.rs
 use crate::{
     error::AppError,
-    middleware::{client_ip::ClientIp, setup::SetupToken},
-    services::{
-        audit_service::AuditContext,
-        email_service, instance_service,
-        rate_limit_service::{self, RateLimitDecision},
-        setup_service::{self, SetupError},
-    },
+    middleware::{client_ip::ClientIp, json::JsonBody, setup::SetupToken},
     state::AppState,
 };
 use axum::{
@@ -19,10 +13,19 @@ use axum::{
 };
 use domain::dto::{
     auth::UserResponse,
-    setup::{EmailConfigResponse, SetupRequest, SetupStatusResponse, TestEmailRequest},
+    setup::{
+        EmailConfigResponse, SetupRequest, SetupStatusResponse, TestEmailRequest,
+        ValidateAdminRequest,
+    },
 };
 use sea_orm::prelude::IpNetwork;
 use serde_json::json;
+use services::{
+    audit_service::AuditContext,
+    email_service, instance_service,
+    rate_limit_service::{self, RateLimitDecision},
+    setup_service::{self, SetupError},
+};
 use std::net::{IpAddr, SocketAddr};
 use validator::Validate;
 
@@ -31,6 +34,7 @@ pub fn router() -> Router<AppState> {
         .route("/status", get(status))
         .route("/email-config", get(email_config))
         .route("/test-email", post(test_email))
+        .route("/validate-admin", post(validate_admin))
         .route("/", post(complete))
 }
 
@@ -59,7 +63,7 @@ async fn test_email(
     _token: SetupToken,
     ClientIp(client_ip): ClientIp,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    Json(payload): Json<TestEmailRequest>,
+    JsonBody(payload): JsonBody<TestEmailRequest>,
 ) -> Result<Response, AppError> {
     ensure_pending(&state).await?;
 
@@ -93,13 +97,49 @@ async fn test_email(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Dry run of the administrator rules, so the wizard can reject a reserved
+/// username or a breached password on the step that owns the field.
+///
+/// Creates nothing and commits nothing: the same checks run again inside
+/// `complete`, which stays the authority.
+async fn validate_admin(
+    State(state): State<AppState>,
+    _token: SetupToken,
+    ClientIp(client_ip): ClientIp,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    JsonBody(payload): JsonBody<ValidateAdminRequest>,
+) -> Result<StatusCode, AppError> {
+    ensure_pending(&state).await?;
+
+    payload.validate()?;
+
+    let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
+
+    match rate_limit_service::check_setup_validate(&mut state.redis.clone(), rate_limit_ip).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            // Refuse rather than fail open: every call through here reaches out
+            // to the breach API on someone else's behalf.
+            tracing::error!(error = ?err, "setup validate rate limit unavailable, refusing");
+            return Err(AppError::ServiceUnavailable);
+        }
+    };
+
+    setup_service::validate_admin(&state.db, &state.config, &payload).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn complete(
     State(state): State<AppState>,
     _token: SetupToken,
     ClientIp(client_ip): ClientIp,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(payload): Json<SetupRequest>,
+    JsonBody(payload): JsonBody<SetupRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), AppError> {
     payload.validate()?;
 

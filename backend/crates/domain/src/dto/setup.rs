@@ -1,4 +1,4 @@
-use crate::dto::auth::USERNAME_RE;
+use crate::dto::auth::{USERNAME_RE, password_composition};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
@@ -32,6 +32,25 @@ pub struct TestEmailRequest {
     pub to: String,
 }
 
+/// The administrator half of `SetupRequest`, checked on its own.
+///
+/// Reserved usernames, disposable domains and breached passwords are all
+/// server-side rules. Without this route the wizard could only report them once
+/// every step had been filled, which means sending the operator back two
+/// screens to fix a field they left long ago.
+#[derive(Deserialize, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateAdminRequest {
+    #[validate(length(min = 3, max = 32), regex(path = *USERNAME_RE))]
+    pub admin_username: String,
+
+    #[validate(email, length(max = 254))]
+    pub admin_email: String,
+
+    #[validate(length(min = 12, max = 128), custom(function = password_composition))]
+    pub admin_password: String,
+}
+
 #[derive(Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct SetupRequest {
@@ -41,7 +60,7 @@ pub struct SetupRequest {
     #[validate(email, length(max = 254))]
     pub admin_email: String,
 
-    #[validate(length(min = 12, max = 128))]
+    #[validate(length(min = 12, max = 128), custom(function = password_composition))]
     pub admin_password: String,
 
     #[validate(length(min = 2, max = 10))]
@@ -53,4 +72,6 @@ pub struct SetupRequest {
     pub default_timezone: String,
 
     pub allow_public_signup: bool,
+
+    pub hide_landing_page: bool,
 }

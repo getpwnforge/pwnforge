@@ -1,0 +1,75 @@
+{
+  "title": "Configurez votre instance",
+  "subtitle": "Quelques étapes pour créer le premier administrateur et enregistrer les réglages par défaut.",
+  "steps": {
+    "token": {
+      "label": "Jeton",
+      "title": "Prouvez que l'instance est la vôtre",
+      "description": "Cet assistant est ouvert à quiconque atteint cette page. Le jeton de démarrage est ce qui vous en distingue."
+    },
+    "admin": {
+      "label": "Administrateur",
+      "title": "Premier administrateur",
+      "description": "Ce compte est administrateur de l'instance. Il suit les mêmes règles que n'importe quel autre compte."
+    },
+    "settings": {
+      "label": "Réglages",
+      "title": "Réglages par défaut",
+      "description": "Appliqués aux nouveaux comptes. Tous restent modifiables plus tard."
+    },
+    "email": {
+      "label": "Email",
+      "title": "Envoi des emails",
+      "description": "Les liens de vérification et de réinitialisation passent par cette configuration."
+    }
+  },
+  "token": {
+    "label": "Jeton de configuration",
+    "whereFrom": "Le backend l'affiche au démarrage — regardez les logs du conteneur :",
+    "logLine": "Instance not set up yet. Open /setup and use token: …",
+    "envAlternative": "Si SETUP_TOKEN est défini dans l'environnement, c'est cette valeur qui est utilisée.",
+    "hint": "Un redémarrage émet un nouveau jeton tant que la configuration n'a pas été faite.",
+    "invalid": "Jeton incorrect, ou configuration déjà effectuée."
+  },
+  "admin": {
+    "emailHint": "Marquée vérifiée d'emblée — c'est l'adresse qui permet de récupérer l'instance."
+  },
+  "settings": {
+    "locale": "Langue par défaut",
+    "localeHint": "Langue de l'interface pour un nouveau compte.",
+    "timezone": "Fuseau horaire par défaut",
+    "timezoneHint": "Stocké sous forme d'identifiant IANA, le changement d'heure est donc géré pour vous.",
+    "publicSignup": "Inscriptions ouvertes",
+    "publicSignupHint": "Désactivé, seul un administrateur peut créer des comptes.",
+    "hideLandingPage": "Masquer la page d'accueil",
+    "hideLandingPageHint": "Activé, la page d'accueil est masquée et la page de connexion est affichée à la place. Utile pour les instances non accessibles au public."
+  },
+  "email": {
+    "backend": "Backend",
+    "from": "Expéditeur",
+    "publicUrl": "URL publique",
+    "smtpHost": "Serveur SMTP",
+    "smtpTls": "TLS",
+    "smtpAuth": "Authentification",
+    "resendKey": "Clé Resend",
+    "consoleWarning": "Le backend console écrit les emails dans la sortie du processus — rien n'est délivré. Les liens de vérification et de réinitialisation n'arriveront à personne. Acceptable sur une instance locale où vous êtes seul, pas sur une instance partagée.",
+    "testLabel": "Envoyer un email de test",
+    "testButton": "Envoyer",
+    "testSuccess": "Envoyé. Vérifiez la boîte de réception — et les spams.",
+    "testFailure": "L'email n'a pas pu être envoyé.",
+    "continueAnywayHint": "Vous pouvez terminer sans configuration email fonctionnelle ; corrigez-la ensuite dans le fichier d'environnement, puis redémarrez."
+  },
+  "completed": {
+    "title": "Instance configurée.",
+    "description": "Connectez-vous avec le compte administrateur que vous venez de créer."
+  },
+  "actions": {
+    "back": "Retour",
+    "finish": "Créer l'administrateur"
+  },
+  "validation": {
+    "tokenRequired": "Collez le jeton de configuration",
+    "localeRequired": "Choisissez une langue",
+    "timezoneRequired": "Choisissez un fuseau horaire"
+  }
+}

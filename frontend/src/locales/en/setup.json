@@ -1,0 +1,75 @@
+{
+  "title": "Set up your instance",
+  "subtitle": "A few steps to create the first administrator and record the instance defaults.",
+  "steps": {
+    "token": {
+      "label": "Token",
+      "title": "Prove you own this instance",
+      "description": "The wizard is open to anyone who can reach this page. The boot token is what tells you apart from them."
+    },
+    "admin": {
+      "label": "Administrator",
+      "title": "First administrator",
+      "description": "This account is an instance administrator. It follows the same rules as any other account."
+    },
+    "settings": {
+      "label": "Defaults",
+      "title": "Instance defaults",
+      "description": "Applied to new accounts. Every one of these can be changed later."
+    },
+    "email": {
+      "label": "Email",
+      "title": "Outgoing email",
+      "description": "Verification links and password resets go through this configuration."
+    }
+  },
+  "token": {
+    "label": "Setup token",
+    "whereFrom": "The backend prints it at startup — read the container logs:",
+    "logLine": "Instance not set up yet. Open /setup and use token: …",
+    "envAlternative": "If SETUP_TOKEN is set in the environment, that value is used instead.",
+    "hint": "A restart issues a new token as long as the setup has not run.",
+    "invalid": "Wrong token, or the setup has already run."
+  },
+  "admin": {
+    "emailHint": "Marked as verified straight away — this is the address that recovers the instance."
+  },
+  "settings": {
+    "locale": "Default language",
+    "localeHint": "Language of the interface for a new account.",
+    "timezone": "Default time zone",
+    "timezoneHint": "Stored as an IANA identifier, so daylight saving is handled for you.",
+    "publicSignup": "Open sign-ups",
+    "publicSignupHint": "When off, only an administrator can create accounts.",
+    "hideLandingPage": "Hide landing page",
+    "hideLandingPageHint": "When on, the landing page is hidden and the login page is shown instead. This is useful for instances that are not public-facing."
+  },
+  "email": {
+    "backend": "Backend",
+    "from": "From",
+    "publicUrl": "Public URL",
+    "smtpHost": "SMTP server",
+    "smtpTls": "TLS",
+    "smtpAuth": "Authentication",
+    "resendKey": "Resend key",
+    "consoleWarning": "The console backend writes mail to the process output — nothing is delivered. Verification links and password resets will not reach anyone. Fine for a local instance you are alone on, not for a shared one.",
+    "testLabel": "Send a test email",
+    "testButton": "Send",
+    "testSuccess": "Sent. Check the inbox — including the spam folder.",
+    "testFailure": "The email could not be sent.",
+    "continueAnywayHint": "You can finish without a working email setup; fix it later in the environment file and restart."
+  },
+  "completed": {
+    "title": "Instance configured.",
+    "description": "Sign in with the administrator account you just created."
+  },
+  "actions": {
+    "back": "Back",
+    "finish": "Create the administrator"
+  },
+  "validation": {
+    "tokenRequired": "Paste the setup token",
+    "localeRequired": "Pick a language",
+    "timezoneRequired": "Pick a time zone"
+  }
+}

@@ -1,0 +1,17 @@
+// crates/api/src/routes/instance.rs
+use axum::{Json, extract::State};
+use domain::dto::instance::PublicInstanceConfig;
+use services::instance_service;
+
+use crate::{error::AppError, state::AppState};
+
+pub fn router() -> axum::Router<AppState> {
+    axum::Router::new().route("/config", axum::routing::get(public_config))
+}
+
+pub async fn public_config(
+    State(state): State<AppState>,
+) -> Result<Json<PublicInstanceConfig>, AppError> {
+    let hide_landing_page = instance_service::cached_hide_landing_page(&state.db).await?;
+    Ok(Json(PublicInstanceConfig { hide_landing_page }))
+}
