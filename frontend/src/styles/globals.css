@@ -213,8 +213,9 @@
    =========================================================================== */
 :root {
   --sidebar-w: 17rem;   /* 272px */
-  --sidebar-w-collapsed:  4rem;   /* 64px */
+  --sidebar-w-collapsed:  3rem;   /* 48px */
   --chrome-h: 3rem;   /* 48px */
+  --banner-h: 2.5rem;   /* 40px */
   --row-h: 2.75rem;     /* 44px */
   --border-w: 1px;
   --radius: 6px;

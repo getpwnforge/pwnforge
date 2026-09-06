@@ -23,6 +23,7 @@ export const ROUTES = {
   // Public
   landing: "/",
 
+  legal: "/legal",
   privacy: "/privacy",
   terms: "/terms",
   contact: "/contact",
@@ -30,8 +31,16 @@ export const ROUTES = {
 
   login: "/login",
   register: "/register",
+  // Matches the link sent by `email_service::send_email_verification` exactly
+  // (`{public_url}/auth/email/verify?token=...`) — the backend builds that URL
+  // itself, so the frontend route has to line up with it, not the other way.
+  confirmEmail: "/auth/email/verify",
   forgotPassword: "/forgot-password",
-  resetPassword: (token: string) => `/reset-password/${token}`,
+  resetPassword: "/auth/password/reset",
+
+  // First-run wizard. Unreachable once the instance is configured — the setup
+  // gate sends it to /login.
+  setup: "/setup",
 
 
   // Personal space (sidebar "global" mode)
@@ -43,7 +52,6 @@ export const ROUTES = {
   myStats: "/me/stats",
   mySettings: "/me/settings",
   help: "/help",
-  logout: "/logout",
 
   // Workspace-scoped (sidebar "workspace" mode). Dashboard is the index route.
   workspace: (id: string) => `/w/${id}`,

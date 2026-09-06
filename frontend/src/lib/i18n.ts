@@ -9,6 +9,8 @@ import navEn from '@/locales/en/nav.json';
 import errorsEn from '@/locales/en/errors.json';
 import landingEn from '@/locales/en/landing.json';
 import authEn from '@/locales/en/auth.json';
+import setupEn from '@/locales/en/setup.json';
+import publicEn from '@/locales/en/public.json';
 import workspacesEn from '@/locales/en/workspaces.json';
 import teamsEn from '@/locales/en/teams.json';
 import challengesEn from '@/locales/en/challenges.json';
@@ -24,6 +26,8 @@ import navFr from '@/locales/fr/nav.json';
 import errorsFr from '@/locales/fr/errors.json';
 import landingFr from '@/locales/fr/landing.json';
 import authFr from '@/locales/fr/auth.json';
+import setupFr from '@/locales/fr/setup.json';
+import publicFr from '@/locales/fr/public.json';
 import workspacesFr from '@/locales/fr/workspaces.json';
 import teamsFr from '@/locales/fr/teams.json';
 import challengesFr from '@/locales/fr/challenges.json';
@@ -39,6 +43,8 @@ const resources = {
     errors: errorsEn,
     landing: landingEn,
     auth: authEn,
+    setup: setupEn,
+    public: publicEn,
     workspaces: workspacesEn,
     teams: teamsEn,
     challenges: challengesEn,
@@ -54,6 +60,8 @@ const resources = {
     errors: errorsFr,
     landing: landingFr,
     auth: authFr,
+    setup: setupFr,
+    public: publicFr,
     workspaces: workspacesFr,
     teams: teamsFr,
     challenges: challengesFr,

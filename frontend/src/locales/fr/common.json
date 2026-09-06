@@ -42,7 +42,10 @@
     "readGuide": "Lire le guide",
     "seeStatus": "Voir le statut",
     "contact": "Contacter",
-    "documentation": "Documentation"
+    "documentation": "Documentation",
+    "showPassword": "Afficher le mot de passe",
+    "hidePassword": "Masquer le mot de passe",
+    "back": "Retour"
   },
   "fields": {
     "name": "Nom",
@@ -195,5 +198,22 @@
   "emptyState": {
     "noResults": "Aucun résultat",
     "noResultsHint": "Essayez d'ajuster vos filtres ou votre recherche."
+  },
+  "alerts": {
+    "readMore": "En savoir plus",
+    "dismiss": "Ignorer l'alerte"
+  },
+  "legal": {
+    "lastUpdated": "Dernière mise à jour :",
+    "version": "version",
+    "loadError": "Ce document n'a pas pu être chargé. Réessayez plus tard ou écrivez-nous à hello@pwnforge.app.",
+    "notice": "Mentions légales",
+    "privacy": "Politique de confidentialité",
+    "terms": "Conditions d'utilisation",
+    "revisionPending": "Nos conditions évoluent le {{date}}. Poursuivre l'utilisation du service après cette date vaut acceptation.",
+    "revisionPendingNoDate": "Nos conditions ont été mises à jour.",
+    "read": "Lire",
+    "acceptNow": "Accepter maintenant",
+    "dismiss": "Fermer"
   }
 }

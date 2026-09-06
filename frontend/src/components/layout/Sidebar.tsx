@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate, NavLink, Link } from "react-router";
+import { useNavigate, NavLink, Link, useMatch } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
   Home,
@@ -18,7 +18,7 @@ import {
   Ellipsis,
   User,
   LogOut,
-  PanelLeftClose,
+  // PanelLeftClose,
   RefreshCcwIcon,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
@@ -34,8 +34,9 @@ import {
   type Notification,
 } from "@/hooks/useNotifications"
 import { useCommandPalette } from "@/hooks/useCommandPalette";
+import { useAuth } from "@/hooks/useAuth"
 
-import { useSidebarStore } from "@/stores/sidebar-store"
+// import { useSidebarStore } from "@/stores/sidebar-store"
 
 
 import {
@@ -75,6 +76,9 @@ import { UserAvatar } from "@/components/ui/user-avatar";
 import { Separator } from "@/components/ui/separator";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarRail, SidebarTrigger } from "../ui/sidebar";
+import { useSidebar } from "../ui/sidebar-context";
 
 
 function workspaceNav(id: string): NavItem[] {
@@ -140,7 +144,7 @@ function RailTooltip({ label }: Readonly<{ label: string }>) {
   return (
     <span
       role="tooltip"
-      className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs text-text opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100"
+      className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs text-text opacity-0 shadow-md transition-opacity duration-150 group-hover/rail:opacity-100"
     >
       {label}
     </span>
@@ -360,9 +364,9 @@ function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
           type="button"
           onClick={() => setOpen(true)}
           aria-label={t("search.placeholder")}
-          className="group relative grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+          className="group/rail relative grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
         >
-          <Search className="size-4.5" />
+          <Search className="size-4" />
           <RailTooltip label={`${t("search.placeholder")} · ⌘K`} />
         </button>
         {dialog}
@@ -389,6 +393,7 @@ function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
 
 function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const { t } = useTranslation('nav')
+  const { isMobile } = useSidebar()
   const navigate = useNavigate()
   const { data: workspaces = [], isLoading } = useWorkspaces()
   const [open, setOpen] = React.useState(false)
@@ -499,11 +504,11 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
     let triggerIcon: React.ReactNode
 
     if (currentId && isLoading) {
-      triggerIcon = <Skeleton className="size-7.5 rounded-md" />
+      triggerIcon = <Skeleton className="size-6 rounded-md" />
     } else if (currentWorkspace) {
-      triggerIcon = <WsIcon name={currentWorkspace.name} color={currentWorkspace.color} />
+      triggerIcon = <WsIcon name={currentWorkspace.name} color={currentWorkspace.color} size="sm" />
     } else {
-      triggerIcon = <Folder className="size-4.5" />
+      triggerIcon = <Folder className="size-4" />
     }
 
     return (
@@ -512,13 +517,13 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
           <button
             type="button"
             aria-label={t("switchWorkspace")}
-            className="group relative grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+            className="group/rail relative grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             {triggerIcon}
             <RailTooltip label={currentWorkspace?.name ?? t("sections.personalSpace")} />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" side="right" className="w-72 p-0">
+        <PopoverContent align="start" side={isMobile ? "bottom" : "right"} sideOffset={4} className="w-72 p-0">
           {commandList}
         </PopoverContent>
       </Popover>
@@ -540,7 +545,7 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
         </button>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="w-(--radix-popover-trigger-width) p-0">
+      <PopoverContent align="start" side={isMobile ? "bottom" : "right"} className="w-(--radix-popover-trigger-width) p-0">
         {commandList}
       </PopoverContent>
     </Popover>
@@ -575,140 +580,146 @@ function ListSkeleton() {
   )
 }
 
+function SidebarNavLink({
+  item, onNavigate, badge,
+}: Readonly<{ item: NavItem; onNavigate?: () => void; badge?: number }>) {
+  const { t } = useTranslation('nav')
+  const { state } = useSidebar()
+  const collapsed = state === "collapsed"
+  const Icon = item.icon
+  const match = useMatch({ path: item.to, end: item.end })
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={!!match} tooltip={t(item.labelKey)}>
+        <NavLink to={item.to} end={item.end} onClick={onNavigate}>
+          <Icon />
+          {!collapsed && <span>{t(item.labelKey)}</span>}
+        </NavLink>
+      </SidebarMenuButton>
+      {badge !== undefined && badge > 0 && <SidebarMenuBadge>{badge}</SidebarMenuBadge>}
+    </SidebarMenuItem>
+  )
+}
+
 function SidebarNav({
-  items, counts = {}, collapsed, onNavigate,
-}: Readonly<{ items: NavItem[]; counts?: Record<string, number>; collapsed?: boolean; onNavigate?: () => void }>) {
+  items, counts = {}, onNavigate,
+}: Readonly<{ items: NavItem[]; counts?: Record<string, number>; onNavigate?: () => void }>) {
   const { t } = useTranslation('nav')
   const { data: workspaces = [] } = useWorkspaces()
   const workspaceId = useWorkspaceId()
   const workspace = workspaces.find((w) => w.id === workspaceId)
+  const { state } = useSidebar()
+  const collapsed = state === "collapsed"
 
   return (
-    <nav className="flex flex-col gap-0.5">
-      <div className="flex flex-col gap-0.5">
-        {!collapsed && (
-          <div className="text-nav uppercase font-mono text-muted-foreground tracking-widest mr-auto px-2.5">
-            {t(items === GLOBAL_NAV ? "sections.personalSpace" : "sections.workspace")}
-          </div>
-        )}
-
-        {items.map((item) => {
-          const Icon = item.icon
-          const badge = item.badgeKey ? counts[item.badgeKey] : undefined
-          return (
-            <NavLink
+    <>
+      <SidebarGroup>
+        <SidebarGroupLabel>
+          {t(items === GLOBAL_NAV ? "sections.personalSpace" : "sections.workspace")}
+        </SidebarGroupLabel>
+        <SidebarMenu>
+          {items.map((item) => (
+            <SidebarNavLink
               key={item.key}
-              to={item.to}
-              end={item.end}
-              onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  "group relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-muted-foreground transition-colors",
-                  "hover:bg-surface-2 hover:text-text w-full",
-                  collapsed ? "size-11 justify-center" : "w-full gap-2.5 px-2.5 py-1.5 text-sm",
-                  isActive && "bg-surface-2 text-text font-medium",
-                )
-              }
-            >
-              <Icon className="size-4 shrink-0" />
-              {!collapsed && <span className="truncate">{t(item.labelKey)}</span>}
-              {!collapsed && badge !== undefined && badge > 0 && (
-                <span className="ml-auto text-sm tabular-nums text-muted-foreground">{badge}</span>
-              )}
-              {collapsed && <RailTooltip label={t(item.labelKey)} />}
-            </NavLink>
-          )
-        })}
-      </div>
+              item={item}
+              onNavigate={onNavigate}
+              badge={item.badgeKey ? counts[item.badgeKey] : undefined}
+            />
+          ))}
+        </SidebarMenu>
+      </SidebarGroup>
+
       {items === GLOBAL_NAV ? (
-          <div className="flex flex-col gap-0.5 mt-3">
-            {!collapsed && (
-              <div className="text-nav uppercase font-mono text-muted-foreground tracking-widest mr-auto px-2.5 mt-2">
-                {t("sections.recentWorkspaces")}
-              </div>
-            )}
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("sections.recentWorkspaces")}</SidebarGroupLabel>
+          <SidebarMenu>
             {workspaces.map((w) => (
-              <NavLink
-                key={w.id}
-                to={`/w/${w.id}`}
-                onClick={onNavigate}
-                className={cn(
-                  "group relative flex items-center gap-2.5 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-text",
-                  collapsed ? "size-11 justify-center" : "w-full px-2.5",
-                )}
-              >
-                <WsIcon name={w.name} color={w.color} size="sm" />
-                {!collapsed && <span className="truncate">{w.name}</span>}
-                {collapsed && <RailTooltip label={w.name} />}
-              </NavLink>
+              <SidebarMenuItem key={w.id}>
+                <SidebarMenuButton asChild tooltip={w.name}>
+                  <NavLink to={`/w/${w.id}`} onClick={onNavigate}>
+                    <WsIcon name={w.name} color={w.color} size="sm" />
+                    {!collapsed && <span>{w.name}</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             ))}
-          </div>
+          </SidebarMenu>
+        </SidebarGroup>
       ) : (
         <>
-          <div className="flex flex-col gap-0.5 mt-3">
-            {!collapsed && (
-              <>
-                <div className="text-nav uppercase font-mono text-muted-foreground tracking-widest mr-auto px-2.5">
-                  {t("sections.activeTags")}
-                </div>
-                <div className="flex flex-wrap gap-1 px-2.5">
-                  {workspace?.tags?.map((tag) => (
-                    <Tag key={tag} variant={systemTags.has(tag) ? "system" : "custom"} className="text-xs">{tag}</Tag>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex flex-col gap-0.5 mt-3 items-center">
-            <Separator className="my-2"/>
-            {!collapsed && (
-              <div className="text-nav uppercase font-mono text-muted-foreground tracking-widest mr-auto px-2.5">
-                {t("sections.navigate")}
-              </div>
-            )}
-            <NavLink
-              key="all-workspaces"
-              to="/workspaces"
-              className={cn(
-                "group relative flex items-center gap-2.5 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-text",
-                collapsed ? "size-11 justify-center" : "w-full px-2.5",
-              )}
-            >
-              <Folders className="size-4 shrink-0" />
-              {!collapsed && <span className="truncate">{t("allWorkspaces")}</span>}
-              {collapsed && <RailTooltip label={t("allWorkspaces")} />}
-            </NavLink>
-            <NavLink
-              key="all-teams"
-              to="/teams"
-              className={cn(
-                "group relative flex items-center gap-2.5 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-text",
-                collapsed ? "size-11 justify-center" : "w-full px-2.5",
-              )}
-            >
-              <Users className="size-4 shrink-0" />
-              {!collapsed && <span className="truncate">{t("myTeams")}</span>}
-              {collapsed && <RailTooltip label={t("myTeams")} />}
-            </NavLink>
-          </div>
+          <SidebarGroup>
+            <SidebarGroupLabel>{t("sections.activeTags")}</SidebarGroupLabel>
+            <div className="flex flex-wrap gap-1 px-2">
+              {workspace?.tags?.map((tag) => (
+                <Tag key={tag} variant={systemTags.has(tag) ? "system" : "custom"} className="text-xs">{tag}</Tag>
+              ))}
+            </div>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <Separator className="mb-2" />
+            <SidebarGroupLabel>{t("sections.navigate")}</SidebarGroupLabel>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip={t("allWorkspaces")}>
+                  <NavLink to="/workspaces">
+                    <Folders />
+                    {!collapsed && <span>{t("allWorkspaces")}</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip={t("myTeams")}>
+                  <NavLink to="/teams">
+                    <Users />
+                    {!collapsed && <span>{t("myTeams")}</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
         </>
       )}
-    </nav>
+    </>
   )
 }
 
 function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
   const [open, setOpen] = React.useState(false)
   const { t } = useTranslation('nav')
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  const displayName = user?.username ?? ""
+  const handle = user ? `@${user.username}` : ""
+
+  async function handleLogout() {
+    try {
+      await logout()
+    } catch {
+      // The local session is gone either way — the cache has been dropped —
+      // so we still send the user to the sign-in screen. But the refresh token
+      // may well have survived server-side, and the cookies are httpOnly so
+      // the client cannot clear them itself. On a shared machine that is worth
+      // saying out loud rather than swallowing.
+      toast.error(t("auth:logout.failedTitle"), {
+        description: t("auth:logout.failedDescription"),
+        id: "logout-failed",
+      })
+    }
+
+    navigate(ROUTES.login, { replace: true })
+  }
 
   const menuContent = (
     <DropdownMenuContent className="w-fit">
       <DropdownMenuLabel className="flex items-center gap-2.5 p-2">
-        <UserAvatar name="Marc Dubois"/>
+        <UserAvatar name={displayName}/>
         <div className="min-w-0 flex-1">
-          <div className="text-base font-medium text-text">Marc Dubois</div>
+          <div className="text-base font-medium text-text">{displayName}</div>
           <div className="text-xs text-muted-foreground font-mono">
-            marc.dubois@example.com
+            {user?.email}
           </div>
         </div>
       </DropdownMenuLabel>
@@ -738,11 +749,15 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
         </Link>
       </DropdownMenuItem>
       <DropdownMenuSeparator />
-      <DropdownMenuItem variant="destructive" className="flex items-center gap-2.5 p-2 cursor-pointer hover:bg-surface-2" asChild>
-        <Link to={ROUTES.logout}>
-          <LogOut className="size-4 shrink-0" />
-          <span>{t("userMenu.logout")}</span>
-        </Link>
+      {/* Not a link: signing out is a request that revokes the refresh token
+          server-side, not a destination. */}
+      <DropdownMenuItem
+        variant="destructive"
+        className="flex items-center gap-2.5 p-2 cursor-pointer hover:bg-surface-2"
+        onSelect={handleLogout}
+      >
+        <LogOut className="size-4 shrink-0" />
+        <span>{t("userMenu.logout")}</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   )
@@ -754,10 +769,10 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
           <button
             type="button"
             aria-label="User menu"
-            className="group relative grid size-11 shrink-0 place-items-center rounded-md hover:bg-surface-2"
+            className="group/rail relative grid size-11 shrink-0 place-items-center rounded-md hover:bg-surface-2"
           >
-            <UserAvatar name="Marc Dubois" />
-            <RailTooltip label="Marc Dubois · @marc.dubois" />
+            <UserAvatar name={displayName} />
+            <RailTooltip label={handle} />
           </button>
         </DropdownMenuTrigger>
         {menuContent}
@@ -773,11 +788,11 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
           aria-label="User menu"
           className="flex items-center gap-2.5 p-2 text-left rounded-md border border-transparent hover:bg-surface-2 hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring w-full"
         >
-          <UserAvatar name="Marc Dubois"/>
+          <UserAvatar name={displayName}/>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-text">Marc Dubois</div>
+            <div className="truncate text-sm font-medium text-text">{displayName}</div>
             <div className="truncate text-xs text-muted-foreground font-mono">
-              @marc.dubois
+              {handle}
             </div>
           </div>
           <Ellipsis className="size-4 shrink-0 text-text-subtle" />
@@ -788,90 +803,43 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
   )
 }
 
-export function Sidebar () {
-  const { t } = useTranslation('nav')
+export function AppSidebar() {
   const workspaceId = useWorkspaceId()
   const items = workspaceId ? workspaceNav(workspaceId) : GLOBAL_NAV
-  const collapsed = useSidebarStore((s) => s.collapsed)
-  const toggle = useSidebarStore((s) => s.toggle)
-
-  React.useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
-        e.preventDefault()
-        toggle()
-      }
-    }
-    window.addEventListener("keydown", handler)
-    return () => window.removeEventListener("keydown", handler)
-  }, [toggle])
+  const { state, isMobile, setOpenMobile } = useSidebar()
+  const collapsed = state === "collapsed"
 
   function closeOnMobile() {
-    if (!collapsed && window.matchMedia("(max-width: 767px)").matches) {
-      toggle()
-    }
+    if (isMobile) setOpenMobile(false)
   }
 
   return (
-    <>
-      {!collapsed && (
-        <button
-          type="button"
-          aria-label={t("sidebar.collapse")}
-          onClick={toggle}
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
-        />
-      )}
-      <aside
-        className={cn(
-          "flex h-dvh shrink-0 flex-col border-r border-border bg-background text-foreground",
-          collapsed
-            ? "w-(--sidebar-collapsed-w) items-center gap-3.5 px-2.5 py-3.5"
-            : "w-(--sidebar-w) gap-4.5 p-3",
-          !collapsed &&
-            "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:w-80 max-md:max-w-[85vw] max-md:shadow-2xl",
-        )}
-      >
-        <div className={cn("flex w-full items-center", collapsed ? "justify-center" : "justify-between gap-2.5")}>
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <div className={cn("flex w-full items-center", collapsed ? "flex-col gap-2" : "justify-between gap-2.5")}>
           <Logo size="md" wordmark={!collapsed} />
-          {!collapsed && (
-            <div className="flex items-center gap-1">
-              <NotificationsMenu />
-              <button
-                type="button"
-                onClick={toggle}
-                aria-label={t("sidebar.collapse")}
-                className="grid size-7.5 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
-              >
-                <PanelLeftClose className="size-5" />
-              </button>
-            </div>
-          )}
+          <div className={cn("flex items-center gap-1", collapsed && "flex-col")}>
+            {!collapsed && <NotificationsMenu />}
+            <SidebarTrigger />
+          </div>
         </div>
+      </SidebarHeader>
 
-        {collapsed && (
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label={t("sidebar.expand")}
-            className="group relative grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            <PanelLeftClose className="size-5 rotate-180" />
-            <RailTooltip label={`${t("sidebar.expand")} · ⌘\\`} />
-          </button>
-        )}
+      <SidebarContent>
+        <SidebarGroup className="gap-4">
+          <SearchBar collapsed={collapsed} />
+          <WorkspaceSelector collapsed={collapsed} />
+        </SidebarGroup>
+        <Separator className="my-1" />
+        <SidebarNav items={items} onNavigate={closeOnMobile} />
+      </SidebarContent>
 
-        <SearchBar collapsed={collapsed} />
-        <WorkspaceSelector collapsed={collapsed} />
-        <Separator className="my-1"/>
-        <SidebarNav items={items} collapsed={collapsed} onNavigate={closeOnMobile} />
+      <SidebarFooter className={cn(collapsed && "items-center")}>
+        <Separator />
+        <UserMenu collapsed={collapsed} />
+      </SidebarFooter>
 
-        <div className={cn("mt-auto w-full", collapsed && "flex flex-col items-center")}>
-          <Separator className="my-2" />
-          <UserMenu collapsed={collapsed} />
-        </div>
-      </aside>
-    </>
+      <SidebarRail />
+    </Sidebar>
   )
-
 }

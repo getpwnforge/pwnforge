@@ -1,8 +1,8 @@
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { StatusVariant } from "@/components/ui/status-badge-variants";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { useTranslation } from "react-i18next";
-import { formatRelativeTime } from "@/lib/format";
 
 type ActivityItemProps = {
   activity: {
@@ -18,7 +18,7 @@ type ActivityItemProps = {
 }
 
 export function ActivityItem({ activity }: Readonly<ActivityItemProps>) {
-  const { t, i18n } = useTranslation("activity");
+  const { t } = useTranslation("activity");
 
   return (
     <div className="flex flex-col gap-3 p-4 rounded-md hover:bg-surface-2 w-full">
@@ -34,16 +34,7 @@ export function ActivityItem({ activity }: Readonly<ActivityItemProps>) {
             </StatusBadge>
           </div>
           <span className="text-xs text-muted-foreground">
-            <time
-              dateTime={activity.timestamp}
-              title={new Intl.DateTimeFormat(i18n.language, {
-                dateStyle: "long",
-                timeStyle: "short",
-              }).format(new Date(activity.timestamp))}
-              className="text-xs text-text-subtle"
-            >
-              {formatRelativeTime(activity.timestamp, i18n.language)}
-            </time>
+            <RelativeTime timestamp={activity.timestamp} className="text-xs text-text-subtle" />
           </span>
         </div>
       </div>
