@@ -5,7 +5,7 @@ use serde::Serialize;
 /// Public shape of an alert: no `created_by` (which admin authored it is
 /// nobody else's business on an unauthenticated route), no `is_active` (a
 /// row reaching this DTO is already known to be the active one).
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct PublicAlertResponse {
     pub id: uuid::Uuid,
     pub kind: String,

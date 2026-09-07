@@ -11,7 +11,7 @@ use validator::Validate;
 ///
 /// The client sends what it showed rather than a bare boolean, so that a tab
 /// left open for three weeks cannot silently accept a superseded text.
-#[derive(Debug, Clone, Deserialize, Validate)]
+#[derive(Debug, Clone, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalAcceptanceInput {
     #[validate(length(min = 1, max = 32))]
@@ -22,14 +22,14 @@ pub struct LegalAcceptanceInput {
 
 /// Versions in force, served unauthenticated so the registration form can
 /// send back what it displayed rather than a bare boolean.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct LegalVersionsDto {
     pub terms_version: &'static str,
     pub privacy_version: &'static str,
 }
 
 /// Where the user stands with respect to the current documents.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct LegalStatusDto {
     pub state: LegalState,
     pub current_terms_version: &'static str,
@@ -42,7 +42,7 @@ pub struct LegalStatusDto {
     pub effective_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalState {
     /// Accepted versions are current. Nothing to display.

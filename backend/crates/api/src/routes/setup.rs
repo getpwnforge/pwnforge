@@ -13,6 +13,7 @@ use axum::{
 };
 use domain::dto::{
     auth::UserResponse,
+    error_responses::{RateLimitedErrorResponse, SimpleErrorResponse},
     setup::{
         EmailConfigResponse, SetupRequest, SetupStatusResponse, TestEmailRequest,
         ValidateAdminRequest,
@@ -40,6 +41,16 @@ pub fn router() -> Router<AppState> {
 
 /// The only route reachable without a token: the frontend cannot know whether
 /// to prompt for one before asking.
+#[utoipa::path(
+    get,
+    path = "/api/v1/setup/status",
+    tag = "Setup",
+    operation_id = "setup_status",
+    responses(
+        (status = 200, description = "Setup status", body = SetupStatusResponse),
+        (status = 503, description = "Database unavailable", body = SimpleErrorResponse),
+    )
+)]
 async fn status(State(state): State<AppState>) -> Result<Json<SetupStatusResponse>, AppError> {
     // 1. instance_service::is_setup_completed
     let completed = instance_service::is_setup_completed(&state.db).await?;
@@ -48,6 +59,16 @@ async fn status(State(state): State<AppState>) -> Result<Json<SetupStatusRespons
 }
 
 /// Lets the operator check that the .env is what the process understood.
+#[utoipa::path(
+    get,
+    path = "/api/v1/setup/email-config",
+    tag = "Setup",
+    responses(
+        (status = 200, description = "Email configuration", body = EmailConfigResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
+    )
+)]
 async fn email_config(
     State(state): State<AppState>,
     _token: SetupToken,
@@ -58,6 +79,25 @@ async fn email_config(
     Ok(Json(setup_service::email_config(&state.config)))
 }
 
+/// Sends a test message through the configured transport.
+///
+/// Records nothing: this only checks that the email backend the process
+/// understood actually works.
+#[utoipa::path(
+    post,
+    path = "/api/v1/setup/test-email",
+    tag = "Setup",
+    request_body = TestEmailRequest,
+    responses(
+        (status = 204, description = "Test email sent"),
+        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+        (status = 502, description = "Email send failed", body = SimpleErrorResponse),
+        (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
+    )
+)]
 async fn test_email(
     State(state): State<AppState>,
     _token: SetupToken,
@@ -102,6 +142,20 @@ async fn test_email(
 ///
 /// Creates nothing and commits nothing: the same checks run again inside
 /// `complete`, which stays the authority.
+#[utoipa::path(
+    post,
+    path = "/api/v1/setup/validate-admin",
+    tag = "Setup",
+    request_body = ValidateAdminRequest,
+    responses(
+        (status = 204, description = "Admin credentials valid"),
+        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+        (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
+    )
+)]
 async fn validate_admin(
     State(state): State<AppState>,
     _token: SetupToken,
@@ -133,6 +187,24 @@ async fn validate_admin(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Creates the first administrator and closes the wizard.
+///
+/// The account is created verified, the instance settings are recorded, and
+/// the setup surface answers 404 from this point on.
+#[utoipa::path(
+    post,
+    path = "/api/v1/setup",
+    tag = "Setup",
+    request_body = SetupRequest,
+    responses(
+        (status = 201, description = "Setup completed", body = UserResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
+        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+        (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
+    )
+)]
 async fn complete(
     State(state): State<AppState>,
     _token: SetupToken,

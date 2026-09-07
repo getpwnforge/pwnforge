@@ -16,7 +16,10 @@ use axum::{
 };
 use chrono::Utc;
 use domain::{
-    dto::legal::{LegalAcceptanceInput, LegalStatusDto, LegalVersionsDto},
+    dto::{
+        error_responses::{LegalVersionStaleErrorResponse, SimpleErrorResponse},
+        legal::{LegalAcceptanceInput, LegalStatusDto, LegalVersionsDto},
+    },
     legal::{CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION},
 };
 use services::legal_service;
@@ -36,6 +39,17 @@ pub fn router() -> Router<AppState> {
 /// Returns whether the caller must accept a revised document. The frontend
 /// calls this after login and uses the result to choose between nothing, a
 /// dismissible banner, and a blocking modal.
+#[utoipa::path(
+    get,
+    path = "/api/v1/legal/status",
+    tag = "Legal",
+    operation_id = "legal_status",
+    security(("access_token" = [])),
+    responses(
+        (status = 200, description = "Legal acceptance status", body = LegalStatusDto),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn status(
     State(state): State<AppState>,
     user: AuthUser,
@@ -53,6 +67,19 @@ async fn status(
 /// in `routes/auth.rs`. When the trusted-proxy chain does not resolve an
 /// address, the raw TCP peer is Cloudflare, not the user: recording the
 /// proxy's address as evidence would be worse than recording nothing.
+#[utoipa::path(
+    post,
+    path = "/api/v1/legal/accept",
+    tag = "Legal",
+    security(("access_token" = [])),
+    request_body = LegalAcceptanceInput,
+    responses(
+        (status = 204, description = "Legal documents accepted"),
+        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 409, description = "Legal version stale", body = LegalVersionStaleErrorResponse),
+    )
+)]
 async fn accept(
     State(state): State<AppState>,
     user: AuthUser,
@@ -68,6 +95,14 @@ async fn accept(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/legal/versions",
+    tag = "Legal",
+    responses(
+        (status = 200, description = "Legal versions", body = LegalVersionsDto),
+    )
+)]
 /// `GET /api/v1/legal/versions`
 ///
 /// Public: the registration form needs it before any session exists. Read

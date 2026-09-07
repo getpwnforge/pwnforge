@@ -2,6 +2,7 @@
 mod app;
 mod error;
 mod middleware;
+mod openapi;
 mod routes;
 mod state;
 mod tasks;

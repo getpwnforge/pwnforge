@@ -10,6 +10,10 @@ use domain::dto::auth::{
     EmailResendRequest, EmailVerifyRequest, LoginRequest, PasswordChangeRequest,
     PasswordForgotRequest, PasswordResetRequest, RegisterRequest, UserResponse,
 };
+use domain::dto::error_responses::{
+    EmailNotVerifiedErrorResponse, RateLimitedErrorResponse, SimpleErrorResponse,
+    ValidationErrorResponse,
+};
 use services::{
     auth_service, jwt_service,
     rate_limit_service::{self, RateLimitDecision},
@@ -33,6 +37,24 @@ pub fn router() -> Router<AppState> {
         .route("/email/resend", post(email_resend))
 }
 
+/// Creates an account without opening a session.
+///
+/// Returns 201 with the user, but no cookies: the address must be verified
+/// before the account can sign in. A verification mail is sent on a best
+/// effort basis, its failure does not undo the registration.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/register",
+    tag = "Auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 201, description = "Account created", body = UserResponse),
+        (status = 403, description = "Public signup is disabled", body = SimpleErrorResponse),
+        (status = 409, description = "Username or email already taken, or username reserved", body = SimpleErrorResponse),
+        (status = 422, description = "Validation failed", body = ValidationErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -53,6 +75,18 @@ async fn register(
     Ok((StatusCode::CREATED, Json(UserResponse::from(registered))))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Signed in", body = UserResponse),
+        (status = 401, description = "Invalid credentials", body = SimpleErrorResponse),
+        (status = 403, description = "Email not verified", body = EmailNotVerifiedErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -104,6 +138,21 @@ async fn login(
     ))
 }
 
+/// Rotates the session and issues a fresh access token.
+///
+/// Consumes the `refresh_token` cookie and replaces it. The presented token
+/// is revoked on every rotation, and presenting it again is treated as a
+/// replay: the whole session chain is then revoked.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/refresh",
+    tag = "Auth",
+    security(("refresh_token" = [])),
+    responses(
+        (status = 200, description = "Tokens refreshed", body = UserResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn refresh(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -132,6 +181,16 @@ async fn refresh(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    tag = "Auth",
+    security(("refresh_token" = [])),
+    responses(
+        (status = 204, description = "Logged out"),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -146,11 +205,37 @@ async fn logout(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/me",
+    tag = "Auth",
+    security(("access_token" = [])),
+    responses(
+        (status = 200, description = "Authenticated user", body = UserResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserResponse>, AppError> {
     let (model, email) = auth_service::fetch_user(&state.db, user.id).await?;
     Ok(Json(UserResponse::new(model, email)))
 }
 
+/// Sends a password reset link.
+///
+/// Always answers 202, whether or not the address belongs to an account:
+/// a different answer would turn this route into a way to test which
+/// addresses are registered.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/forgot",
+    tag = "Auth",
+    request_body = PasswordForgotRequest,
+    responses(
+        (status = 202, description = "Password reset email sent"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn password_forgot(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -193,6 +278,17 @@ async fn password_forgot(
     Ok(StatusCode::ACCEPTED)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/reset",
+    tag = "Auth",
+    request_body = PasswordResetRequest,
+    responses(
+        (status = 204, description = "Password reset"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn password_reset(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -228,6 +324,19 @@ async fn password_reset(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/change",
+    tag = "Auth",
+    request_body = PasswordChangeRequest,
+    security(("access_token" = [])),
+    responses(
+        (status = 204, description = "Password changed"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn password_change(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -257,13 +366,26 @@ async fn password_change(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Marks an email address as verified.
+///
+/// POST rather than GET: mail clients and spam scanners prefetch links, and a
+/// GET would let them burn the token before the user clicks. The frontend
+/// page reads the token from the URL and posts it.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/verify",
+    tag = "Auth",
+    request_body = EmailVerifyRequest,
+    responses(
+        (status = 204, description = "Email verified"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn email_verify(
     State(state): State<AppState>,
     JsonBody(payload): JsonBody<EmailVerifyRequest>,
 ) -> Result<StatusCode, AppError> {
-    // POST, not GET: mail clients and spam scanners prefetch links, and a GET
-    // would let them burn the token before the user clicks. The frontend page
-    // reads the token from the URL and posts it.
     payload.validate()?;
 
     auth_service::verify_email(&state.db, &payload.token).await?;
@@ -271,6 +393,22 @@ async fn email_verify(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Sends a new verification link.
+///
+/// Takes the opaque token returned alongside an `email_not_verified`
+/// failure, not an email address: the caller has already proven it holds a
+/// pending verification for that address.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/resend",
+    tag = "Auth",
+    request_body = EmailResendRequest,
+    responses(
+        (status = 202, description = "Verification email resent"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn email_resend(
     State(state): State<AppState>,
     JsonBody(payload): JsonBody<EmailResendRequest>,

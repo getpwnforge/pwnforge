@@ -4,7 +4,10 @@ use axum::{
     http::StatusCode,
     routing::post,
 };
-use domain::dto::contact::ContactRequest;
+use domain::dto::{
+    contact::ContactRequest,
+    error_responses::{RateLimitedErrorResponse, SimpleErrorResponse},
+};
 use services::contact_service;
 use std::net::SocketAddr;
 use validator::Validate;
@@ -19,6 +22,22 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/contact", post(submit))
 }
 
+/// Submits the public contact form.
+///
+/// Generates a ticket reference used as the subject of both the notification
+/// and the confirmation mail, so replies stay in a single thread.
+#[utoipa::path(
+    post,
+    path = "/api/v1/contact",
+    tag = "Contact",
+    request_body = ContactRequest,
+    responses(
+        (status = 204, description = "Contact request submitted"),
+        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limit exceeded", body = RateLimitedErrorResponse),
+        (status = 503, description = "Database unavailable", body = SimpleErrorResponse),
+    )
+)]
 async fn submit(
     State(state): State<AppState>,
     ClientIp(client_ip): ClientIp,

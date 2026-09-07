@@ -3,7 +3,7 @@ use validator::Validate;
 
 use crate::types::ContactCategory;
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContactRequest {
     #[validate(length(min = 1, max = 100))]
