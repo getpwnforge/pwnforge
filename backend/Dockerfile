@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build context: backend/
 
-FROM rust:1.97-slim-bookworm AS chef
+FROM rust:1.98-slim-bookworm AS chef
 ARG UID=1000
 ARG GID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
