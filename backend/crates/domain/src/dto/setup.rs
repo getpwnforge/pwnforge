@@ -4,7 +4,7 @@ use validator::Validate;
 
 /// Answered without a token: the frontend needs it to decide whether to show
 /// the wizard at all, before it has anything to authenticate with.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SetupStatusResponse {
     pub completed: bool,
 }
@@ -12,7 +12,7 @@ pub struct SetupStatusResponse {
 /// What the backend read from its environment, so the operator can check that
 /// the .env is what the process actually understood. Never carries the SMTP
 /// password nor the API key: a wizard is not a reason to expose secrets.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct EmailConfigResponse {
     pub backend: String,
     pub from: String,
@@ -25,7 +25,7 @@ pub struct EmailConfigResponse {
     pub public_url: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TestEmailRequest {
     #[validate(email, length(max = 254))]
@@ -38,7 +38,7 @@ pub struct TestEmailRequest {
 /// server-side rules. Without this route the wizard could only report them once
 /// every step had been filled, which means sending the operator back two
 /// screens to fix a field they left long ago.
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ValidateAdminRequest {
     #[validate(length(min = 3, max = 32), regex(path = *USERNAME_RE))]
@@ -51,7 +51,7 @@ pub struct ValidateAdminRequest {
     pub admin_password: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetupRequest {
     #[validate(length(min = 3, max = 32), regex(path = *USERNAME_RE))]

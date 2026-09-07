@@ -10,6 +10,10 @@ use domain::dto::auth::{
     EmailResendRequest, EmailVerifyRequest, LoginRequest, PasswordChangeRequest,
     PasswordForgotRequest, PasswordResetRequest, RegisterRequest, UserResponse,
 };
+use domain::dto::error_responses::{
+    EmailNotVerifiedErrorResponse, RateLimitedErrorResponse, SimpleErrorResponse,
+    ValidationErrorResponse,
+};
 use services::{
     auth_service, jwt_service,
     rate_limit_service::{self, RateLimitDecision},
@@ -33,6 +37,19 @@ pub fn router() -> Router<AppState> {
         .route("/email/resend", post(email_resend))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/register",
+    tag = "Auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 201, description = "Account created", body = UserResponse),
+        (status = 403, description = "Public signup is disabled", body = SimpleErrorResponse),
+        (status = 409, description = "Username or email already taken, or username reserved", body = SimpleErrorResponse),
+        (status = 422, description = "Validation failed", body = ValidationErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -53,6 +70,18 @@ async fn register(
     Ok((StatusCode::CREATED, Json(UserResponse::from(registered))))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    tag = "Auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Signed in", body = UserResponse),
+        (status = 401, description = "Invalid credentials", body = SimpleErrorResponse),
+        (status = 403, description = "Email not verified", body = EmailNotVerifiedErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -104,6 +133,15 @@ async fn login(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/refresh",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Tokens refreshed", body = UserResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn refresh(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -132,6 +170,15 @@ async fn refresh(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    tag = "Auth",
+    responses(
+        (status = 204, description = "Logged out"),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -146,11 +193,32 @@ async fn logout(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/me",
+    tag = "Auth",
+    security(("access_token" = [])),
+    responses(
+        (status = 200, description = "Authenticated user", body = UserResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+    )
+)]
 async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserResponse>, AppError> {
     let (model, email) = auth_service::fetch_user(&state.db, user.id).await?;
     Ok(Json(UserResponse::new(model, email)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/forgot",
+    tag = "Auth",
+    request_body = PasswordForgotRequest,
+    responses(
+        (status = 202, description = "Password reset email sent"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn password_forgot(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
@@ -193,6 +261,17 @@ async fn password_forgot(
     Ok(StatusCode::ACCEPTED)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/reset",
+    tag = "Auth",
+    request_body = PasswordResetRequest,
+    responses(
+        (status = 204, description = "Password reset"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn password_reset(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -228,6 +307,19 @@ async fn password_reset(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/password/change",
+    tag = "Auth",
+    request_body = PasswordChangeRequest,
+    security(("access_token" = [])),
+    responses(
+        (status = 204, description = "Password changed"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn password_change(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -257,6 +349,17 @@ async fn password_change(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/verify",
+    tag = "Auth",
+    request_body = EmailVerifyRequest,
+    responses(
+        (status = 204, description = "Email verified"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn email_verify(
     State(state): State<AppState>,
     JsonBody(payload): JsonBody<EmailVerifyRequest>,
@@ -271,6 +374,17 @@ async fn email_verify(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/email/resend",
+    tag = "Auth",
+    request_body = EmailResendRequest,
+    responses(
+        (status = 202, description = "Verification email resent"),
+        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+    )
+)]
 async fn email_resend(
     State(state): State<AppState>,
     JsonBody(payload): JsonBody<EmailResendRequest>,

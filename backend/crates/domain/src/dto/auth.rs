@@ -62,7 +62,7 @@ pub struct RotatedSession {
     pub session_id: Uuid,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterRequest {
     #[validate(email, length(max = 254))]
@@ -80,12 +80,13 @@ pub struct RegisterRequest {
     pub turnstile_token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
     pub email: String,
     pub email_verified: bool,
+    #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
 }
 
@@ -101,7 +102,7 @@ impl From<RegisteredUser> for UserResponse {
     }
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LoginRequest {
     #[validate(length(max = 254))]
@@ -128,7 +129,7 @@ impl UserResponse {
     }
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PasswordForgotRequest {
     #[validate(email, length(max = 254))]
@@ -137,7 +138,7 @@ pub struct PasswordForgotRequest {
     pub turnstile_token: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PasswordResetRequest {
     #[validate(length(min = 1, max = 128))]
@@ -150,7 +151,7 @@ pub struct PasswordResetRequest {
     pub new_password: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PasswordChangeRequest {
     #[validate(length(max = 128))]
@@ -163,14 +164,14 @@ pub struct PasswordChangeRequest {
     pub new_password: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmailVerifyRequest {
     #[validate(length(min = 1, max = 128))]
     pub token: String,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmailResendRequest {
     #[validate(length(min = 1, max = 128))]
