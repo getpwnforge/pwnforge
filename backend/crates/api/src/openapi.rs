@@ -104,7 +104,12 @@ impl Modify for SecurityAddon {
     info(
         title = "PwnForge API",
         version = "0.1.0",
-        description = "Reference documentation for the PwnForge API."
+        description = "Reference documentation for the PwnForge API.",
+        license(name = "AGPL-3.0", url = "https://www.gnu.org/licenses/agpl-3.0.html")
+    ),
+    servers(
+        (url = "https://pwnforge.app", description = "Cloud instance"),
+        (url = "http://localhost:3000", description = "Local development"),
     )
 )]
 pub struct ApiDoc;
@@ -121,6 +126,6 @@ mod tests {
         let spec = ApiDoc::openapi()
             .to_pretty_json()
             .expect("failed to serialize OpenAPI spec");
-        std::fs::write("openapi.json", spec).expect("failed to write openapi.json");
+        std::fs::write("../../openapi.json", spec).expect("failed to write openapi.json");
     }
 }

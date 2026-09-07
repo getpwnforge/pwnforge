@@ -43,6 +43,7 @@ pub fn router() -> Router<AppState> {
     get,
     path = "/api/v1/legal/status",
     tag = "Legal",
+    operation_id = "legal_status",
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Legal acceptance status", body = LegalStatusDto),
@@ -74,7 +75,7 @@ async fn status(
     request_body = LegalAcceptanceInput,
     responses(
         (status = 204, description = "Legal documents accepted"),
-        (status = 400, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 409, description = "Legal version stale", body = LegalVersionStaleErrorResponse),
     )
