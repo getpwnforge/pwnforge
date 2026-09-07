@@ -25,3 +25,4 @@ validator.workspace = true
 seed = { path = "../seed" }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 time = "0.3.55"
+utoipa.workspace = true

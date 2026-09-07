@@ -28,3 +28,4 @@ tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
 chrono = "0.4.45"
 validator = { version = "0.21.0", features = ["derive"] }
 redis = { version = "1.5.0", features = ["tokio-comp", "connection-manager"] }
+utoipa = { version = "5.5.0", features = ["axum_extras", "chrono", "uuid"] }
