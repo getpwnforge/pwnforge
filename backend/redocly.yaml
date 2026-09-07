@@ -1,0 +1,17 @@
+# redocly.yaml
+extends:
+  - recommended
+
+rules:
+  # Public endpoints have no authentication by design: health probes, legal
+  # versions, active alerts, and the whole unauthenticated auth surface.
+  # Requiring an explicit empty security block on each would add noise
+  # without adding information.
+  security-defined: off
+
+  # A missing summary is a documentation gap worth seeing, not a failure.
+  operation-summary: warn
+
+  # Local development server is intentional: self-hosters run the API on
+  # localhost, so it is a legitimate target rather than a placeholder.
+  no-server-example.com: off
