@@ -1,0 +1,17 @@
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+{% for row in details %}
+{{ row.label }}: {{ row.value }}
+{% endfor %}
+{% if let Some(support_email) = support_email %}
+{{ label_contact }} {{ support_email }}
+{% endif %}
+
+--
+{{ footer }}
+{{ footer_instance }}
+{{ footer_note }}
+{{ public_url }}

@@ -1,9 +1,19 @@
-use crate::{middleware::tracing::request_id_middleware, routes::health::health, state::AppState};
-use axum::{Router, middleware, routing::get};
+// crates/api/src/app.rs
+use crate::{middleware::tracing::request_id_middleware, routes, state::AppState};
+use axum::{Router, middleware};
 
 pub fn build_router(state: AppState) -> Router {
+    let api_v1 = Router::new()
+        .merge(routes::health::router())
+        .merge(routes::alerts::router())
+        .merge(routes::contact::router())
+        .nest("/instance", routes::instance::router())
+        .nest("/legal", routes::legal::router())
+        .nest("/auth", routes::auth::router())
+        .nest("/setup", routes::setup::router());
+
     Router::new()
-        .route("/api/v1/health", get(health))
+        .nest("/api/v1", api_v1)
         .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)
 }

@@ -21,9 +21,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release -p api --recipe-path recipe.json --locked
+RUN cargo chef cook --release -p api -p admin-cli --recipe-path recipe.json --locked
 COPY . .
-RUN cargo build --release -p api --locked
+RUN cargo build --release -p api -p admin-cli --locked
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --no-create-home --uid 10001 pwnforge
 
 COPY --from=builder /app/target/release/api /usr/local/bin/api
+COPY --from=builder /app/target/release/pwnforge-admin /usr/local/bin/pwnforge-admin
 
 USER pwnforge
 EXPOSE 3000

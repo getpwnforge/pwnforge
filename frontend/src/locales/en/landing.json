@@ -95,11 +95,6 @@
     "button": "Get started"
   },
   "footer": {
-    "privacy": "Privacy",
-    "terms": "Terms",
-    "security": "Security",
-    "status": "Status",
-    "contact": "Contact",
     "copyright": "© {{year}} PwnForge",
     "copyrightRange": "© {{startYear}}-{{year}} PwnForge",
     "licensePrefix": "Licensed under",
@@ -120,8 +115,9 @@
     },
     "legal": {
       "title": "Legal",
-      "privacy": "Privacy",
-      "terms": "Terms",
+      "notice": "Legal Notice",
+      "privacy": "Privacy Policy",
+      "terms": "Terms of Service",
       "security": "Security",
       "contact": "Contact Us"
     }

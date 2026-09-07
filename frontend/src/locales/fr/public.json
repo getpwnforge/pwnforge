@@ -1,0 +1,23 @@
+{
+  "contact": {
+    "title": "Nous contacter",
+    "subtitle": "Questions sur le produit, le self-hosting, ou autre chose ? On lit chaque message.",
+    "name": "Nom",
+    "email": "Email",
+    "category": "Catégorie",
+    "message": "Message",
+    "submit": "Envoyer",
+    "sending": "Envoi...",
+    "error": "Une erreur est survenue. Réessayez.",
+    "successTitle": "Message envoyé",
+    "successBody": "Merci de nous avoir contactés, nous revenons vers vous bientôt.",
+    "securityNotice": "Vous avez trouvé une faille de sécurité ? Écrivez à",
+    "categories": {
+      "general": "Question générale",
+      "selfHosting": "Aide au self-hosting",
+      "billing": "Facturation & vente",
+      "press": "Presse & partenariats",
+      "other": "Autre"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{# templates/security_alert.txt #}
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+
+{{ label_when }}: {{ occurred_at }}
+{{ label_ip }}: {{ ip_address }}
+{{ label_device }}: {{ user_agent }}
+
+{{ no_action }}
+
+{{ not_you }}
+
+--
+{{ footer }}
+{{ footer_instance }} {{ public_url }}
+{{ footer_note }}

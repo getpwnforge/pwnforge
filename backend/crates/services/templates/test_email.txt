@@ -1,0 +1,14 @@
+{# See test_email.html.j2 — untranslated on purpose. #}
+{{ title }}
+
+If you are reading this, your PwnForge instance can send email. Verification
+links and password resets will reach your users.
+
+Delivery confirmed for this address.
+
+Worth checking before you rely on it: that this message did not land in spam,
+and that the sender address is one your domain is allowed to send from (SPF,
+DKIM and DMARC).
+
+--
+{{ footer_instance }} {{ public_url }}

@@ -1,0 +1,13 @@
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+
+Reference: {{ reference }}
+
+--
+{{ footer }}
+{{ footer_instance }}
+{{ footer_note }}
+{{ public_url }}

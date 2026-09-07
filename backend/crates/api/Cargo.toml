@@ -4,15 +4,24 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+services = { path = "../services" }
 axum = "0.8.9"
-tokio = { version = "1.53.1", features = ["full"] }
+tokio.workspace = true
 sea-orm.workspace = true
-serde = "1.0.229"
-serde_json = "1.0.151"
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 dotenvy.workspace = true
 anyhow.workspace = true
-redis = { version = "1.4.1", features = ["tokio-comp", "connection-manager"] }
+redis.workspace = true
 migration = { path = "../migration" }
-uuid = { version = "1.24.0", features = ["v4", "v7", "serde"] }
+uuid.workspace = true
+domain.workspace = true
+thiserror = "2.0.20"
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
+chrono.workspace = true
+validator.workspace = true
+seed = { path = "../seed" }
+axum-extra = { version = "0.12.6", features = ["cookie"] }
+time = "0.3.55"

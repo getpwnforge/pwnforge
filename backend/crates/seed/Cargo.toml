@@ -3,6 +3,19 @@ name = "seed"
 edition.workspace = true
 version.workspace = true
 
+[lib]
+name = "seed"
+path = "src/lib.rs"
+
+[[bin]]
+name = "seed"
+path = "src/main.rs"
+
 [dependencies]
+domain.workspace = true
 dotenvy.workspace = true
 anyhow.workspace = true
+sea-orm.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

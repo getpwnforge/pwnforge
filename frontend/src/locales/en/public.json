@@ -1,0 +1,23 @@
+{
+  "contact": {
+    "title": "Contact us",
+    "subtitle": "Questions about the product, self-hosting, or anything else? We read every message.",
+    "name": "Name",
+    "email": "Email",
+    "category": "Category",
+    "message": "Message",
+    "submit": "Send message",
+    "sending": "Sending...",
+    "error": "Something went wrong. Please try again.",
+    "successTitle": "Message sent",
+    "successBody": "Thanks for reaching out, we'll get back to you soon.",
+    "securityNotice": "Found a security issue? Email",
+    "categories": {
+      "general": "General question",
+      "selfHosting": "Self-hosting help",
+      "billing": "Billing & sales",
+      "press": "Press & partnerships",
+      "other": "Other"
+    }
+  }
+}

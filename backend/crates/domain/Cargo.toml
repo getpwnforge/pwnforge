@@ -4,3 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+sea-orm.workspace = true
+validator.workspace = true
+regex = "1.13.1"
+uuid.workspace = true
+serde.workspace = true
+chrono.workspace = true

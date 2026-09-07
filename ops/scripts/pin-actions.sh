@@ -10,7 +10,9 @@
 
 set -uo pipefail
 
-WORKFLOW_DIR=".github/workflows"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "error: GitHub CLI (gh) is required. Install: https://cli.github.com" >&2
