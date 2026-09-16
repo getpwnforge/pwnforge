@@ -36,7 +36,7 @@ All eight must pass before the human submits a PR. This is exactly what `ci.yml`
 
 ## Testing instructions
 
-- New endpoints need a positive test (correct role succeeds) and negative tests in `backend/tests/`. The expected status code for a negative test depends on what the requester should be allowed to know, not just whether they're blocked (see Permissions below):
+- New endpoints need a positive test (correct role succeeds) and negative tests. Unit tests live in a `#[cfg(test)] mod tests` beside the code, which is the only place a test can reach a private item. Tests that need a real Postgres or Redis go in `crates/services/tests/`; `backend/` itself is a virtual workspace manifest with no `[package]`, so a `backend/tests/` directory would never be compiled. The expected status code for a negative test depends on what the requester should be allowed to know, not just whether they're blocked (see Permissions below):
   - A **member with an insufficient role** (e.g. Viewer trying to write) already knows the resource exists → `403`.
   - A **non-member** (or anyone who shouldn't know the resource exists at all) → `404`, never `403` — a `403` would confirm existence to someone who isn't supposed to know it.
 - Migrations: test `down()`, not just `up()`.
@@ -47,12 +47,12 @@ All eight must pass before the human submits a PR. This is exactly what `ci.yml`
 
 **Ask first**: adding a new dependency, editing anything under `.github/workflows/`, changing `docker-compose*.yml`, database migrations that alter existing tables (new migrations for new tables are fine).
 
-**Never do**: open, submit, comment as, or merge a Pull Request — that action is human-only, regardless of how much of the content you prepared; commit secrets or `.env` values; touch `docker-build.yml`'s publish/signing steps; add `Signed-off-by:` yourself (see below); write raw SQL string interpolation; put roles/permissions/PII into a JWT claim (see [SECURITY.md](SECURITY.md) §3); return `403` to a non-member where `404` is required to avoid confirming a resource exists (see [SECURITY.md](SECURITY.md) §4) — this only applies to hiding existence from someone with no access at all, not to a member who lacks a specific permission, see Testing instructions above.
+**Never do**: open, submit, comment as, or merge a Pull Request — that action is human-only, regardless of how much of the content you prepared; commit secrets or `.env` values; touch `docker-build.yml`'s publish/signing steps; add `Signed-off-by:` yourself (see below); write raw SQL string interpolation; put roles/permissions/PII into a JWT claim (see [SECURITY.md](SECURITY.md#jwt-claims-carry-identity-never-authority)); return `403` to a non-member where `404` is required to avoid confirming a resource exists (see [SECURITY.md](SECURITY.md#a-404-hides-existence-a-403-admits-it)) — this only applies to hiding existence from someone with no access at all, not to a member who lacks a specific permission, see Testing instructions above.
 
 ## Before the human opens the PR (you don't do this step)
 
 - Every command in the block above passes, not just for the files touched.
-- If the change touches auth, permissions, file uploads, or webhooks, the matching section of [SECURITY.md](SECURITY.md) has been checked: most footguns there are non-obvious rather than things a linter catches.
+- If the change touches auth, permissions, rate limits, file uploads, or webhooks, the matching rule in [SECURITY.md](SECURITY.md#implementation-invariants) has been checked: most footguns there are non-obvious rather than things a linter catches.
 - Commit message(s) follow the Conventional Commits format above.
 
 ## AI-assisted commits
