@@ -6,7 +6,7 @@ use crate::blocked_email_service::BlockedEmailError;
 use crate::config::Config;
 use crate::{
     audit_service, auth_token_service, instance_service, legal_service, team_service,
-    turnstile_service,
+    token_service, turnstile_service,
 };
 use chrono::Utc;
 use domain::{
@@ -436,7 +436,16 @@ pub async fn password_forgot(
         None => {
             // Do not reveal whether the email exists. The caller should always get a success response.
             // Log the attempt for monitoring, but do not return an error to the user.
-            tracing::warn!(email = %email, "password reset requested for non-existent email");
+            // Hashed, and normalised the same way `rate_limit_service`
+            // keys its buckets: without the lowercasing, `Foo@x.com` and
+            // `foo@x.com` produce different digests and the repeated-probe
+            // pattern this line exists to surface would not correlate.
+            //
+            // Named `email_hash`, not `email`: a field called `email` holding
+            // 64 hex characters reads as a bug to whoever next greps the logs,
+            // and invites someone to "fix" it back to the plaintext.
+            let email_hash = token_service::hash_opaque_token(&email.trim().to_lowercase());
+            tracing::warn!(%email_hash, "password reset requested for non-existent email");
         }
     }
 
