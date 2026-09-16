@@ -53,6 +53,7 @@ pub fn router() -> Router<AppState> {
         (status = 409, description = "Username or email already taken, or username reserved", body = SimpleErrorResponse),
         (status = 422, description = "Validation failed", body = ValidationErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+        (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )
 )]
 async fn register(
@@ -66,12 +67,31 @@ async fn register(
     legal_service::validate_input(&payload.legal)?;
 
     // Same reasoning as login: a malformed X-Forwarded-For must not strip the
-    // IP that Turnstile verifies against.
-    let client_ip_resolved = client_ip.unwrap_or_else(|| remote.ip());
+    // IP that Turnstile verifies against, nor let a caller dodge the limit.
+    let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
+
+    // Checked after validation, like password/forgot: a mistyped form must not
+    // burn one of the five hourly attempts and lock the visitor out.
+    match rate_limit_service::check_register_attempt(&mut state.redis.clone(), rate_limit_ip).await
+    {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            // Refuse rather than fail open, same rule as password/forgot: there
+            // is no password or token underneath this route, and every request
+            // that gets through mails an address the caller never proved they
+            // own. An unlimited signup endpoint is a free mailer plus unbounded
+            // account creation, so a missing limiter must close the door.
+            tracing::error!(error = ?err, "register rate limit unavailable, refusing");
+            return Err(AppError::ServiceUnavailable);
+        }
+    }
 
     let ctx = session_context(&headers, client_ip);
     let registered =
-        auth_service::register(&state.db, &state.config, payload, ctx, client_ip_resolved).await?;
+        auth_service::register(&state.db, &state.config, payload, ctx, rate_limit_ip).await?;
     Ok((StatusCode::CREATED, Json(UserResponse::from(registered))))
 }
 
