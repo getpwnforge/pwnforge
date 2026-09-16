@@ -154,9 +154,11 @@ fi
 # The cast is not needed for reads: citext decodes as text without it.
 # See https://github.com/SeaQL/sea-orm/discussions/1750 and https://github.com/SeaQL/sea-orm/issues/3174
 
-echo "==> Patch 5: removing 'select_as' on citext columns"
+# FIXED in SeaORM 2.0.3
 
-perl -0pi -e 's/\s*select_as = "text",//g' "$ENTITIES_DIR"/*.rs
+# echo "==> Patch 5: removing 'select_as' on citext columns"
+
+# perl -0pi -e 's/\s*select_as = "text",//g' "$ENTITIES_DIR"/*.rs
 
 # ---------------------------------------------------------------------------
 # Verification
