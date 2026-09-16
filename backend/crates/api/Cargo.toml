@@ -26,3 +26,5 @@ seed = { path = "../seed" }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 time = "0.3.55"
 utoipa.workspace = true
+tower-http = { version = "0.7.1", features = ["cors", "timeout"] }
+tower = { version = "0.5.3", features = ["limit"] }

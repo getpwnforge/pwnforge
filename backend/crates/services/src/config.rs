@@ -57,12 +57,15 @@ pub struct Config {
     pub port: u16,
     /// Base URL the instance is reached at, used to build links in emails.
     pub public_url: String,
-    #[allow(dead_code)] // consumed by the CORS layer (1.x)
     pub cors_origin: String,
     pub setup_token: Option<String>,
 
     // --- Datastores ---
     pub database_url: String,
+    /// Upper bound on the SeaORM pool. Also the reference the API's
+    /// concurrency limit is derived from, so it is a real capacity knob and
+    /// not just a database detail.
+    pub database_max_connections: u32,
     pub redis_url: String,
 
     // --- Secrets ---
@@ -107,6 +110,7 @@ impl fmt::Debug for Config {
             .field("cors_origin", &self.cors_origin)
             .field("setup_token", &"[redacted]")
             .field("database_url", &"[redacted]")
+            .field("database_max_connections", &self.database_max_connections)
             .field("redis_url", &"[redacted]")
             .field("jwt_secret", &"[redacted]")
             .field("encryption_key", &"[redacted]")
@@ -136,6 +140,7 @@ impl Config {
 
             // --- Datastores ---
             database_url: required("DATABASE_URL")?,
+            database_max_connections: parse_var("DATABASE_MAX_CONNECTIONS", "20")?,
             redis_url: required("REDIS_URL")?,
 
             // --- Secrets ---
@@ -195,6 +200,15 @@ impl Config {
             anyhow::bail!("EMAIL_FROM must be set unless EMAIL_BACKEND is 'console'");
         }
 
+        validate_cors_origin(&self.cors_origin)?;
+
+        // A zero-sized pool deadlocks on the first query instead of failing at
+        // boot, and the API derives its concurrency limit from this, so a zero
+        // would also wedge the router.
+        if self.database_max_connections == 0 {
+            anyhow::bail!("DATABASE_MAX_CONNECTIONS must be at least 1");
+        }
+
         // A short token weakens the only thing standing between a fresh instance and
         // whoever reaches it first.
         if let Some(token) = &self.setup_token
@@ -220,6 +234,60 @@ impl Config {
     }
 }
 
+/// Checks that `CORS_ORIGIN` is something a browser could actually match.
+///
+/// An origin is a scheme, a host and an optional port, and nothing more: no
+/// path, no trailing slash, no query. A browser compares the `Origin` header
+/// against this byte for byte, so `https://app.example.test/` matches nothing
+/// and quietly breaks every cross-origin request. Caught here it is one line in
+/// the startup log instead of a support thread.
+///
+/// Rejecting anything outside visible ASCII is also what lets the CORS layer
+/// parse this into a `HeaderValue` without a fallible path of its own: that
+/// character set is exactly what a header value allows. The check lives here
+/// rather than in the router so a bad value produces a readable startup error,
+/// the way every other rule in `validate` does, rather than a panic and a
+/// backtrace.
+fn validate_cors_origin(raw: &str) -> Result<()> {
+    if raw.is_empty() {
+        anyhow::bail!("CORS_ORIGIN must be set to the origin the frontend is served from");
+    }
+
+    if raw.chars().any(|c| !c.is_ascii_graphic()) {
+        anyhow::bail!(
+            "CORS_ORIGIN must contain only printable ASCII, with no spaces or control characters (got {raw:?})"
+        );
+    }
+
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        anyhow::bail!(
+            "CORS_ORIGIN must include a scheme, as in https://ctf.example.com (got {raw:?})"
+        );
+    };
+
+    if scheme != "http" && scheme != "https" {
+        anyhow::bail!("CORS_ORIGIN scheme must be http or https (got {scheme:?})");
+    }
+
+    if rest.is_empty() {
+        anyhow::bail!("CORS_ORIGIN must name a host after the scheme (got {raw:?})");
+    }
+
+    // Covers a trailing slash and a path in one check: both leave a `/` behind,
+    // and a trailing slash is the mistake people actually make.
+    if rest.contains('/') {
+        anyhow::bail!(
+            "CORS_ORIGIN must be a bare origin, with no path or trailing slash (got {raw:?})"
+        );
+    }
+
+    if rest.contains('?') || rest.contains('#') {
+        anyhow::bail!("CORS_ORIGIN must not carry a query or a fragment (got {raw:?})");
+    }
+
+    Ok(())
+}
+
 fn required(key: &str) -> Result<String> {
     std::env::var(key).with_context(|| format!("{key} must be set"))
 }
@@ -236,4 +304,78 @@ where
     let raw = std::env::var(key).unwrap_or_else(|_| default.to_owned());
     raw.parse::<T>()
         .map_err(|err| anyhow::anyhow!("{key} is invalid: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Positive: the shapes an operator legitimately configures, from local
+    /// development to a host on a non-standard port.
+    #[test]
+    fn a_bare_origin_is_accepted() {
+        for origin in [
+            "http://localhost:5173",
+            "https://ctf.example.test",
+            "https://ctf.example.test:8443",
+            "http://127.0.0.1:3000",
+        ] {
+            assert!(
+                validate_cors_origin(origin).is_ok(),
+                "{origin} must be accepted"
+            );
+        }
+    }
+
+    /// Negative: the trailing slash, which is the mistake that actually
+    /// happens. A browser matches the `Origin` header byte for byte, so this
+    /// would match nothing and break every cross-origin request without
+    /// anything in the logs pointing at the cause.
+    #[test]
+    fn a_trailing_slash_is_refused() {
+        let err = validate_cors_origin("https://ctf.example.test/")
+            .expect_err("a trailing slash must be refused");
+
+        assert!(
+            err.to_string().contains("trailing slash"),
+            "the message must name the problem, got {err}"
+        );
+    }
+
+    /// Negative: everything else that is not an origin.
+    #[test]
+    fn a_malformed_origin_is_refused() {
+        for origin in [
+            "",                              // unset
+            "ctf.example.test",              // no scheme
+            "ftp://ctf.example.test",        // wrong scheme
+            "https://",                      // no host
+            "https://ctf.example.test/app",  // path
+            "https://ctf.example.test?a=1",  // query
+            "https://ctf.example.test#frag", // fragment
+            "https://ctf.example.test ",     // trailing space
+            "https://ctf example.test",      // inner space
+            "https://ctf.example.test\n",    // control character
+        ] {
+            assert!(
+                validate_cors_origin(origin).is_err(),
+                "{origin:?} must be refused"
+            );
+        }
+    }
+
+    /// Whatever passes here is safe to turn into a `HeaderValue` in the router,
+    /// which is what lets that conversion stay infallible in practice. Pinned
+    /// as a property rather than trusted: the router's `expect` is only
+    /// unreachable for as long as this holds.
+    #[test]
+    fn an_accepted_origin_is_a_usable_header_value() {
+        for origin in ["http://localhost:5173", "https://ctf.example.test:8443"] {
+            assert!(validate_cors_origin(origin).is_ok());
+            assert!(
+                origin.bytes().all(|b| (0x21..=0x7e).contains(&b)),
+                "{origin} must be within the byte range a header value allows"
+            );
+        }
+    }
 }
