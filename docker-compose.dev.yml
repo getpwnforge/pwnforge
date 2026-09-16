@@ -10,7 +10,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      # Bound to the loopback interface: published as 0.0.0.0 these were
+      # reachable from anything on the same network as the developer's machine.
+      - "127.0.0.1:5432:5432"
     volumes:
       - db-data:/var/lib/postgresql
     healthcheck:
@@ -31,10 +33,11 @@ services:
     cap_drop: [ALL]
     cap_add: [SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -51,8 +54,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -82,7 +85,7 @@ services:
     command: sh -c "cargo install cargo-watch --locked; cargo build -p admin-cli & cargo watch -x 'run -p api'"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       PORT: ${PORT}
