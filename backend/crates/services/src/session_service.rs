@@ -64,8 +64,20 @@ pub async fn issue(
     })
 }
 
-/// Called by auth_service::refresh. Calls revoke_all internally when it
-/// detects a replayed token.
+/// Rotates a refresh token, retiring the presented one and issuing its
+/// replacement.
+///
+/// The retirement is a conditional claim rather than a plain update: only the
+/// caller whose `UPDATE ... WHERE revoked_at IS NULL` actually matches a row
+/// goes on to mint a new token. Without that condition, two concurrent
+/// refreshes carrying the same secret both read it as live, both inserted a
+/// replacement and both revoked the original, so one stolen token quietly
+/// became two working sessions, and the reuse detection below never fired because
+/// nothing was revoked at the time either of them looked.
+///
+/// A caller that loses the claim is treated exactly like a replay, because
+/// from the server's side the two are the same event: one secret presented
+/// twice. The whole chain is revoked and both parties must sign in again.
 pub async fn rotate(
     db: &DatabaseConnection,
     presented: &str,
@@ -79,37 +91,8 @@ pub async fn rotate(
     // attacker or the legitimate user is replaying a copy. Revoke every live
     // token of this user so both are forced to re-authenticate.
     if token.revoked_at.is_some() {
-        let was_rotated = token.revoked_reason.as_deref() == Some(RevokedReason::Rotated.as_str());
-
-        if was_rotated {
-            let sessions_revoked =
-                revoke_all(db, token.user_id, RevokedReason::ReuseDetected, None).await?;
-            tracing::warn!(
-                user_id = %token.user_id,
-                "refresh token reuse detected, all sessions revoked"
-            );
-
-            audit_service::record(
-                db,
-                domain::types::AuditAction::AuthRefreshReuseDetected,
-                &AuditContext {
-                    actor_id: None,
-                    ip_address: ctx.ip_address,
-                    user_agent: ctx.user_agent.clone(),
-                },
-                AuditTarget {
-                    user_id: Some(token.user_id),
-                    ..Default::default()
-                },
-                None,
-                serde_json::json!({
-                    "presented_token_id": token.id,
-                    "revoked_reason": token.revoked_reason,
-                    "sessions_revoked": sessions_revoked,
-                }),
-            )
-            .await?;
-            return Err(SessionError::Reused);
+        if token.revoked_reason.as_deref() == Some(RevokedReason::Rotated.as_str()) {
+            return Err(handle_reuse(db, &token, ctx).await?);
         }
 
         return Err(SessionError::NotFound);
@@ -122,6 +105,28 @@ pub async fn rotate(
     let new_refresh_token = token_service::generate_opaque_token();
 
     let txn = db.begin().await?;
+
+    // Claim the presented token. `revoked_at IS NULL` is the whole point: it
+    // makes the retirement the race's arbiter, so exactly one concurrent
+    // refresh can proceed.
+    let claimed = refresh_tokens::Entity::update_many()
+        .col_expr(refresh_tokens::Column::RevokedAt, Expr::current_timestamp())
+        .col_expr(
+            refresh_tokens::Column::RevokedReason,
+            Expr::value(RevokedReason::Rotated.as_str().to_owned()),
+        )
+        .filter(refresh_tokens::Column::Id.eq(token.id))
+        .filter(refresh_tokens::Column::RevokedAt.is_null())
+        .exec(&txn)
+        .await?;
+
+    if claimed.rows_affected == 0 {
+        // Someone else retired this token between the read above and here.
+        // Roll back before touching the chain, so the revocation is not undone
+        // along with this transaction.
+        txn.rollback().await?;
+        return Err(handle_reuse(db, &token, ctx).await?);
+    }
 
     let new_row = refresh_tokens::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -138,16 +143,6 @@ pub async fn rotate(
     .insert(&txn)
     .await?;
 
-    // 4. Record when the rotated token was last used before retiring it.
-    refresh_tokens::ActiveModel {
-        id: Set(token.id),
-        revoked_at: Set(Some(Utc::now().into())),
-        revoked_reason: Set(Some(RevokedReason::Rotated.as_str().to_owned())),
-        ..Default::default()
-    }
-    .update(&txn)
-    .await?;
-
     txn.commit().await?;
 
     Ok(RotatedSession {
@@ -155,6 +150,57 @@ pub async fn rotate(
         secret: new_refresh_token.secret,
         session_id: new_row.id,
     })
+}
+
+/// Kills every live session of the token's owner and records why.
+///
+/// Shared by the two ways a replay surfaces: presenting an already-retired
+/// token, and losing the race to retire a live one. Both mean the same secret
+/// reached the server twice, and neither caller can be told apart from an
+/// attacker holding a copy, so the safe answer is the same.
+///
+/// Known gap on the racing path: the winner may still be inside its own
+/// transaction, so the replacement token it is inserting is not yet visible
+/// here and survives this sweep. The stolen copy is dead either way, the audit
+/// entry is written, and the next rotation on that chain trips detection
+/// again, but the account is not guaranteed to be fully logged out on that
+/// one interleaving. Closing it needs the claim and the sweep to serialize on
+/// the same row, which costs a lock on every refresh.
+async fn handle_reuse(
+    db: &DatabaseConnection,
+    token: &refresh_tokens::Model,
+    ctx: &SessionContext,
+) -> Result<SessionError, SessionError> {
+    let sessions_revoked =
+        revoke_all(db, token.user_id, RevokedReason::ReuseDetected, None).await?;
+
+    tracing::warn!(
+        user_id = %token.user_id,
+        "refresh token reuse detected, all sessions revoked"
+    );
+
+    audit_service::record(
+        db,
+        domain::types::AuditAction::AuthRefreshReuseDetected,
+        &AuditContext {
+            actor_id: None,
+            ip_address: ctx.ip_address,
+            user_agent: ctx.user_agent.clone(),
+        },
+        AuditTarget {
+            user_id: Some(token.user_id),
+            ..Default::default()
+        },
+        None,
+        serde_json::json!({
+            "presented_token_id": token.id,
+            "revoked_reason": token.revoked_reason,
+            "sessions_revoked": sessions_revoked,
+        }),
+    )
+    .await?;
+
+    Ok(SessionError::Reused)
 }
 
 /// Called by auth_service::logout. Idempotent.
