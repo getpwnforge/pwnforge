@@ -101,7 +101,7 @@ jobs:
         if: |
           (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
           (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
         with:
           languages: ${{ matrix.language }}
 
@@ -109,7 +109,7 @@ jobs:
         if: |
           (matrix.language == 'rust' && (needs.changes.outputs.backend == 'true' || github.event_name == 'schedule')) ||
           (matrix.language == 'javascript-typescript' && (needs.changes.outputs.frontend == 'true' || github.event_name == 'schedule'))
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
 
       - name: Perform CodeQL analysis
         if: |
@@ -119,4 +119,4 @@ jobs:
         # sandbox), the analysis itself succeeds but the final upload step fails with
         # "Code scanning is not enabled for this repository": expected, not a config
         # bug. Code Scanning upload is free once the real repo is public.
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
