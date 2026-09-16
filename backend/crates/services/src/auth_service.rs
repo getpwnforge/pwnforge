@@ -5,7 +5,8 @@ use super::{blocked_email_service, email_service, jwt_service, password_service,
 use crate::blocked_email_service::BlockedEmailError;
 use crate::config::Config;
 use crate::{
-    audit_service, auth_token_service, instance_service, legal_service, turnstile_service,
+    audit_service, auth_token_service, instance_service, legal_service, team_service,
+    turnstile_service,
 };
 use chrono::Utc;
 use domain::{
@@ -111,6 +112,9 @@ pub enum AuthError {
     Turnstile(#[from] turnstile_service::TurnstileError),
 
     #[error(transparent)]
+    Team(#[from] team_service::TeamError),
+
+    #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
 }
 
@@ -170,8 +174,6 @@ pub async fn register(
     .insert(&txn)
     .await
     .map_err(map_unique_violation)?;
-
-    // TODO(3.6): create the personal team here, same transaction.
 
     txn.commit().await?;
 
@@ -609,6 +611,16 @@ pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), A
             .await?;
 
     let email_id = token.email_id.ok_or(AuthError::InvalidCredentials)?;
+    let email = user_emails::Entity::find_by_id(email_id)
+        .one(db)
+        .await?
+        .ok_or(AuthError::InvalidCredentials)?;
+    let user = users::Entity::find_by_id(token.user_id)
+        .one(db)
+        .await?
+        .ok_or(AuthError::InvalidCredentials)?;
+
+    let txn = db.begin().await?;
 
     // Idempotent by filtering on NULL: clicking the link twice is not an
     // error, and the second click must not overwrite the original timestamp.
@@ -616,8 +628,16 @@ pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), A
         .col_expr(user_emails::Column::VerifiedAt, Expr::current_timestamp())
         .filter(user_emails::Column::Id.eq(email_id))
         .filter(user_emails::Column::VerifiedAt.is_null())
-        .exec(db)
+        .exec(&txn)
         .await?;
+
+    // Returns None when the account already had one: verification can run
+    // more than once per account (a second address, a replayed link), and only
+    // the first pass should mint a team.
+    let _personal_team = team_service::create_personal_team(&txn, &user).await?;
+    team_service::accept_pending_email_invitations(&txn, &email.email, user.id).await?;
+
+    txn.commit().await?;
 
     Ok(())
 }
@@ -741,6 +761,45 @@ pub async fn email_exists(db: &DatabaseConnection, email: &str) -> Result<bool, 
         .map(|found| found.is_some())
 }
 
+/// Resolves an email to its owning user, only when that address has been
+/// verified. Used to auto-link an email-based team invitation to an existing
+/// account: an unverified address is not proof of ownership, so it must not
+/// gate acceptance of an invitation.
+/// Resolves a username to its account id.
+///
+/// The comparison is case-insensitive without doing anything here: the column
+/// is `CITEXT`, the same as `user_emails.email` and `teams.slug`. Lowercasing
+/// in Rust first would be both redundant and subtly wrong, since it would not
+/// use the collation the UNIQUE index enforces.
+///
+/// Unlike `find_verified_user_by_email` there is no verification filter: a
+/// username is the account's public handle from the moment it is created, and
+/// it is unique whether or not any address on the account has been confirmed.
+pub async fn find_user_by_username(
+    db: &DatabaseConnection,
+    username: &str,
+) -> Result<Option<Uuid>, DbErr> {
+    let found = users::Entity::find()
+        .filter(users::Column::Username.eq(username.trim()))
+        .one(db)
+        .await?;
+
+    Ok(found.map(|user| user.id))
+}
+
+pub async fn find_verified_user_by_email(
+    db: &DatabaseConnection,
+    email: &str,
+) -> Result<Option<Uuid>, DbErr> {
+    let found = user_emails::Entity::find()
+        .filter(user_emails::Column::Email.eq(email))
+        .filter(user_emails::Column::VerifiedAt.is_not_null())
+        .one(db)
+        .await?;
+
+    Ok(found.map(|e| e.user_id))
+}
+
 pub async fn primary_email(
     db: &DatabaseConnection,
     user_id: Uuid,
@@ -775,4 +834,52 @@ fn check_account_suspended(user: &users::Model) -> Option<AuthError> {
         user.suspended_reason.clone(),
         user.purge_scheduled_at,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase};
+
+    fn verified_email_row(user_id: Uuid) -> user_emails::Model {
+        user_emails::Model {
+            id: Uuid::now_v7(),
+            user_id,
+            email: "target@example.test".to_owned(),
+            is_primary: true,
+            created_at: Utc::now().into(),
+            updated_at: Utc::now().into(),
+            verified_at: Some(Utc::now().into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn find_verified_user_by_email_resolves_an_existing_verified_account() {
+        let user_id = Uuid::now_v7();
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![verified_email_row(user_id)]])
+            .into_connection();
+
+        let resolved = find_verified_user_by_email(&db, "target@example.test")
+            .await
+            .expect("query must succeed");
+
+        assert_eq!(resolved, Some(user_id));
+    }
+
+    #[tokio::test]
+    async fn find_verified_user_by_email_returns_none_without_a_match() {
+        // Covers both a genuinely unknown address and one that exists but is
+        // not verified yet: the query itself filters on verified_at, so
+        // either case reaches this function as an empty result set.
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<user_emails::Model>::new()])
+            .into_connection();
+
+        let resolved = find_verified_user_by_email(&db, "nobody@example.test")
+            .await
+            .expect("query must succeed");
+
+        assert_eq!(resolved, None);
+    }
 }

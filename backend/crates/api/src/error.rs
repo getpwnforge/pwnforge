@@ -10,7 +10,8 @@ use services::{
     alert_service::AlertError, auth_service::AuthError, auth_token_service::AuthTokenError,
     blocked_email_service::BlockedEmailError, contact_service::ContactError,
     email_service::EmailError, instance_service::InstanceError, legal_service::LegalError,
-    session_service::SessionError, setup_service::SetupError,
+    session_service::SessionError, setup_service::SetupError, slug_service,
+    team_service::TeamError,
 };
 use std::collections::HashMap;
 
@@ -51,6 +52,9 @@ pub enum AppError {
 
     #[error(transparent)]
     Contact(#[from] ContactError),
+
+    #[error(transparent)]
+    Team(#[from] TeamError),
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
@@ -329,6 +333,112 @@ impl IntoResponse for AppError {
                     .into_response(),
                 ContactError::Email(_) | ContactError::Redis(_) => {
                     tracing::error!(error = ?err, "contact notification failed");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": "internal_error" })),
+                    )
+                        .into_response()
+                }
+            },
+            AppError::Team(err) => match &err {
+                TeamError::AlreadyInvited => (
+                    StatusCode::CONFLICT,
+                    Json(json!({ "error": "already_invited" })),
+                )
+                    .into_response(),
+                TeamError::AlreadyMember => (
+                    StatusCode::CONFLICT,
+                    Json(json!({ "error": "already_member" })),
+                )
+                    .into_response(),
+                TeamError::InvitationExpired => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "invitation_expired" })),
+                )
+                    .into_response(),
+                TeamError::InvitationMaxUsesReached => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "invitation_max_uses_reached" })),
+                )
+                    .into_response(),
+                TeamError::InvitationNotFound => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "invitation_not_found" })),
+                )
+                    .into_response(),
+                TeamError::InsufficientRole => (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "error": "insufficient_role" })),
+                )
+                    .into_response(),
+                TeamError::InvitationNotForUser => (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "error": "invitation_not_for_user" })),
+                )
+                    .into_response(),
+                TeamError::InvitationEmailMismatch => (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "error": "invitation_email_mismatch" })),
+                )
+                    .into_response(),
+                TeamError::LastCaptain => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "last_captain" })),
+                )
+                    .into_response(),
+                TeamError::MemberNotFound => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "member_not_found" })),
+                )
+                    .into_response(),
+                // Both map to 422 with a code the form can place under the
+                // name field: the caller has to change the name, and the two
+                // reasons are distinct enough to word differently.
+                TeamError::Slug(slug_service::SlugError::Empty) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "team_name_not_sluggable" })),
+                )
+                    .into_response(),
+                TeamError::Slug(slug_service::SlugError::Reserved) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "team_name_reserved" })),
+                )
+                    .into_response(),
+                TeamError::SlugGenerationFailed => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "slug_generation_failed" })),
+                )
+                    .into_response(),
+                TeamError::TeamNotFound => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "team_not_found" })),
+                )
+                    .into_response(),
+                // Generic 404: the caller named a username that matches no
+                // account. This does confirm the name is unclaimed, which is
+                // already what registration says with `username_taken`, so it
+                // reveals nothing the signup form does not.
+                TeamError::InvitedUserNotFound => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "invited_user_not_found" })),
+                )
+                    .into_response(),
+                // 422 rather than 429: the caller is not going too fast, they
+                // are at a hard ceiling that only deleting a team clears, so
+                // there is no delay worth handing back.
+                TeamError::TeamQuotaReached => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({ "error": "team_quota_reached" })),
+                )
+                    .into_response(),
+                // Everything with no client-facing meaning, `TeamError::Db`
+                // chief among them. Logged whole rather than summarised: the
+                // `Debug` of a `DbErr` carries the driver's own message, which
+                // is the only place the violated constraint is named.
+                // `sql_err()` classifies unique and foreign-key violations
+                // only, and reports None for a CHECK.
+                _ => {
+                    tracing::error!(error = ?err, "team operation failed");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({ "error": "internal_error" })),

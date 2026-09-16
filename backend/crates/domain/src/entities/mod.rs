@@ -11,5 +11,8 @@ pub mod instance_settings;
 pub mod legal_acceptances;
 pub mod refresh_tokens;
 pub mod reserved_usernames;
+pub mod team_invitations;
+pub mod team_members;
+pub mod teams;
 pub mod user_emails;
 pub mod users;

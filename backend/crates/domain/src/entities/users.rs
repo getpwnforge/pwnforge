@@ -61,6 +61,10 @@ pub enum Relation {
     RefreshTokens,
     #[sea_orm(has_many = "super::reserved_usernames::Entity")]
     ReservedUsernames,
+    #[sea_orm(has_many = "super::team_members::Entity")]
+    TeamMembers,
+    #[sea_orm(has_many = "super::teams::Entity")]
+    Teams,
     #[sea_orm(has_many = "super::user_emails::Entity")]
     UserEmails,
     #[sea_orm(
@@ -123,9 +127,24 @@ impl Related<super::reserved_usernames::Entity> for Entity {
     }
 }
 
+impl Related<super::team_members::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::TeamMembers.def()
+    }
+}
+
 impl Related<super::user_emails::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::UserEmails.def()
+    }
+}
+
+impl Related<super::teams::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::team_members::Relation::Teams.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(super::team_members::Relation::Users.def().rev())
     }
 }
 

@@ -14,7 +14,9 @@ pub mod password_service;
 pub mod rate_limit_service;
 pub mod session_service;
 pub mod setup_service;
+pub mod slug_service;
 pub mod stats_service;
+pub mod team_service;
 pub mod token_service;
 pub mod turnstile_service;
 

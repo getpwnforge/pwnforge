@@ -1,0 +1,13 @@
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+
+{{ cta }}:
+{{ link }}
+
+--
+{{ footer }}
+{{ footer_instance }} {{ public_url }}
+{{ footer_note }}

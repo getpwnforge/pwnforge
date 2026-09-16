@@ -11,3 +11,9 @@ uuid.workspace = true
 serde.workspace = true
 chrono.workspace = true
 utoipa.workspace = true
+
+[dev-dependencies]
+# Test-scope only: exercises that an unknown team colour or an unexpected field
+# is refused at deserialization, which is what stands in for a validation rule.
+# Already in the tree via sea-orm, so this adds nothing to the lockfile.
+serde_json.workspace = true

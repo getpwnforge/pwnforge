@@ -9,5 +9,8 @@ pub use super::instance_settings::Entity as InstanceSettings;
 pub use super::legal_acceptances::Entity as LegalAcceptances;
 pub use super::refresh_tokens::Entity as RefreshTokens;
 pub use super::reserved_usernames::Entity as ReservedUsernames;
+pub use super::team_invitations::Entity as TeamInvitations;
+pub use super::team_members::Entity as TeamMembers;
+pub use super::teams::Entity as Teams;
 pub use super::user_emails::Entity as UserEmails;
 pub use super::users::Entity as Users;

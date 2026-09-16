@@ -9,8 +9,10 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260808_173047_auth::Migration),
             Box::new(m20260818_160804_instance_settings::Migration),
+            Box::new(m20260911_141751_teams::Migration),
         ]
     }
 }
 mod m20260808_173047_auth;
 mod m20260818_160804_instance_settings;
+mod m20260911_141751_teams;

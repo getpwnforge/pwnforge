@@ -268,6 +268,67 @@ struct EmailVerificationText {
 }
 
 #[derive(Template)]
+#[template(path = "team_invitation_added.html.j2")]
+struct TeamInvitationAddedHtml {
+    locale: String,
+    title: String,
+    preheader: String,
+    greeting: String,
+    body: String,
+    cta: String,
+    link: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "team_invitation_added.txt")]
+struct TeamInvitationAddedText {
+    title: String,
+    greeting: String,
+    body: String,
+    cta: String,
+    link: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "team_invitation_signup.html.j2")]
+struct TeamInvitationSignupHtml {
+    locale: String,
+    title: String,
+    preheader: String,
+    greeting: String,
+    body: String,
+    cta: String,
+    link: String,
+    fallback_notice: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "team_invitation_signup.txt")]
+struct TeamInvitationSignupText {
+    title: String,
+    greeting: String,
+    body: String,
+    cta: String,
+    link: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
 #[template(path = "security_alert.html.j2")]
 struct SecurityAlertHtml {
     locale: String,
@@ -515,6 +576,128 @@ pub async fn send_email_verification(
         link,
         expiry,
         ignore_notice,
+        footer: footer.text,
+        footer_instance: footer.instance,
+        footer_note: footer.note,
+        public_url: config.public_url.clone(),
+    }
+    .render()?;
+
+    send(config, to, &subject, &html, &text, None).await
+}
+
+/// Sent when a team invitation targets an email that already matches a
+/// verified account, so the invitation is pinned to that account and there is
+/// nothing to click here beyond going to look at it in-app.
+pub async fn send_team_invitation_added(
+    config: &Config,
+    to: &str,
+    locale: &str,
+    team_name: &str,
+) -> Result<(), EmailError> {
+    let link = format!("{}/teams", config.public_url);
+
+    let title = t!("email.team_invitation_added.title", locale = locale).to_string();
+    let preheader = t!("email.team_invitation_added.preheader", locale = locale).to_string();
+    let greeting = t!("email.common.greeting", locale = locale).to_string();
+    let body = t!(
+        "email.team_invitation_added.body",
+        locale = locale,
+        team_name = team_name
+    )
+    .to_string();
+    let cta = t!("email.team_invitation_added.cta", locale = locale).to_string();
+    let subject = t!("email.team_invitation_added.subject", locale = locale).to_string();
+    let footer = Footer::new(locale);
+
+    let html = TeamInvitationAddedHtml {
+        locale: locale.to_string(),
+        title: title.clone(),
+        preheader,
+        greeting: greeting.clone(),
+        body: body.clone(),
+        cta: cta.clone(),
+        link: link.clone(),
+        footer: footer.text.clone(),
+        footer_instance: footer.instance.clone(),
+        footer_note: footer.note.clone(),
+        public_url: config.public_url.clone(),
+    }
+    .render()?;
+
+    let text = TeamInvitationAddedText {
+        title,
+        greeting,
+        body,
+        cta,
+        link,
+        footer: footer.text,
+        footer_instance: footer.instance,
+        footer_note: footer.note,
+        public_url: config.public_url.clone(),
+    }
+    .render()?;
+
+    send(config, to, &subject, &html, &text, None).await
+}
+
+/// Sent when a team invitation targets an email with no matching account
+/// yet: the link points at registration rather than at the app, `%email%`
+/// pre-filled so the account created lands on the email the invitation
+/// actually targets.
+pub async fn send_team_invitation_signup(
+    config: &Config,
+    to: &str,
+    locale: &str,
+    team_name: &str,
+) -> Result<(), EmailError> {
+    let link = format!(
+        "{}/register?email={}",
+        config.public_url,
+        urlencoding::encode(to)
+    );
+
+    let title = t!("email.team_invitation_signup.title", locale = locale).to_string();
+    let preheader = t!(
+        "email.team_invitation_signup.preheader",
+        locale = locale,
+        team_name = team_name
+    )
+    .to_string();
+    let greeting = t!("email.common.greeting", locale = locale).to_string();
+    let body = t!(
+        "email.team_invitation_signup.body",
+        locale = locale,
+        team_name = team_name
+    )
+    .to_string();
+    let cta = t!("email.team_invitation_signup.cta", locale = locale).to_string();
+    let fallback_notice = t!("email.common.fallback_notice", locale = locale).to_string();
+    let subject = t!("email.team_invitation_signup.subject", locale = locale).to_string();
+    let footer = Footer::new(locale);
+
+    let html = TeamInvitationSignupHtml {
+        locale: locale.to_string(),
+        title: title.clone(),
+        preheader,
+        greeting: greeting.clone(),
+        body: body.clone(),
+        cta: cta.clone(),
+        link: link.clone(),
+        fallback_notice,
+        footer: footer.text.clone(),
+        footer_instance: footer.instance.clone(),
+        footer_note: footer.note.clone(),
+        public_url: config.public_url.clone(),
+    }
+    .render()?;
+
+    let text = TeamInvitationSignupText {
+        title,
+        greeting,
+        body,
+        cta,
+        link,
         footer: footer.text,
         footer_instance: footer.instance,
         footer_note: footer.note,

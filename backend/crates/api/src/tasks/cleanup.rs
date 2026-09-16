@@ -1,6 +1,6 @@
 // crates/api/src/tasks/cleanup.rs
 use chrono::Utc;
-use domain::entities::{auth_tokens, refresh_tokens};
+use domain::entities::{auth_tokens, refresh_tokens, team_invitations};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
 };
@@ -47,6 +47,12 @@ async fn run_once(db: &DatabaseConnection) {
         Ok(n) if n > 0 => tracing::info!(deleted = n, "auth tokens cleaned"),
         Ok(_) => {}
         Err(err) => tracing::error!(error = ?err, "auth token cleanup failed"),
+    }
+
+    match clean_team_invitations(db).await {
+        Ok(n) if n > 0 => tracing::info!(deleted = n, "expired team invitations cleaned"),
+        Ok(_) => {}
+        Err(err) => tracing::error!(error = ?err, "team invitation cleanup failed"),
     }
 
     match admin_service::purge_scheduled_deletions(db).await {
@@ -113,6 +119,48 @@ async fn clean_auth_tokens(db: &DatabaseConnection) -> Result<u64, DbErr> {
 
         let result = auth_tokens::Entity::delete_many()
             .filter(auth_tokens::Column::Id.is_in(ids))
+            .exec(db)
+            .await?;
+
+        total += result.rows_affected;
+
+        // Yield between batches so cleanup never monopolises a connection.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    Ok(total)
+}
+
+/// Drops invitations whose deadline has passed.
+///
+/// Not just housekeeping: the unique indexes on `team_invitations` count
+/// expired rows, so a dead invitation kept a person from ever being re-invited
+/// to that team. The read paths now filter on the deadline, which fixes the
+/// visible symptom; this removes the rows so the indexes stop counting them.
+///
+/// Deleted outright rather than retained like revoked refresh tokens: there is
+/// no reuse detection to support here, an expired invitation carries no
+/// evidence value, and the audit log already records who issued it.
+async fn clean_team_invitations(db: &DatabaseConnection) -> Result<u64, DbErr> {
+    let mut total = 0;
+    let now = Utc::now();
+
+    loop {
+        let ids: Vec<Uuid> = team_invitations::Entity::find()
+            .select_only()
+            .column(team_invitations::Column::Id)
+            .filter(team_invitations::Column::ExpiresAt.lt(now))
+            .limit(BATCH_SIZE)
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        if ids.is_empty() {
+            break;
+        }
+
+        let result = team_invitations::Entity::delete_many()
+            .filter(team_invitations::Column::Id.is_in(ids))
             .exec(db)
             .await?;
 

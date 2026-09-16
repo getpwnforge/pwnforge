@@ -80,6 +80,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::health::router())
         .merge(routes::alerts::router())
         .merge(routes::contact::router())
+        .merge(routes::teams::router())
         .nest("/instance", routes::instance::router())
         .nest("/legal", routes::legal::router())
         .nest("/auth", routes::auth::router())

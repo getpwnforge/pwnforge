@@ -30,3 +30,11 @@ lettre = { version = "0.11.23", default-features = false, features = ["builder",
 chrono-tz = "0.10.4"
 subtle = "2.6.1"
 rand = "0.10.2"
+deunicode = "1.6.2"
+urlencoding = "2.1.3"
+
+[dev-dependencies]
+# The rotation race test needs a real Postgres: concurrent UPDATE visibility is
+# exactly the behaviour under test, so a mock would only assert our assumptions
+# about it. CI already provisions the database; this runs the schema into it.
+migration = { path = "../migration" }

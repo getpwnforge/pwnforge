@@ -6,3 +6,4 @@ pub mod health;
 pub mod instance;
 pub mod legal;
 pub mod setup;
+pub mod team;

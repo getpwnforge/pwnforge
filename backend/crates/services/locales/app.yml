@@ -103,6 +103,48 @@ email.email_verification.expiry:
   en: "This link expires in 24 hours."
   fr: "Ce lien expire dans 24 heures."
 
+# --- Team invitations ---
+
+email.team_invitation_added.subject:
+  en: "You've been added to a team invitation"
+  fr: "Vous avez été ajouté à une invitation d'équipe"
+
+email.team_invitation_added.title:
+  en: "You've been added to a team invitation"
+  fr: "Vous avez été ajouté à une invitation d'équipe"
+
+email.team_invitation_added.preheader:
+  en: "Someone invited you to join a team on PwnForge."
+  fr: "Quelqu'un vous a invité à rejoindre une équipe sur PwnForge."
+
+email.team_invitation_added.body:
+  en: "%{team_name} invited you to join their team. You can accept or decline from your pending invitations."
+  fr: "%{team_name} vous a invité à rejoindre son équipe. Vous pouvez accepter ou refuser depuis vos invitations en attente."
+
+email.team_invitation_added.cta:
+  en: "View my invitations"
+  fr: "Voir mes invitations"
+
+email.team_invitation_signup.subject:
+  en: "You're invited to join a team on PwnForge"
+  fr: "Vous êtes invité à rejoindre une équipe sur PwnForge"
+
+email.team_invitation_signup.title:
+  en: "You're invited to join a team on PwnForge"
+  fr: "Vous êtes invité à rejoindre une équipe sur PwnForge"
+
+email.team_invitation_signup.preheader:
+  en: "Create an account to join %{team_name}."
+  fr: "Créez un compte pour rejoindre %{team_name}."
+
+email.team_invitation_signup.body:
+  en: "%{team_name} invited you to join their team on PwnForge. Create an account with this email address to accept."
+  fr: "%{team_name} vous a invité à rejoindre son équipe sur PwnForge. Créez un compte avec cette adresse email pour accepter."
+
+email.team_invitation_signup.cta:
+  en: "Create my account"
+  fr: "Créer mon compte"
+
 # --- Security alerts ---
 #
 # These carry no action link on purpose: an alert that asks the reader to click

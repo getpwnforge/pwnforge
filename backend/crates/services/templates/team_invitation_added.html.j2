@@ -1,0 +1,20 @@
+{# Points into the app (the caller is already known to have an account), not
+   at a secret token: no fallback raw-link box or expiry line needed here,
+   unlike email_verification.html.j2 / password_reset.html.j2. #}
+{% extends "layout.html.j2" %}
+
+{% block content %}
+<p style="margin:0 0 12px;">{{ greeting }}</p>
+<p style="margin:0 0 24px;">{{ body }}</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;">
+  <tr>
+    <td bgcolor="#EB5927" style="background-color:#EB5927;border-radius:8px;">
+      <a href="{{ link }}"
+         style="display:inline-block;padding:13px 26px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;line-height:1;color:#1a0e06;text-decoration:none;border-radius:8px;">
+        {{ cta }}
+      </a>
+    </td>
+  </tr>
+</table>
+{% endblock %}
