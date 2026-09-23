@@ -1,5 +1,5 @@
 # Makefile for PwnForge project
-.PHONY: help up down migrate seed test lint clean
+.PHONY: help up down migrate seed reset-db reset-storage test lint clean
 
 # Set the default goal to 'help' if no target is specified
 .DEFAULT_GOAL := help
@@ -21,6 +21,35 @@ migrate:
 ## seed: Populate the database with test data
 seed:
 	cargo run --bin seed --manifest-path backend/Cargo.toml
+
+## reset-db: Destroy and recreate the development database (DESTRUCTIVE)
+#
+# The dev database drifts for one specific reason: migrations on an unreleased
+# branch get edited in place, and a database that already applied the old
+# version never sees the change - the row in `seaql_migrations` says it is
+# applied. The failure then surfaces as a missing column in an unrelated test,
+# which is a slow thing to work out from scratch. This is the shortcut.
+#
+# Destroys every row in the dev database. Volumes only, nothing outside Docker.
+reset-db:
+	@echo "This destroys the development database. Ctrl-C within 3s to abort."
+	@sleep 3
+	docker compose -f $(COMPOSE_FILE) rm -sf db
+	docker volume rm -f pwnforge_db-data
+	docker compose -f $(COMPOSE_FILE) up -d db
+	@echo "Waiting for Postgres to accept connections..."
+	@until docker compose -f $(COMPOSE_FILE) exec -T db pg_isready -q 2>/dev/null; do sleep 1; done
+	@echo "Database recreated. Migrations run on the next backend start, or: make migrate"
+
+## reset-storage: Destroy and re-provision the bundled Garage node (DESTRUCTIVE)
+#
+# Wipes every stored object and every bucket, then re-runs the bootstrap.
+# Refuses unless PWNFORGE_S3_ENDPOINT is a local address, so an operator whose
+# .env points at their real S3 cannot lose it to a command named "reset".
+# Override with ALLOW_REMOTE_RESET=1. The guard and its reasoning live in
+# ops/scripts/reset-storage.sh.
+reset-storage:
+	COMPOSE_FILE=$(COMPOSE_FILE) ./ops/scripts/reset-storage.sh
 
 ## test: Launch the test suite for backend and frontend
 test:

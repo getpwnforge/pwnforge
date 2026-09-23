@@ -42,23 +42,79 @@ services:
     networks:
       - internal
 
-  minio:
-    image: minio/minio:latest
+  # The bundled object store. Behind the `garage` profile, so an operator who
+  # already has an S3 (AWS, R2, Scaleway) clears COMPOSE_PROFILES and this
+  # never starts; they fill in the PWNFORGE_S3_* variables instead.
+  #
+  # Garage replaced MinIO, whose Community Edition is end of life: repository
+  # archived 13/02/2026 with no further upstream security fixes, Docker Hub
+  # images removed 09/2026. The rationale and the measurements behind the
+  # choice are in docs/adr/0002-replacing-minio.md.
+  #
+  # No `ports`: Garage is reachable only from the internal network, which is
+  # what makes "nothing is served by a presigned URL" enforceable rather than
+  # merely intended. The dev compose exposes it for debugging.
+  #
+  # Requires ops/garage/garage.toml, which is gitignored and holds the RPC
+  # secret and the admin token. Copy ops/garage/garage.toml.example and fill
+  # it in before the first start.
+  garage:
+    image: dxflrs/garage:v2.4.1
+    profiles: ["garage"]
     restart: unless-stopped
     user: "1001:1001"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
     volumes:
-      - minio-data:/data
+      - ./ops/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # Exec form with no shell: the image is FROM scratch and contains the
+      # `garage` binary and nothing else.
+      test: ["CMD", "/garage", "status"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+
+  # One-shot provisioning: assigns the cluster layout, creates the two buckets
+  # and the scoped application key, then exits. The only container besides
+  # `garage` itself that ever sees the admin token.
+  #
+  # Re-run it after changing the application key in .env:
+  #   docker compose run --rm garage-init
+  #
+  # Note the rotation procedure is NOT "same id, new secret": Garage refuses to
+  # change a key's secret and refuses to reuse an access key id ever again. The
+  # full sequence is in the docstring of ops/garage/bootstrap.py.
+  garage-init:
+    # Official image, standard library only: the Garage image has no shell to
+    # run a script in, and remote `garage` CLI needs a node id that is not
+    # knowable before the node starts. So this drives the admin HTTP API from
+    # Python instead - no image to build, nothing installed at start.
+    image: python:3.13-alpine
+    profiles: ["garage"]
+    restart: "no"
+    user: "1001:1001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      garage:
+        condition: service_healthy
+    environment:
+      GARAGE_ADMIN_URL: http://garage:3903
+      PWNFORGE_GARAGE_CAPACITY: ${PWNFORGE_GARAGE_CAPACITY:-100G}
+      PWNFORGE_GARAGE_ZONE: ${PWNFORGE_GARAGE_ZONE:-pwnforge}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS}
+    command: ["python3", "/init/bootstrap.py"]
+    volumes:
+      - ./ops/garage/bootstrap.py:/init/bootstrap.py:ro
+      - ./ops/garage/garage.toml:/etc/garage.toml:ro
     networks:
       - internal
 
@@ -84,9 +140,19 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-noreply@localhost}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       CHECK_PWNED_PASSWORDS: ${CHECK_PWNED_PASSWORDS:-true}
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # Scoped application credential, never the Garage admin token. Defaults
+      # point at the bundled Garage; an operator on AWS/R2/Scaleway overrides
+      # these in .env and clears COMPOSE_PROFILES. See .env.example for the
+      # per-provider presets.
+      PWNFORGE_S3_ENDPOINT: ${PWNFORGE_S3_ENDPOINT-http://garage:3900}
+      PWNFORGE_S3_REGION: ${PWNFORGE_S3_REGION:-garage}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY}
+      PWNFORGE_S3_FORCE_PATH_STYLE: ${PWNFORGE_S3_FORCE_PATH_STYLE:-true}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS}
+      PWNFORGE_S3_KEY_PREFIX: ${PWNFORGE_S3_KEY_PREFIX:-}
+      PWNFORGE_S3_PUBLIC_BASE_URL: ${PWNFORGE_S3_PUBLIC_BASE_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
@@ -108,8 +174,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      # Deliberately no `garage` dependency. Since Compose 2.20 depending on
+      # a profiled service re-enables that profile, so this edge would start
+      # Garage for an operator running against AWS. The backend does a
+      # HeadBucket on both buckets at boot and fails fast instead.
     deploy:
       resources:
         limits:
@@ -153,9 +221,15 @@ networks:
 
 volumes:
   db-data:
-  minio-data:
+  garage-meta:
     driver: local
     driver_opts:
       type: none
-      device: /data/pwnforge/minio
+      device: /data/pwnforge/garage/meta
+      o: bind,noexec,nosuid,nodev
+  garage-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/pwnforge/garage/data
       o: bind,noexec,nosuid,nodev

@@ -1,0 +1,63 @@
+# Garage node configuration for the bundled object store.
+#
+# Copy to ops/garage/garage.toml and fill in the two secrets below. The real
+# file is gitignored and must stay that way: it holds the cluster's admin
+# credentials.
+#
+#   cp ops/garage/garage.toml.example ops/garage/garage.toml
+#   # then generate the two secrets, see below
+#
+# This file is mounted read-only into the `garage` and `garage-init`
+# containers. The backend never receives it and never reads it: it only ever
+# holds the S3 key pair from `.env`, which cannot create or delete a bucket.
+# That is the same separation the MinIO root credential had.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+
+# sqlite rather than lmdb: a single-node instance does not need lmdb's
+# throughput, and sqlite's single file is far easier for a self-hoster to back
+# up and to reason about.
+db_engine = "sqlite"
+
+# One copy of each object. There is one node, so there is no redundancy - the
+# same situation as the MinIO setup this replaces. Raise it only alongside
+# actually adding nodes; a factor above the node count leaves the cluster
+# unable to reach quorum and it will refuse writes.
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+
+# Must be the address other nodes - and the `garage-init` container - reach
+# this node at. `garage` is the compose service name.
+rpc_public_addr = "garage:3901"
+
+# Shared secret for the cluster's internal RPC. Exactly 64 hex characters.
+# Generate with:
+#
+#   openssl rand -hex 32
+#
+rpc_secret = "REPLACE_ME_WITH_64_HEX_CHARACTERS_FROM_openssl_rand_hex_32______"
+
+[s3_api]
+# Garage signs SigV4 against this region, and the backend must be configured
+# with the same value in PWNFORGE_S3_REGION. It is not a real AWS region and
+# does not need to be.
+s3_region      = "garage"
+api_bind_addr  = "[::]:3900"
+root_domain    = ".s3.garage"
+
+[admin]
+# The admin API is what ops/garage/bootstrap.py talks to. It is bound on the
+# internal compose network only and is never published.
+api_bind_addr = "[::]:3903"
+
+# Administrative credential: creates buckets, issues keys, changes the cluster
+# layout. Read by bootstrap.py straight out of this file, so it lives here and
+# nowhere else - not in .env, not in the environment of any container.
+#
+# Generate with:
+#
+#   openssl rand -hex 32
+#
+admin_token = "REPLACE_ME_WITH_ANOTHER_openssl_rand_hex_32_VALUE_______________"
