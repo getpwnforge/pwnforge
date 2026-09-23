@@ -7,3 +7,4 @@ pub mod instance;
 pub mod legal;
 pub mod setup;
 pub mod team;
+pub mod workspace;

@@ -11,6 +11,7 @@ pub mod instance_service;
 pub mod jwt_service;
 pub mod legal_service;
 pub mod password_service;
+pub mod permissions_service;
 pub mod rate_limit_service;
 pub mod session_service;
 pub mod setup_service;
@@ -19,6 +20,7 @@ pub mod stats_service;
 pub mod team_service;
 pub mod token_service;
 pub mod turnstile_service;
+pub mod workspace_service;
 
 use config::Config;
 pub use redis::aio::ConnectionManager;

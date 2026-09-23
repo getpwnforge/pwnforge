@@ -99,16 +99,12 @@ pub async fn create_team(
         return Err(TeamError::TeamQuotaReached);
     }
 
-    let db_clone = db.clone();
-    let slug = slug_service::generate_unique_slug(&payload.name, move |candidate| {
-        let db = db_clone.clone();
-        async move {
-            Ok(teams::Entity::find()
-                .filter(teams::Column::Slug.eq(candidate))
-                .one(&db)
-                .await?
-                .is_some())
-        }
+    let slug = slug_service::generate_unique_slug(&payload.name, move |candidate| async move {
+        Ok(teams::Entity::find()
+            .filter(teams::Column::Slug.eq(candidate))
+            .one(db)
+            .await?
+            .is_some())
     })
     .await?;
 

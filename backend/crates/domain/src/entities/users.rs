@@ -83,6 +83,14 @@ pub enum Relation {
         on_delete = "SetNull"
     )]
     SelfRef1,
+    #[sea_orm(has_many = "super::workspace_favorites::Entity")]
+    WorkspaceFavorites,
+    #[sea_orm(has_many = "super::workspace_invitations::Entity")]
+    WorkspaceInvitations,
+    #[sea_orm(has_many = "super::workspace_members::Entity")]
+    WorkspaceMembers,
+    #[sea_orm(has_many = "super::workspaces::Entity")]
+    Workspaces,
 }
 
 impl Related<super::allowed_emails_domains::Entity> for Entity {
@@ -136,6 +144,30 @@ impl Related<super::team_members::Entity> for Entity {
 impl Related<super::user_emails::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::UserEmails.def()
+    }
+}
+
+impl Related<super::workspace_favorites::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::WorkspaceFavorites.def()
+    }
+}
+
+impl Related<super::workspace_invitations::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::WorkspaceInvitations.def()
+    }
+}
+
+impl Related<super::workspace_members::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::WorkspaceMembers.def()
+    }
+}
+
+impl Related<super::workspaces::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Workspaces.def()
     }
 }
 

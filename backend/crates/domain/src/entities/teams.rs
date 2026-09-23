@@ -37,6 +37,8 @@ pub enum Relation {
         on_delete = "SetNull"
     )]
     Users,
+    #[sea_orm(has_many = "super::workspaces::Entity")]
+    Workspaces,
 }
 
 impl Related<super::team_invitations::Entity> for Entity {
@@ -48,6 +50,12 @@ impl Related<super::team_invitations::Entity> for Entity {
 impl Related<super::team_members::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::TeamMembers.def()
+    }
+}
+
+impl Related<super::workspaces::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Workspaces.def()
     }
 }
 

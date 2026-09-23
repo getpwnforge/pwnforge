@@ -13,6 +13,7 @@ enum Teams {
     Slug,
     Name,
     Color,
+    AvatarUrl,
     Personal,
     CreatedAt,
     CreatedBy,
@@ -93,6 +94,10 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .check(Expr::col(Teams::Color).is_in(TEAM_COLORS)),
                     )
+                    // Same two states as `workspaces.avatar_url`: NULL for no
+                    // image, with the initials derived from `name` frontend
+                    // side and never stored, or the URL of an uploaded one.
+                    .col(ColumnDef::new(Teams::AvatarUrl).text())
                     .col(
                         ColumnDef::new(Teams::CreatedAt)
                             .timestamp_with_time_zone()
