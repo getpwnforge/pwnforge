@@ -18,8 +18,9 @@ pub struct Model {
     pub name: String,
     #[sea_orm(column_type = "Text")]
     pub color: String,
-    pub personal: bool,
+    pub avatar_version: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
+    pub personal: bool,
     pub created_by: Option<Uuid>,
 }
 

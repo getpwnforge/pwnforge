@@ -145,6 +145,13 @@ pub struct TeamResponse {
     pub slug: String,
     pub name: String,
     pub color: TeamColor,
+    /// `None` when the team has no avatar. Non-`None` is the cache-busting
+    /// version the client puts in the avatar URL:
+    /// `/api/v1/avatars/teams/{id}/{avatar_version}/256.webp`.
+    ///
+    /// The URL is built client side from the id and this version rather than
+    /// stored, so no row ever names an object in the bucket.
+    pub avatar_version: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     /// Current user's role in this team, avoids an extra frontend round trip
     /// to know which actions to show.
@@ -163,6 +170,7 @@ impl TeamResponse {
             slug: team.slug,
             name: team.name,
             color: team.color.parse().unwrap_or_default(),
+            avatar_version: team.avatar_version,
             created_at: team.created_at.into(),
             my_role,
         }
@@ -177,7 +185,9 @@ pub struct TeamMemberResponse {
     pub username: String,
     pub first_name: String,
     pub last_name: String,
-    pub avatar_url: Option<String>,
+    /// Same contract as `TeamResponse::avatar_version`, under
+    /// `/api/v1/avatars/users/{user_id}/{avatar_version}/64.webp`.
+    pub avatar_version: Option<Uuid>,
     pub role: TeamRole,
     pub joined_at: DateTime<Utc>,
 }

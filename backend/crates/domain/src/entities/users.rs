@@ -22,8 +22,7 @@ pub struct Model {
     pub last_name: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub bio: Option<String>,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub avatar_url: Option<String>,
+    pub avatar_version: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
     pub theme: String,
     #[sea_orm(column_type = "Text")]

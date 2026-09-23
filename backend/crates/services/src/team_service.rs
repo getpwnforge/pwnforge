@@ -292,7 +292,7 @@ pub async fn list_team_members(
                 username: user.username,
                 first_name: user.first_name.unwrap_or_default(),
                 last_name: user.last_name.unwrap_or_default(),
-                avatar_url: user.avatar_url,
+                avatar_version: user.avatar_version,
                 role: TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer),
                 joined_at: member.joined_at.into(),
             })
@@ -321,7 +321,7 @@ pub async fn get_team_member(
         username: user.username,
         first_name: user.first_name.unwrap_or_default(),
         last_name: user.last_name.unwrap_or_default(),
-        avatar_url: user.avatar_url,
+        avatar_version: user.avatar_version,
         role: TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer),
         joined_at: member.joined_at.into(),
     })
@@ -1053,7 +1053,7 @@ mod tests {
             first_name: None,
             last_name: None,
             bio: None,
-            avatar_url: None,
+            avatar_version: None,
             theme: "dark".to_owned(),
             locale: "en".to_owned(),
             is_instance_admin: false,
