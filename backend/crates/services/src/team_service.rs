@@ -988,7 +988,7 @@ pub async fn accept_pending_email_invitations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, EmailBackend, SmtpTls};
+    use crate::config::{Config, EmailBackend, SmtpTls, StorageConfig};
     use domain::dto::team::{CreateInvitationRequest, TeamColor};
     use sea_orm::{DatabaseBackend, MockDatabase, Value};
     use std::collections::BTreeMap;
@@ -1026,6 +1026,17 @@ mod tests {
             smtp_password: String::new(),
             smtp_tls: SmtpTls::None,
             resend_api_key: String::new(),
+            storage: StorageConfig {
+                endpoint: None,
+                region: "us-east-1".to_owned(),
+                access_key_id: String::new(),
+                secret_access_key: String::new(),
+                force_path_style: true,
+                bucket_attachments: String::new(),
+                bucket_avatars: String::new(),
+                key_prefix: None,
+                public_base_url: None,
+            },
         }
     }
 

@@ -1,5 +1,6 @@
 pub mod alerts;
 pub mod auth;
+pub mod avatars;
 pub mod contact;
 pub mod health;
 pub mod instance;

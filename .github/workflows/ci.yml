@@ -86,12 +86,80 @@ jobs:
         working-directory: backend
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # Garage cannot be a `services:` container: it needs a config file, and
+      # services start before the repository is checked out, so there is
+      # nothing to mount. It is started here instead, after checkout.
+      #
+      # The `object_storage` and `avatars` tests talk to a real object store on
+      # purpose. What they cover is provider behaviour, such as a missing key
+      # surfacing as `NoSuchKey` rather than a generic error and a paged
+      # `ListObjectsV2` terminating, so a double would only assert our
+      # assumptions about S3 rather than S3 itself.
+      - name: Start object storage (Garage)
+        run: |
+          set -euo pipefail
+
+          mkdir -p /tmp/garage
+          cat > /tmp/garage/garage.toml <<'EOF'
+          metadata_dir = "/var/lib/garage/meta"
+          data_dir = "/var/lib/garage/data"
+          db_engine = "sqlite"
+          replication_factor = 1
+          rpc_bind_addr = "[::]:3901"
+          rpc_public_addr = "127.0.0.1:3901"
+          rpc_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+          [s3_api]
+          s3_region = "garage"
+          api_bind_addr = "[::]:3900"
+          root_domain = ".s3.garage"
+
+          [admin]
+          api_bind_addr = "[::]:3903"
+          admin_token = "cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici"
+          EOF
+
+          # Both secrets above are ephemeral and CI-only. Unlike the database
+          # password they are not pulled from a repo secret: the node is bound
+          # to the runner's own network namespace for the length of one job and
+          # is never reachable from anywhere else, so a repo secret would add
+          # rotation work without removing any exposure.
+          docker run -d --name garage --network host \
+            -v /tmp/garage/garage.toml:/etc/garage.toml:ro \
+            dxflrs/garage:v2.4.1
+
+          for _ in $(seq 1 30); do
+            if curl -sf -H "Authorization: Bearer cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici" \
+                 http://127.0.0.1:3903/v2/GetClusterStatus >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+
+          GARAGE_ADMIN_URL=http://127.0.0.1:3903 \
+          GARAGE_CONFIG_FILE=/tmp/garage/garage.toml \
+          PWNFORGE_S3_ACCESS_KEY_ID=GKcitestkey000000000000000 \
+          PWNFORGE_S3_SECRET_ACCESS_KEY=cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici \
+          PWNFORGE_S3_BUCKET_ATTACHMENTS=pwnforge-attachments \
+          PWNFORGE_S3_BUCKET_AVATARS=pwnforge-avatars \
+            python3 ops/garage/bootstrap.py
+
       - name: Run tests
         working-directory: backend
         env:
           DATABASE_URL: postgres://pwnforge:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/pwnforge_test
           REDIS_URL: redis://localhost:6379
+          PWNFORGE_S3_ENDPOINT: http://127.0.0.1:3900
+          PWNFORGE_S3_REGION: garage
+          PWNFORGE_S3_ACCESS_KEY_ID: GKcitestkey000000000000000
+          PWNFORGE_S3_SECRET_ACCESS_KEY: cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici
+          PWNFORGE_S3_BUCKET_ATTACHMENTS: pwnforge-attachments
+          PWNFORGE_S3_BUCKET_AVATARS: pwnforge-avatars
         run: cargo test --all-features
+
+      - name: Object storage logs on failure
+        if: failure()
+        run: docker logs garage || true
 
   frontend:
     name: Frontend (React/TS)

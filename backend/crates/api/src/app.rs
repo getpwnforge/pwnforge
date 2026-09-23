@@ -79,6 +79,7 @@ pub fn build_router(state: AppState) -> Router {
     let api_v1 = Router::new()
         .merge(routes::health::router())
         .merge(routes::alerts::router())
+        .merge(routes::avatars::router())
         .merge(routes::contact::router())
         .merge(routes::teams::router())
         .nest("/instance", routes::instance::router())

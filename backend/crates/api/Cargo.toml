@@ -28,3 +28,9 @@ time = "0.3.55"
 utoipa.workspace = true
 tower-http = { version = "0.7.1", features = ["cors", "timeout"] }
 tower = { version = "0.5.3", features = ["limit"] }
+
+[dev-dependencies]
+# `util` only, for `ServiceExt::oneshot`: the avatar permission tests drive the
+# real router rather than calling the handlers, because the thing under test is
+# the status code a client actually receives.
+tower = { version = "0.5.3", features = ["limit", "util"] }

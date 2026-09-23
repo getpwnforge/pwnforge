@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use services::setup_service;
+use services::storage_service::{ObjectStore, S3Store};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,6 +38,24 @@ async fn main() -> anyhow::Result<()> {
     // Run database seeding
     seed::run(&db).await?;
 
+    // HeadBucket on both buckets before the listener opens. An instance whose
+    // buckets are missing, misnamed, or unreachable fails here with a sentence
+    // naming the bucket, rather than on the first user who uploads an avatar.
+    //
+    // Note there is deliberately no `depends_on: garage` in docker-compose.yml.
+    // Since Compose 2.20 a dependency re-enables its own profile, so declaring
+    // one would start the bundled object store for an operator running against
+    // AWS. Readiness is this check's job instead.
+    let storage = ObjectStore::S3(S3Store::new(&config.storage));
+
+    storage.health().await.map_err(|error| {
+        anyhow::anyhow!(
+            "object storage is not usable: {error}. \
+             Check PWNFORGE_S3_* and, for the bundled object store, that the \
+             garage-init container has run (COMPOSE_PROFILES=garage)."
+        )
+    })?;
+
     let setup_token = setup_service::issue_boot_token(&db, config.setup_token.as_deref()).await?;
 
     if let Some(token) = &setup_token {
@@ -51,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
         config: Arc::new(config),
         jwt_keys: Arc::new(state::JwtKeys { encoding, decoding }),
         setup_token: setup_token.map(Arc::new),
+        storage: Arc::new(storage),
     };
 
     // Background cleanup: runs hourly for the lifetime of the process.

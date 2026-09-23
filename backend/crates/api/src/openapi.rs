@@ -76,6 +76,9 @@ impl Modify for SecurityAddon {
         crate::routes::teams::list_pending_invitations,
         crate::routes::teams::accept_invitation_by_id,
         crate::routes::teams::reject_invitation_by_id,
+        crate::routes::avatars::read_avatar,
+        crate::routes::avatars::upload_avatar,
+        crate::routes::avatars::delete_avatar,
     ),
     components(schemas(
         domain::dto::auth::RegisterRequest,

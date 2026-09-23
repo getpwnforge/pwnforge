@@ -8,10 +8,11 @@ use axum::{
 use serde_json::json;
 use services::{
     alert_service::AlertError, auth_service::AuthError, auth_token_service::AuthTokenError,
-    blocked_email_service::BlockedEmailError, contact_service::ContactError,
-    email_service::EmailError, instance_service::InstanceError, legal_service::LegalError,
+    avatar_service::AvatarError, blocked_email_service::BlockedEmailError,
+    contact_service::ContactError, email_service::EmailError, instance_service::InstanceError,
+    legal_service::LegalError, permissions_service::PermissionsError,
     session_service::SessionError, setup_service::SetupError, slug_service,
-    team_service::TeamError,
+    storage_service::StorageError, team_service::TeamError,
 };
 use std::collections::HashMap;
 
@@ -31,6 +32,18 @@ pub enum AppError {
 
     #[error("unauthorized")]
     Unauthorized,
+
+    /// The caller is authenticated and may act on this resource's kind, but
+    /// not with the role they hold. Distinct from `NotFound`, which is what a
+    /// caller with no access at all gets: see the 404/403 invariant in
+    /// SECURITY.md.
+    #[error("forbidden")]
+    Forbidden,
+
+    /// Either the resource does not exist, or the caller must not learn that
+    /// it does.
+    #[error("not found")]
+    NotFound,
 
     #[error("service temporarily unavailable")]
     ServiceUnavailable,
@@ -55,6 +68,12 @@ pub enum AppError {
 
     #[error(transparent)]
     Team(#[from] TeamError),
+
+    #[error(transparent)]
+    Avatar(#[from] AvatarError),
+
+    #[error(transparent)]
+    Permissions(#[from] PermissionsError),
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
@@ -211,6 +230,115 @@ impl IntoResponse for AppError {
                 Json(json!({ "error": "unauthorized" })),
             )
                 .into_response(),
+
+            AppError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "insufficient_role" })),
+            )
+                .into_response(),
+
+            AppError::NotFound => {
+                (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response()
+            }
+
+            AppError::Avatar(err) => {
+                let (status, code) = match &err {
+                    // 404 rather than 403 or 204: to a client, an entity with
+                    // no avatar and an entity it may not see are the same
+                    // answer, and the route is a plain image fetch that has to
+                    // fail the way a missing image does.
+                    AvatarError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+
+                    AvatarError::TooLarge { .. } => {
+                        (StatusCode::PAYLOAD_TOO_LARGE, "avatar_too_large")
+                    }
+
+                    // 415 rather than 422: the objection is to the media type
+                    // of the body, not to a field in it.
+                    AvatarError::SvgRejected => {
+                        (StatusCode::UNSUPPORTED_MEDIA_TYPE, "avatar_svg_rejected")
+                    }
+                    AvatarError::UnsupportedFormat => (
+                        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                        "avatar_unsupported_format",
+                    ),
+
+                    // The bytes passed the magic-byte pre-filter and the
+                    // decoder still refused them, which includes hitting the
+                    // decompression-bomb limits. Either way the caller has to
+                    // send a different file.
+                    AvatarError::Undecodable => {
+                        (StatusCode::UNPROCESSABLE_ENTITY, "avatar_undecodable")
+                    }
+
+                    // Both are ours, not the caller's, and both are already
+                    // logged where they happen. 503 rather than 500 for the
+                    // timeout: it is a load condition, and retrying later is
+                    // the right advice.
+                    AvatarError::RenderTimeout => {
+                        (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable")
+                    }
+                    AvatarError::RenderPanicked | AvatarError::EncodeFailed => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+
+                    AvatarError::Storage(storage) => match storage {
+                        // The row named a version the bucket does not hold.
+                        // Already logged as an inconsistency by the service.
+                        StorageError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+
+                        // 507 rather than 503: the store is answering fine and
+                        // retrying will never help. Someone has to raise the
+                        // quota or delete objects, and the operator needs to
+                        // be able to tell this apart from an outage at a
+                        // glance - which is the whole reason this is not
+                        // folded into `Backend`.
+                        StorageError::QuotaExceeded { .. } => {
+                            tracing::error!(error = ?err, "object storage quota reached");
+                            (StatusCode::INSUFFICIENT_STORAGE, "storage_quota_exceeded")
+                        }
+
+                        // The provider refused our credential. The caller did
+                        // nothing wrong and can do nothing about it: this is
+                        // our own grant or policy being incomplete, so it is a
+                        // 500 with a log line that names the likely cause,
+                        // not a 503 that suggests waiting.
+                        StorageError::AccessDenied { .. } => {
+                            tracing::error!(
+                                error = ?err,
+                                "object storage refused our credential; check the key's \
+                                 grants on both buckets"
+                            );
+                            (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                        }
+
+                        StorageError::BucketUnavailable { .. } | StorageError::Backend(_) => {
+                            tracing::error!(error = ?err, "object storage unavailable");
+                            (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable")
+                        }
+                        StorageError::TooLarge { .. } => {
+                            tracing::error!(error = ?err, "stored avatar is past the read limit");
+                            (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                        }
+                    },
+
+                    AvatarError::Db(_) => {
+                        tracing::error!(error = ?err, "avatar store failure");
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+                };
+
+                (status, Json(json!({ "error": code }))).into_response()
+            }
+
+            AppError::Permissions(err) => {
+                tracing::error!(error = ?err, "permission resolution failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "internal_error" })),
+                )
+                    .into_response()
+            }
 
             AppError::Db(err) => {
                 tracing::error!(error = ?err, "database error");
@@ -404,7 +532,11 @@ impl IntoResponse for AppError {
                     Json(json!({ "error": "team_name_reserved" })),
                 )
                     .into_response(),
-                TeamError::SlugGenerationFailed => (
+                // Every candidate drawn was taken. Not the caller's fault and
+                // not something a different name would fix, so it is a 500
+                // rather than the 422 the two validation variants above get.
+                TeamError::Slug(slug_service::SlugError::Exhausted)
+                | TeamError::SlugGenerationFailed => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": "slug_generation_failed" })),
                 )

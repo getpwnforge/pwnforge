@@ -33,6 +33,25 @@ rand = "0.10.2"
 deunicode = "1.6.2"
 urlencoding = "2.1.3"
 
+# `sigv4a` is off: it signs multi-region access points, which nothing here
+# uses, and it is the only default feature that pulls in extra crypto. The
+# credential chain is not pulled in either (no `aws-config`): credentials come
+# from our own env, built into `aws_sdk_s3::config::Credentials` by hand, so
+# the process never attempts an IMDS or container-metadata lookup at boot.
+aws-sdk-s3 = { version = "1.148.0", default-features = false, features = ["rustls", "default-https-client", "rt-tokio", "behavior-version-latest"] }
+
+# Exactly the three formats the avatar allowlist accepts, and no others. The
+# default feature set compiles in a dozen more decoders (avif, exr, tiff, dds,
+# tga...), every one of which would be reachable from an uploaded byte string.
+# Turning them off at the Cargo level means a decoder we never intended to
+# expose is not merely rejected at runtime, it is not linked into the binary.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+
+# Magic-byte sniffing for the pre-decode allowlist. Deliberately not used as
+# the last word on a file's type: it is a cheap pre-filter in front of the
+# decoder, which remains the thing that decides whether bytes are an image.
+infer = { version = "0.22.0", default-features = false }
+
 [dev-dependencies]
 # The rotation race test needs a real Postgres: concurrent UPDATE visibility is
 # exactly the behaviour under test, so a mock would only assert our assumptions

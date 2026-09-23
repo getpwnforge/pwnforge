@@ -3,6 +3,7 @@ use crate::token_service::hash_opaque_token;
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use std::net::IpAddr;
+use uuid::Uuid;
 
 // --- Register ---
 const REGISTER_IP_LIMIT: isize = 5;
@@ -42,13 +43,35 @@ const SETUP_TEST_EMAIL_IP_LIMIT: isize = 5;
 const SETUP_TEST_EMAIL_WINDOW_SECS: i64 = 60 * 60;
 // Roomier than the completion limit: this call creates nothing, and an operator
 // picking a password the breach corpus keeps rejecting will legitimately hit it
-// several times in a row. Still bounded — every request reaches out to HIBP.
+// several times in a row. Still bounded - every request reaches out to HIBP.
 const SETUP_VALIDATE_IP_LIMIT: isize = 30;
 const SETUP_VALIDATE_WINDOW_SECS: i64 = 60 * 60;
 
 // --- Contact form ---
 const CONTACT_IP_LIMIT: isize = 3;
 const CONTACT_WINDOW_SECS: i64 = 60 * 60;
+
+// --- Avatar upload ---
+// Two windows on the same user, for two different abuses.
+//
+// The per-user hourly window bounds storage: every accepted upload writes two
+// objects and best-effort deletes two more, so an unbounded one is a way to
+// fill someone else's bucket and their bill.
+//
+// The burst window bounds CPU, which is the one that actually matters here.
+// An avatar upload is the only authenticated route that hands attacker-chosen
+// bytes to an image decoder, and a decode is orders of magnitude more
+// expensive than the request that carried it. Ten a minute is well past what a
+// person adjusting their profile picture does and well under what it takes to
+// occupy the blocking pool.
+//
+// Keyed on the user, not the IP: the route is authenticated, so the account is
+// the stable identifier and an attacker rotating IPs gains nothing. An IP
+// window would also punish a whole NAT for one account.
+const AVATAR_UPLOAD_BURST_LIMIT: isize = 10;
+const AVATAR_UPLOAD_BURST_WINDOW_SECS: i64 = 60;
+const AVATAR_UPLOAD_HOURLY_LIMIT: isize = 30;
+const AVATAR_UPLOAD_HOURLY_WINDOW_SECS: i64 = 60 * 60;
 
 pub enum RateLimitDecision {
     Allowed,
@@ -220,6 +243,36 @@ pub async fn check_contact_attempt(
     .await
 }
 
+/// Rate limit for avatar uploads, its own function rather than a generic
+/// helper: every limit in this module names the route it protects, so the
+/// windows that guard it are visible in one place and changing one cannot
+/// silently change another.
+///
+/// Both windows are always incremented, as `check_login_attempt` does, so the
+/// counts stay accurate regardless of which one is checked first.
+pub async fn check_avatar_upload(
+    redis: &mut ConnectionManager,
+    user_id: Uuid,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    let burst = check_window(
+        redis,
+        &avatar_upload_burst_key(user_id),
+        AVATAR_UPLOAD_BURST_LIMIT,
+        AVATAR_UPLOAD_BURST_WINDOW_SECS,
+    )
+    .await?;
+
+    let hourly = check_window(
+        redis,
+        &avatar_upload_hourly_key(user_id),
+        AVATAR_UPLOAD_HOURLY_LIMIT,
+        AVATAR_UPLOAD_HOURLY_WINDOW_SECS,
+    )
+    .await?;
+
+    Ok(most_restrictive(burst, hourly))
+}
+
 /// Returns the blocking decision when either window tripped, keeping the
 /// longest wait so a client that retries at the returned delay is not refused
 /// again by the other window.
@@ -298,6 +351,17 @@ fn setup_validate_ip_key(ip: IpAddr) -> String {
 
 fn contact_ip_key(ip: IpAddr) -> String {
     format!("ratelimit:contact:ip:{ip}")
+}
+
+// Not hashed, unlike the login and password-reset keys: a user id is already
+// an opaque uuid rather than PII, and keeping it readable makes a stuck limit
+// something an operator can actually investigate.
+fn avatar_upload_burst_key(user_id: Uuid) -> String {
+    format!("ratelimit:avatar:burst:user:{user_id}")
+}
+
+fn avatar_upload_hourly_key(user_id: Uuid) -> String {
+    format!("ratelimit:avatar:hourly:user:{user_id}")
 }
 
 /// Increments a single fixed window and reports whether it is over `limit`.
