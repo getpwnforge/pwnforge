@@ -26,13 +26,69 @@ Requirements: Docker, Docker Compose, Git.
 git clone https://github.com/getpwnforge/pwnforge.git
 cd pwnforge
 cp .env.example .env
+
+# The bundled object store needs its own config, which is gitignored because
+# it holds the cluster's admin credentials. Generate the two secrets:
+cp ops/garage/garage.toml.example ops/garage/garage.toml
+openssl rand -hex 32   # -> rpc_secret
+openssl rand -hex 32   # -> admin_token
+
 docker compose -f docker-compose.dev.yml up -d
 ```
+
+The object store (`garage`, `garage-init`) sits behind the `garage` Compose
+profile, which `.env.example` enables by default. If you already run an S3,
+clear `COMPOSE_PROFILES` and fill in the `PWNFORGE_S3_*` variables instead -
+no `garage.toml` is needed then.
 
 `docker-compose.dev.yml` builds from source and enables hot-reload for both backend and frontend. **Do not use `docker-compose.yml` for development.** That file pulls pre-built production images from GHCR and will not reflect your local changes.
 
 - Backend: <http://localhost:3000>
 - Frontend: <http://localhost:5173>
+- Object store (S3 API): <http://127.0.0.1:3900>
+
+### Inspecting object storage
+
+Garage has no web console - this is the one thing lost in the move off MinIO
+(see [ADR 0002](docs/adr/0002-replacing-minio.md)). Two ways to look
+inside a local instance.
+
+**The Garage CLI**, through the running container. The image is `FROM scratch`,
+so there is no shell: invoke the binary directly.
+
+```bash
+# Cluster health, node id, disk available
+docker compose -f docker-compose.dev.yml exec garage /garage status
+
+# Buckets, their size and object count
+docker compose -f docker-compose.dev.yml exec garage /garage bucket list
+docker compose -f docker-compose.dev.yml exec garage /garage bucket info pwnforge-avatars
+
+# Which keys can reach what
+docker compose -f docker-compose.dev.yml exec garage /garage key list
+
+# Cap a bucket's size. Refusals surface as HTTP 507 storage_quota_exceeded,
+# not as a generic outage.
+docker compose -f docker-compose.dev.yml exec garage /garage bucket set-quotas \
+    pwnforge-attachments --max-size 50G
+```
+
+**Any S3 client**, against `http://127.0.0.1:3900`. Note `--region garage`:
+Garage signs SigV4 against the region in `garage.toml`, and the default
+`us-east-1` produces a signature mismatch rather than a useful error.
+
+```bash
+export AWS_ACCESS_KEY_ID=$(grep ^PWNFORGE_S3_ACCESS_KEY_ID .env | cut -d= -f2)
+export AWS_SECRET_ACCESS_KEY=$(grep ^PWNFORGE_S3_SECRET_ACCESS_KEY .env | cut -d= -f2)
+
+aws --endpoint-url http://127.0.0.1:3900 --region garage \
+    s3 ls s3://pwnforge-avatars --recursive
+```
+
+To start over from an empty store, run `make reset-storage`. To reset the
+database, run `make reset-db`; you will want that after a migration is edited
+in place on a branch, since a database that already applied the old version
+never sees the change. Both are destructive and prompt for three seconds first.
 
 ## Running tests
 
