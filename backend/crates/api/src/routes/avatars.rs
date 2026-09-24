@@ -490,11 +490,27 @@ mod tests {
         let db = db.clone();
 
         let redis_url = env_or("REDIS_URL", "redis://127.0.0.1:6379");
-        let redis = redis::aio::ConnectionManager::new(
+        let mut redis = redis::aio::ConnectionManager::new(
             redis::Client::open(redis_url).expect("REDIS_URL must be valid"),
         )
         .await
         .expect("a Redis instance must be reachable");
+
+        // Reachability is not usability, and the constructor above only
+        // proves the former: a Redis started with `requirepass`, which the dev
+        // compose does, accepts the connection and then refuses every command
+        // with NOAUTH. Without this PING the first sign of trouble is the rate
+        // limiter answering 503, asserted against an expected 200 hundreds of
+        // lines below, naming neither Redis nor the variable that is wrong.
+        // CI's service has no password and passes this as-is.
+        redis::cmd("PING")
+            .query_async::<String>(&mut redis)
+            .await
+            .expect(
+                "Redis must answer PING; if this is NOAUTH the URL needs the \
+                 password, as REDIS_URL=redis://:$REDIS_PASSWORD@127.0.0.1:6379 \
+                 (see .env.example)",
+            );
 
         let config = config();
         let storage = ObjectStore::S3(S3Store::new(&config.storage));

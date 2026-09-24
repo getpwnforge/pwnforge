@@ -25,12 +25,27 @@ async fn connect_redis() -> ConnectionManager {
     let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned());
     let client = redis::Client::open(url).expect("REDIS_URL must be a valid Redis URL");
 
+    let mut conn = ConnectionManager::new(client)
+        .await
+        .expect("a Redis instance must be reachable");
+
     // The dev compose sets `requirepass`, so a bare `redis://host:port` is
     // refused with NOAUTH. CI's service has no password and works as-is.
-    ConnectionManager::new(client).await.expect(
-        "a Redis instance must be reachable; against the dev compose set \
-         REDIS_URL=redis://:$REDIS_PASSWORD@127.0.0.1:6379",
-    )
+    //
+    // This has to be a command, not just the constructor above: that one
+    // succeeds against a password-protected Redis, since the connection is
+    // accepted and only the commands are refused. The guidance below used to
+    // hang off the constructor, where it could never fire.
+    redis::cmd("PING")
+        .query_async::<String>(&mut conn)
+        .await
+        .expect(
+            "Redis must answer PING; if this is NOAUTH the URL needs the \
+             password, as REDIS_URL=redis://:$REDIS_PASSWORD@127.0.0.1:6379 \
+             (see .env.example)",
+        );
+
+    conn
 }
 
 /// A fresh address per call, unique across runs as well as within one.
