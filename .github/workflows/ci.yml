@@ -144,6 +144,9 @@ jobs:
           PWNFORGE_S3_BUCKET_AVATARS=pwnforge-avatars \
             python3 ops/garage/bootstrap.py
 
+      # --no-fail-fast so one failing crate does not hide the others: without
+      # it cargo stops at the first failure and the remaining test binaries
+      # never run, so a PR shows one red crate where several may be broken.
       - name: Run tests
         working-directory: backend
         env:
@@ -155,7 +158,7 @@ jobs:
           PWNFORGE_S3_SECRET_ACCESS_KEY: cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici
           PWNFORGE_S3_BUCKET_ATTACHMENTS: pwnforge-attachments
           PWNFORGE_S3_BUCKET_AVATARS: pwnforge-avatars
-        run: cargo test --all-features
+        run: cargo test --all-features --no-fail-fast
 
       - name: Object storage logs on failure
         if: failure()
