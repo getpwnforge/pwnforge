@@ -5,9 +5,10 @@ use domain::dto::workspace::{
     CreateWorkspaceInput, EffectiveMember, Membership, UpdateWorkspaceInput, WorkspaceMode,
     WorkspaceSummary, WorkspaceType, WriteupVisibility,
 };
-use domain::entities::{team_members, workspace_favorites, workspace_members, workspaces};
+use domain::entities::{team_members, users, workspace_favorites, workspace_members, workspaces};
 
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::{permissions_service, slug_service, team_service};
@@ -358,32 +359,171 @@ pub async fn remove_favorite(
 
 /// Everyone with access to `workspace`, with their effective role resolved.
 ///
-/// Steps:
-/// 1. If `workspace.mode` is solo: one `EffectiveMember` for
-///    `workspace.owner_id`, role `TeamRole::Captain` (the top of the
-///    hierarchy, standing in for sole ownership since there's no separate
-///    "Owner" tier at the `TeamRole` level, only at `Membership`), `is_guest: false`.
-/// 2. If team mode: fetch all `team_members` rows for `workspace.team_id`,
-///    joined with `users` (`find_also_related`, same pattern as
-///    `team_service::list_team_members`) for display fields.
-/// 3. Fetch all `workspace_members` override rows for `workspace.id`, index
-///    by `user_id`.
-/// 4. For each team member: drop entirely if override has
-///    `role == "excluded"`; use the override's role if it has another one;
-///    otherwise their plain team role.
-/// 5. Add every `workspace_members` row with `is_guest = true` that has no
-///    corresponding `team_members` row, joined with `users` too.
-/// 6. Return the combined list.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
+/// Solo: a single entry for the owner, `Membership::Owner` rather than
+/// `Active(Captain)`. `Membership` has an `Owner` tier where `TeamRole` does
+/// not, and using it is what keeps this roster and
+/// `permissions_service::effective_role` saying the same thing about the
+/// same person.
+///
+/// Team: every team member, minus anyone a `workspace_members` row excludes,
+/// with an override role taking precedence over the inherited team one, plus
+/// every guest, who has no team membership behind them at all.
+///
+/// A member whose `users` row has gone is dropped rather than failing the
+/// whole listing, matching `team_service::list_team_members`.
 pub async fn list_effective_members(
     db: &DatabaseConnection,
     workspace: &workspaces::Model,
 ) -> Result<Vec<EffectiveMember>, WorkspaceError> {
-    todo!()
+    let mode =
+        WorkspaceMode::parse(&workspace.mode).ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+
+    if let WorkspaceMode::Solo = mode {
+        // `ck_workspaces_ownership` makes a solo workspace with no owner
+        // unreachable, so this is the same named-error-over-unwrap choice as
+        // `PermissionsError::WorkspaceMisconfigured`.
+        let owner_id = workspace
+            .owner_id
+            .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+
+        let owner = users::Entity::find_by_id(owner_id).one(db).await?;
+
+        return Ok(owner
+            .map(|owner| EffectiveMember {
+                user_id: owner_id,
+                handle: owner.username,
+                first_name: owner.first_name.unwrap_or_default(),
+                last_name: owner.last_name.unwrap_or_default(),
+                avatar_version: owner.avatar_version,
+                role: Membership::Owner,
+                is_guest: false,
+                // No membership row stands behind sole ownership, so the
+                // workspace's own creation is the date the owner got access.
+                joined_at: workspace.created_at.into(),
+            })
+            .into_iter()
+            .collect());
+    }
+
+    // Likewise unreachable: `mode = 'team'` with no `team_id` is the other
+    // half of `ck_workspaces_ownership`.
+    let team_id = workspace
+        .team_id
+        .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+
+    let team_roster = team_members::Entity::find()
+        .filter(team_members::Column::TeamId.eq(team_id))
+        .find_also_related(users::Entity)
+        .all(db)
+        .await?;
+
+    // Overrides come back with their user rows already joined, so the guest
+    // pass below needs no second query.
+    let mut overrides: std::collections::HashMap<
+        Uuid,
+        (workspace_members::Model, Option<users::Model>),
+    > = workspace_members::Entity::find()
+        .filter(workspace_members::Column::WorkspaceId.eq(workspace.id))
+        .find_also_related(users::Entity)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|(member, user)| (member.user_id, (member, user)))
+        .collect();
+
+    let mut members = Vec::with_capacity(team_roster.len());
+
+    for (team_member, user) in team_roster {
+        let Some(user) = user else { continue };
+
+        // Removed rather than read, so what is left in `overrides` after this
+        // loop is exactly the set of rows with no team membership behind
+        // them: the guests.
+        let override_role = overrides
+            .remove(&team_member.user_id)
+            .and_then(|(member, _)| member.role);
+
+        let role = match override_role.as_deref() {
+            Some("excluded") => continue,
+            Some(role) => TeamRole::from_str(role).unwrap_or(TeamRole::Viewer),
+            // A row with no role overrides nothing and falls through to the
+            // team role, the same way `permissions_service::effective_role`
+            // treats it.
+            None => TeamRole::from_str(&team_member.role).unwrap_or(TeamRole::Viewer),
+        };
+
+        members.push(EffectiveMember {
+            user_id: team_member.user_id,
+            handle: user.username,
+            first_name: user.first_name.unwrap_or_default(),
+            last_name: user.last_name.unwrap_or_default(),
+            avatar_version: user.avatar_version,
+            role: Membership::Active(role),
+            is_guest: false,
+            // The team_members date, not the override's: an override
+            // changes what they may do here, not when they gained access.
+            joined_at: team_member.joined_at.into(),
+        });
+    }
+
+    for (member, user) in overrides.into_values() {
+        // What reaches here with `is_guest = false` is an orphan: an override
+        // written while the person was on the team, outlived by nothing
+        // cleaning it up when they left. Skipping it does *not* deny them
+        // anything, because this function gates nothing:
+        // `permissions_service::effective_role` reads the override before it
+        // reads team membership, so it still admits them. The result is
+        // someone who can open the workspace without appearing on its members
+        // list, and the fix is upstream, not here.
+        //
+        // TODO(3.8): `team_service::remove_member` must delete this user's
+        // `workspace_members` rows on that team's workspaces, in the same
+        // transaction as the `team_members` delete. Once it does, the row
+        // cannot exist and this filter is exact rather than merely quiet.
+        if !member.is_guest {
+            continue;
+        }
+
+        let Some(user) = user else { continue };
+
+        // `ck_workspace_members_guest_has_role` makes a role-less guest
+        // unreachable. Unlike the orphan above, this one really is
+        // unreachable rather than merely unhandled, so there is nothing to
+        // fix upstream and dropping the row is only defensive.
+        let Some(role) = member.role else { continue };
+
+        if role == "excluded" {
+            continue;
+        }
+
+        members.push(EffectiveMember {
+            user_id: member.user_id,
+            handle: user.username,
+            first_name: user.first_name.unwrap_or_default(),
+            last_name: user.last_name.unwrap_or_default(),
+            avatar_version: user.avatar_version,
+            role: Membership::Active(TeamRole::from_str(&role).unwrap_or(TeamRole::Viewer)),
+            is_guest: true,
+            joined_at: member.joined_at.into(),
+        });
+    }
+
+    // Without this the order is whatever Postgres returns, which is not
+    // stable across reads: the members table would reshuffle on every
+    // refresh. Seniority first, then handle, so the people who can change
+    // things are at the top.
+    //
+    // `to_lowercase` because the handles come from a CITEXT column: a byte
+    // ordering would file `Zoe` before `alice`, which is not the order the
+    // column itself considers those two to be in.
+    members.sort_by_cached_key(|member| {
+        (
+            std::cmp::Reverse(member.role.rank()),
+            member.handle.to_lowercase(),
+        )
+    });
+
+    Ok(members)
 }
 
 /// Steps:
