@@ -245,16 +245,6 @@ pub async fn list_workspaces_for_user(
         .collect()
 }
 
-/// Steps:
-/// 1. `get_workspace_by_slug`-style fetch by id instead
-///    (`workspaces::Entity::find_by_id(workspace_id).one(db).await?.ok_or(
-///    WorkspaceError::WorkspaceNotFound)?`).
-/// 2. Reject the update if `input` tries to touch `mode`, `team_id`, or
-///    `owner_id` (shouldn't be on `UpdateWorkspaceInput` at all, guard here
-///    too regardless).
-/// 3. Build an `ActiveModel` from the fetched row, `Set` only the fields
-///    present in `input`.
-/// 4. `.update(db).await?`, return the updated row.
 pub async fn update_workspace(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -286,83 +276,84 @@ pub async fn update_workspace(
     active_model.update(db).await.map_err(Into::into)
 }
 
-/// Steps:
-/// 1. `workspaces::Entity::delete_by_id(workspace_id).exec(db).await?`.
-/// 2. `if result.rows_affected == 0 { return
-///    Err(WorkspaceError::WorkspaceNotFound); }`, matching
-///    `team_service::delete_team`'s convention exactly.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
 pub async fn delete_workspace(
     db: &DatabaseConnection,
     workspace_id: Uuid,
 ) -> Result<(), WorkspaceError> {
-    todo!()
+    let result = workspaces::Entity::delete_by_id(workspace_id)
+        .exec(db)
+        .await?;
+
+    if result.rows_affected == 0 {
+        return Err(WorkspaceError::WorkspaceNotFound);
+    }
+    Ok(())
 }
 
-/// Steps: fetch by id (`WorkspaceNotFound` if missing), `Set(archived:
-/// true)`, `.update()`. Archiving an already-archived workspace: no-op
-/// success, not an error.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
 pub async fn archive_workspace(
     db: &DatabaseConnection,
     workspace_id: Uuid,
 ) -> Result<workspaces::Model, WorkspaceError> {
-    todo!()
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    workspaces::ActiveModel {
+        id: Set(workspace.id),
+        archived: Set(true),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .map_err(Into::into)
 }
 
-/// Mirror of `archive_workspace`, `Set(archived: false)`.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
 pub async fn unarchive_workspace(
     db: &DatabaseConnection,
     workspace_id: Uuid,
 ) -> Result<workspaces::Model, WorkspaceError> {
-    todo!()
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    workspaces::ActiveModel {
+        id: Set(workspace.id),
+        archived: Set(false),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .map_err(Into::into)
 }
 
-/// Steps:
-/// 1. `workspace_favorites::ActiveModel { user_id, workspace_id, .. }.insert(db).await`.
-/// 2. On a unique-violation error, treat as success. `is_unique_violation`
-///    below is a private copy, same as `team_service.rs` keeps its own
-///    rather than sharing one: the only thing this module needs to know is
-///    whether the row already existed.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
 pub async fn add_favorite(
     db: &DatabaseConnection,
     user_id: Uuid,
     workspace_id: Uuid,
 ) -> Result<(), WorkspaceError> {
-    todo!()
+    workspace_favorites::ActiveModel {
+        user_id: Set(user_id),
+        workspace_id: Set(workspace_id),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+
+    Ok(())
 }
 
-/// Steps: `workspace_favorites::Entity::delete_by_id((user_id,
-/// workspace_id)).exec(db).await?`, ignore whether a row was deleted.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
 pub async fn remove_favorite(
     db: &DatabaseConnection,
     user_id: Uuid,
     workspace_id: Uuid,
 ) -> Result<(), WorkspaceError> {
-    todo!()
+    workspace_favorites::Entity::delete_by_id((user_id, workspace_id))
+        .exec(db)
+        .await?;
+
+    Ok(())
 }
 
 /// Everyone with access to `workspace`, with their effective role resolved.
