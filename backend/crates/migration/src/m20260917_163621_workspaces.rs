@@ -237,6 +237,19 @@ impl MigrationTrait for Migration {
                     // has no team role to inherit, is required to carry one
                     // here.
                     .col(ColumnDef::new(WorkspaceMembers::Role).text())
+                    // "Holds a guest grant on this workspace", not "is not a
+                    // team member". The two can coexist, and this does not
+                    // stop being true when the membership starts: someone
+                    // admitted as a guest who later joins the team keeps the
+                    // row, dormant, since `effective_role` reads the override
+                    // either way and `list_effective_members` reports them as
+                    // the team member they have become.
+                    //
+                    // It is also what is left if they leave the team again,
+                    // which is why `team_service::remove_member` bounds its
+                    // cleanup to `is_guest = false`: a grant made
+                    // independently of the team is not something leaving it
+                    // asked to revoke.
                     .col(
                         ColumnDef::new(WorkspaceMembers::IsGuest)
                             .boolean()

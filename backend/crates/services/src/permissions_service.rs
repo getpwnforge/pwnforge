@@ -47,7 +47,10 @@ pub async fn effective_role(
     if let Some(member) = member
         && let Some(role) = member.role
     {
-        return if role == "excluded" {
+        // The sentinel comes from `Membership::Excluded` rather than a
+        // literal here and in `workspace_service`, so the reader and the
+        // writer cannot drift apart on its spelling.
+        return if role == Membership::Excluded.as_str() {
             Ok(Membership::Excluded)
         } else {
             Ok(Membership::Active(

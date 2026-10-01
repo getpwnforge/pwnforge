@@ -13,7 +13,9 @@ use domain::dto::team::{
     CreateInvitationRequest, CreateTeamRequest, TeamColor, TeamInvitationResponse,
     TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
 };
-use domain::entities::{team_invitations, team_members, teams, user_emails, users};
+use domain::entities::{
+    team_invitations, team_members, teams, user_emails, users, workspace_members, workspaces,
+};
 
 use crate::config::Config;
 use crate::{auth_service, email_service, instance_service, slug_service, token_service};
@@ -398,13 +400,56 @@ pub async fn remove_member(
         }
     }
 
+    // One transaction, because the two deletes are one fact: this person is
+    // no longer on this team. Committing the first alone leaves an override
+    // row with no membership behind it, which
+    // `permissions_service::effective_role` still reads and still honours,
+    // since it consults the override before it consults team membership. The
+    // person would keep their access to the team's workspaces after being
+    // removed from the team, and would not appear on any members list while
+    // holding it.
+    let txn = db.begin().await?;
+
     let result = team_members::Entity::delete_by_id((team_id, user_id))
-        .exec(db)
+        .exec(&txn)
         .await?;
 
     if result.rows_affected == 0 {
         return Err(TeamError::MemberNotFound);
     }
+
+    let workspace_ids: Vec<Uuid> = workspaces::Entity::find()
+        .filter(workspaces::Column::TeamId.eq(team_id))
+        .all(&txn)
+        .await?
+        .into_iter()
+        .map(|workspace| workspace.id)
+        .collect();
+
+    // Exclusions go too, not just granted roles. An exclusion subtracts from
+    // inherited access, so without the inheritance it names nothing: keeping
+    // it would make this a silent tombstone, and someone who rejoined later
+    // would be the only person not seeing a workspace their colleagues see,
+    // with nothing left to say why.
+    //
+    // Guest rows stay, and that is what bounds this delete to the rows team
+    // membership actually created. A guest grant is made independently of the
+    // team and is not something leaving it asked to revoke: someone admitted
+    // as a guest, who then joined the team and later left, must come out the
+    // far side with the access they walked in with. The orphan this cleanup
+    // exists to prevent is a row with no team membership behind it, which is
+    // `is_guest = false` by definition, so excluding guests costs the
+    // guarantee nothing.
+    if !workspace_ids.is_empty() {
+        workspace_members::Entity::delete_many()
+            .filter(workspace_members::Column::UserId.eq(user_id))
+            .filter(workspace_members::Column::WorkspaceId.is_in(workspace_ids))
+            .filter(workspace_members::Column::IsGuest.eq(false))
+            .exec(&txn)
+            .await?;
+    }
+
+    txn.commit().await?;
 
     Ok(())
 }

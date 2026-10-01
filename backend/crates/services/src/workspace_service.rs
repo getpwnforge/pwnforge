@@ -35,6 +35,15 @@ pub enum WorkspaceError {
 
     #[error("workspace {0} has an unrecognized type or mode value in the database")]
     DataIntegrity(Uuid),
+
+    #[error("user is not a member of this workspace's team")]
+    TargetNotInTeam,
+
+    #[error("user is already a member of this workspace's team, so cannot be a guest of it")]
+    TargetAlreadyInTeam,
+
+    #[error("a solo workspace has no members to override")]
+    SoloWorkspace,
 }
 
 /// Minimum team role required to create a workspace under that team.
@@ -181,7 +190,7 @@ pub async fn list_workspaces_for_user(
             overrides_by_workspace
                 .get(&w.id)
                 .and_then(|o| o.role.as_deref())
-                != Some("excluded")
+                != Some(Membership::Excluded.as_str())
         })
         .collect();
 
@@ -334,15 +343,27 @@ pub async fn add_favorite(
     user_id: Uuid,
     workspace_id: Uuid,
 ) -> Result<(), WorkspaceError> {
-    workspace_favorites::ActiveModel {
+    let inserted = workspace_favorites::ActiveModel {
         user_id: Set(user_id),
         workspace_id: Set(workspace_id),
         ..Default::default()
     }
     .insert(db)
-    .await?;
+    .await;
 
-    Ok(())
+    match inserted {
+        Ok(_) => Ok(()),
+        // Favouriting something already favourited is the same wish stated
+        // twice, not a failure, so the caller gets the outcome it asked for.
+        //
+        // Caught after the fact rather than prevented by a prior SELECT: two
+        // concurrent requests both pass an existence check and one still
+        // loses on the insert, so the check would narrow the race without
+        // closing it. The constraint is the thing that actually decides, so
+        // it is the thing to read.
+        Err(err) if is_unique_violation(&err) => Ok(()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub async fn remove_favorite(
@@ -444,7 +465,7 @@ pub async fn list_effective_members(
             .and_then(|(member, _)| member.role);
 
         let role = match override_role.as_deref() {
-            Some("excluded") => continue,
+            Some(role) if role == Membership::Excluded.as_str() => continue,
             Some(role) => TeamRole::from_str(role).unwrap_or(TeamRole::Viewer),
             // A row with no role overrides nothing and falls through to the
             // team role, the same way `permissions_service::effective_role`
@@ -467,19 +488,20 @@ pub async fn list_effective_members(
     }
 
     for (member, user) in overrides.into_values() {
-        // What reaches here with `is_guest = false` is an orphan: an override
-        // written while the person was on the team, outlived by nothing
-        // cleaning it up when they left. Skipping it does *not* deny them
-        // anything, because this function gates nothing:
-        // `permissions_service::effective_role` reads the override before it
-        // reads team membership, so it still admits them. The result is
-        // someone who can open the workspace without appearing on its members
-        // list, and the fix is upstream, not here.
+        // Everything still here belongs to someone with no team membership
+        // behind it, so `is_guest = false` is not a case this filter handles
+        // quietly, it is one that cannot arise. Two guards make that true,
+        // one at each end of the row's life: `set_member_override` refuses to
+        // write a non-guest override for someone who is not on the team, and
+        // `team_service::remove_member` deletes these rows in the same
+        // transaction that ends the membership.
         //
-        // TODO(3.8): `team_service::remove_member` must delete this user's
-        // `workspace_members` rows on that team's workspaces, in the same
-        // transaction as the `team_members` delete. Once it does, the row
-        // cannot exist and this filter is exact rather than merely quiet.
+        // It matters that they cannot, because skipping such a row would deny
+        // nothing: this function gates no access, and
+        // `permissions_service::effective_role` reads the override before it
+        // reads team membership, so it would still admit them. Leaving the
+        // row possible would mean someone with access to the workspace and no
+        // place on its members list.
         if !member.is_guest {
             continue;
         }
@@ -492,7 +514,7 @@ pub async fn list_effective_members(
         // fix upstream and dropping the row is only defensive.
         let Some(role) = member.role else { continue };
 
-        if role == "excluded" {
+        if role == Membership::Excluded.as_str() {
             continue;
         }
 
@@ -526,27 +548,26 @@ pub async fn list_effective_members(
     Ok(members)
 }
 
-/// Steps:
-/// 1. Validate `ck_workspace_members_guest_has_role`: `is_guest` true
-///    requires a role.
-/// 2. Upsert on the composite PK (`workspace_id, user_id`). Check whether
-///    `OnConflict` is used anywhere in `team_service.rs`'s sibling files
-///    for this shape before writing a manual select-then-insert-or-update
-///    (it isn't used in `team_service.rs` itself, `add_member` just checks
-///    existence then inserts, consider mirroring that instead of reaching
-///    for `OnConflict`).
-/// 3. Return `Ok(())`.
+/// Grants `target_user_id` a workspace-level role, overriding whatever they
+/// inherit from the team, or admits them as a guest.
 ///
-/// `role: TeamRole` here can't express exclusion (`"excluded"` isn't a
-/// `TeamRole` variant, it's a `Membership` state). Decide whether this
-/// takes a raw validated string, or whether exclusion should be its own
-/// function (`exclude_member`) instead of a value of this one's `role`
-/// parameter.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
+/// Refuses a non-guest override for someone who is not on the workspace's
+/// team. That guard is the creation-side half of the one
+/// `team_service::remove_member` enforces on deletion: without it, the row
+/// that removal exists to clean up could simply be written directly, and
+/// `permissions_service::effective_role` would honour it, since it reads the
+/// override before it reads team membership.
+///
+/// Refuses the mirror case too, `is_guest` for someone who *is* on the team:
+/// a guest is by definition someone with no team membership behind them, and
+/// a row claiming otherwise would be a fact the roster then contradicts.
+/// (This blocks writing that state, not reaching it: someone admitted as a
+/// guest who later joins the team arrives there legitimately, and
+/// `list_effective_members` reads them as the team member they now are.)
+///
+/// Exclusion is not expressible here and lives in `exclude_member`: it is not
+/// a `TeamRole`, and a role parameter that sometimes means "no role at all"
+/// is the kind that gets passed `Captain` by mistake.
 pub async fn set_member_override(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -554,7 +575,109 @@ pub async fn set_member_override(
     role: TeamRole,
     is_guest: bool,
 ) -> Result<(), WorkspaceError> {
-    todo!()
+    let team_id = require_team_workspace(db, workspace_id).await?;
+    let in_team = is_team_member(db, team_id, target_user_id).await?;
+
+    match (is_guest, in_team) {
+        (false, false) => return Err(WorkspaceError::TargetNotInTeam),
+        (true, true) => return Err(WorkspaceError::TargetAlreadyInTeam),
+        _ => {}
+    }
+
+    upsert_override(db, workspace_id, target_user_id, role.as_str(), is_guest).await
+}
+
+/// Removes `target_user_id`'s access to one workspace while leaving their
+/// team membership intact.
+///
+/// Its own function rather than a value of `set_member_override`'s `role`,
+/// and only for team members: an exclusion subtracts from inherited access,
+/// so for someone with none it would name nothing. To drop a guest, delete
+/// their row instead.
+pub async fn exclude_member(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    target_user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let team_id = require_team_workspace(db, workspace_id).await?;
+
+    if !is_team_member(db, team_id, target_user_id).await? {
+        return Err(WorkspaceError::TargetNotInTeam);
+    }
+
+    upsert_override(
+        db,
+        workspace_id,
+        target_user_id,
+        Membership::Excluded.as_str(),
+        false,
+    )
+    .await
+}
+
+/// The workspace's team, or an error naming why it has none.
+///
+/// A `workspace_members` row on a solo workspace is inert: both
+/// `permissions_service::effective_role` and `list_effective_members` answer
+/// from `owner_id` and never look at the table. Writing one would be a
+/// silent no-op, so it is refused rather than accepted and ignored.
+async fn require_team_workspace(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+) -> Result<Uuid, WorkspaceError> {
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)
+}
+
+async fn is_team_member(
+    db: &DatabaseConnection,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, WorkspaceError> {
+    Ok(team_members::Entity::find_by_id((team_id, user_id))
+        .one(db)
+        .await?
+        .is_some())
+}
+
+/// Writes the row whether or not one is already there.
+///
+/// Select-then-insert-or-update rather than `OnConflict`, mirroring
+/// `team_service::add_member`'s explicit shape. `joined_at` is left `NotSet`
+/// in both branches: the database fills it on insert, and an update must not
+/// reset it, since changing what someone may do here is not them arriving
+/// again.
+async fn upsert_override(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    role: &str,
+    is_guest: bool,
+) -> Result<(), WorkspaceError> {
+    let row = workspace_members::ActiveModel {
+        workspace_id: Set(workspace_id),
+        user_id: Set(user_id),
+        role: Set(Some(role.to_owned())),
+        is_guest: Set(is_guest),
+        ..Default::default()
+    };
+
+    let exists = workspace_members::Entity::find_by_id((workspace_id, user_id))
+        .one(db)
+        .await?
+        .is_some();
+
+    if exists {
+        row.update(db).await?;
+    } else {
+        row.insert(db).await?;
+    }
+
+    Ok(())
 }
 
 /// Steps: `workspace_members::Entity::delete_by_id((workspace_id,
@@ -592,11 +715,6 @@ async fn workspace_slug_exists(
 /// Copied rather than imported, same reasoning as `team_service.rs`'s own
 /// copy: the only thing this module needs is whether the row already
 /// existed.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
 fn is_unique_violation(err: &sea_orm::DbErr) -> bool {
     matches!(
         err.sql_err(),
