@@ -680,36 +680,33 @@ async fn upsert_override(
     Ok(())
 }
 
-/// Steps: `workspace_members::Entity::delete_by_id((workspace_id,
-/// target_user_id)).exec(db).await?`, no error if nothing was deleted.
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
+/// Drops `target_user_id`'s row for this workspace, whatever it held: a
+/// granted role, an exclusion, or a guest admission. The completion of
+/// `set_member_override` and `exclude_member`, which could both write a row
+/// that nothing could then take back.
+///
+/// One operation, three different outcomes, which a caller has to know apart
+/// before putting it behind a single button:
+///
+/// - on a team member with a granted role, they fall back to the role they
+///   inherit from the team, so this is a reset, not a removal;
+/// - on an excluded team member, their inherited access comes back, so this
+///   *grants*;
+/// - on a guest, who has no team membership to fall back to, the row was the
+///   whole of their access, so this revokes it.
+///
+/// Absent row is success, not `WorkspaceNotFound`: the caller asked for the
+/// override to be gone and it is. Same shape as `remove_favorite`.
 pub async fn remove_member_override(
     db: &DatabaseConnection,
     workspace_id: Uuid,
     target_user_id: Uuid,
 ) -> Result<(), WorkspaceError> {
-    todo!()
-}
+    workspace_members::Entity::delete_by_id((workspace_id, target_user_id))
+        .exec(db)
+        .await?;
 
-/// Steps: `workspaces::Entity::find().filter(workspaces::Column::Slug.eq(candidate))
-/// .one(db).await?.is_some()`. Same shape as the closure inline in
-/// `team_service::create_team`, kept as a named function here since it's
-/// called from more than one place (create, and later rename if that's
-/// ever supported).
-#[allow(
-    unused_variables,
-    dead_code,
-    reason = "TODO(Phase 3): documented stub, still todo!(). Remove this attribute with the todo!()."
-)]
-async fn workspace_slug_exists(
-    db: &DatabaseConnection,
-    candidate: String,
-) -> Result<bool, sea_orm::DbErr> {
-    todo!()
+    Ok(())
 }
 
 /// Copied rather than imported, same reasoning as `team_service.rs`'s own

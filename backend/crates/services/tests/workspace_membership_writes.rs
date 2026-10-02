@@ -711,6 +711,166 @@ async fn excluding_replaces_an_existing_granted_override() {
     );
 }
 
+// ---- remove_member_override -----------------------------------------------
+
+/// On a team member, removing the override is a reset: they fall back to the
+/// role they inherit from the team, not to no access.
+#[tokio::test]
+async fn removing_a_granted_override_falls_back_to_the_team_role() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+
+    workspace_service::set_member_override(
+        &db,
+        f.workspace.id,
+        f.member_id,
+        TeamRole::Admin,
+        false,
+    )
+    .await
+    .expect("the grant must be written");
+    workspace_service::remove_member_override(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("removing the override must succeed");
+
+    assert!(
+        override_row(&db, f.workspace.id, f.member_id)
+            .await
+            .is_none()
+    );
+    assert_eq!(
+        permissions_service::effective_role(&db, f.member_id, &f.workspace)
+            .await
+            .expect("resolving the role must succeed"),
+        Membership::Active(TeamRole::Member),
+        "the inherited team role must come back, not no access at all"
+    );
+}
+
+/// On an excluded team member, the same call *grants*: the inherited access
+/// returns. This is the outcome most likely to surprise whoever wires a single
+/// "remove" button in 3.9.
+#[tokio::test]
+async fn removing_an_exclusion_restores_inherited_access() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+
+    workspace_service::exclude_member(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("the exclusion must be written");
+    workspace_service::remove_member_override(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("removing the exclusion must succeed");
+
+    assert_eq!(
+        permissions_service::effective_role(&db, f.member_id, &f.workspace)
+            .await
+            .expect("resolving the role must succeed"),
+        Membership::Active(TeamRole::Member),
+        "lifting an exclusion must restore what the team grants"
+    );
+
+    let members = workspace_service::list_effective_members(&db, &f.workspace)
+        .await
+        .expect("listing must succeed");
+    assert!(
+        members.iter().any(|m| m.user_id == f.member_id),
+        "and must put them back on the roster"
+    );
+}
+
+/// On a guest the row was the whole of their access, so the same call revokes
+/// it. Nothing falls back, because there is no team membership behind them.
+#[tokio::test]
+async fn removing_a_guests_override_revokes_their_access() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+    let guest_id = create_user(&db).await;
+
+    workspace_service::set_member_override(&db, f.workspace.id, guest_id, TeamRole::Member, true)
+        .await
+        .expect("the guest must be admitted");
+    workspace_service::remove_member_override(&db, f.workspace.id, guest_id)
+        .await
+        .expect("removing the guest must succeed");
+
+    assert_eq!(
+        permissions_service::effective_role(&db, guest_id, &f.workspace)
+            .await
+            .expect("resolving the role must succeed"),
+        Membership::None,
+        "a guest has nothing to fall back to, so this revokes"
+    );
+
+    let members = workspace_service::list_effective_members(&db, &f.workspace)
+        .await
+        .expect("listing must succeed");
+    assert!(!members.iter().any(|m| m.user_id == guest_id));
+}
+
+/// No row is success, not `WorkspaceNotFound`: the caller asked for the
+/// override to be gone and it is.
+#[tokio::test]
+async fn removing_an_override_that_is_not_there_succeeds() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+
+    workspace_service::remove_member_override(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("removing an absent override must succeed");
+
+    // Twice, so idempotence is pinned rather than inferred from one call.
+    workspace_service::remove_member_override(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("and must stay idempotent");
+}
+
+/// Scoped to the one row the composite key names: the same person's override
+/// on a sibling workspace survives, and so does another person's on this one.
+#[tokio::test]
+async fn removing_an_override_touches_only_that_workspace_and_person() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+    let sibling = create_workspace(&db, Some(f.team_id), None).await;
+
+    workspace_service::set_member_override(
+        &db,
+        f.workspace.id,
+        f.member_id,
+        TeamRole::Admin,
+        false,
+    )
+    .await
+    .expect("the grant must be written");
+    workspace_service::set_member_override(&db, sibling.id, f.member_id, TeamRole::Viewer, false)
+        .await
+        .expect("the sibling grant must be written");
+    workspace_service::set_member_override(
+        &db,
+        f.workspace.id,
+        f.captain_id,
+        TeamRole::Viewer,
+        false,
+    )
+    .await
+    .expect("the captain's grant must be written");
+
+    workspace_service::remove_member_override(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("removing the override must succeed");
+
+    assert!(
+        override_row(&db, sibling.id, f.member_id).await.is_some(),
+        "the same person's override on another workspace must survive"
+    );
+    assert!(
+        override_row(&db, f.workspace.id, f.captain_id)
+            .await
+            .is_some(),
+        "another person's override on this workspace must survive"
+    );
+}
+
 // ---- add_favorite ---------------------------------------------------------
 
 /// Favouriting twice is the same wish stated twice. Before this, the second
