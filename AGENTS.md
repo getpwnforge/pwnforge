@@ -15,16 +15,27 @@ Never use `docker-compose.yml` for local changes: that's prod, pre-built GHCR im
 ## Commands
 
 ```bash
+# repo root
+make test-backend
+
 # backend/
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
 
 # frontend/
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
-All eight must pass before the human submits a PR. This is exactly what `ci.yml` runs.
+All seven must pass before the human submits a PR, and they are the checks
+`ci.yml` runs.
+
+Run the backend suite through `make test-backend`, not `cargo test` directly.
+Parts of it talk to a real Postgres, Redis and object store; the target starts
+those, loads the root `.env` and points the endpoints at the host. A bare
+`cargo test` from `backend/` reads none of that and fails on a missing
+variable, which reads like a bad value rather than a file nothing opened. CI
+sets the same variables itself and calls `cargo test --all-features
+--no-fail-fast`.
 
 ## Code style
 

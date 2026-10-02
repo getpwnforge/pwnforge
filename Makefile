@@ -1,5 +1,5 @@
 # Makefile for PwnForge project
-.PHONY: help up down migrate seed reset-db reset-storage test lint clean
+.PHONY: help up down migrate seed reset-db reset-storage test test-backend lint clean
 
 # Set the default goal to 'help' if no target is specified
 .DEFAULT_GOAL := help
@@ -51,10 +51,42 @@ reset-db:
 reset-storage:
 	COMPOSE_FILE=$(COMPOSE_FILE) ./ops/scripts/reset-storage.sh
 
-## test: Launch the test suite for backend and frontend
-test:
+## test-backend: Run the backend suite against the dev stack
+#
+# Three things have to be true before `cargo test` passes from a clone, and
+# none of them is legible from the failure you get when they are not:
+#
+#   1. The root `.env` has to be loaded. cargo does not read it and the test
+#      harnesses only call `std::env::var`, so a run from `backend/` sees none
+#      of it. The failure names the missing variable, which reads like a bad
+#      value rather than a file nothing ever opened.
+#   2. `PWNFORGE_S3_ENDPOINT` in `.env` is the in-network address, and has to
+#      be. It is a deployment setting there, with provider presets spelling out
+#      real AWS and R2 endpoints, so it cannot also be the host address. From
+#      the host it is 127.0.0.1, which is this target's job to say.
+#   3. `garage-init` is a one-shot behind the `garage` profile that provisions
+#      the buckets and the access key. A plain `up -d` skips it and leaves a
+#      Garage node with neither.
+#
+# Only the endpoints are rewritten here; passwords, buckets and the region all
+# come from `.env`, so changing one needs no edit in this file.
+test-backend:
+	@echo "Starting the services the suite talks to..."
+	@docker compose -f $(COMPOSE_FILE) up -d --wait db redis garage
+	@docker compose -f $(COMPOSE_FILE) up garage-init
 	@echo "Running backend tests..."
-	cargo test --all --manifest-path backend/Cargo.toml
+	@set -a; . ./.env; set +a; \
+	 DATABASE_URL=$$(printf '%s' "$$DATABASE_URL" | sed 's|@db:|@127.0.0.1:|'); \
+	 REDIS_URL=$$(printf '%s' "$$REDIS_URL" | sed 's|@redis:|@127.0.0.1:|'); \
+	 PWNFORGE_S3_ENDPOINT=http://127.0.0.1:3900; \
+	 export DATABASE_URL REDIS_URL PWNFORGE_S3_ENDPOINT; \
+	 cargo test --all-features --no-fail-fast --manifest-path backend/Cargo.toml
+
+## test: Launch the test suite for backend and frontend
+#
+# Delegates the backend half rather than calling cargo directly: run bare, it
+# hits all three traps described above.
+test: test-backend
 	@echo "Running frontend tests..."
 	cd frontend && pnpm test
 

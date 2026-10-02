@@ -93,17 +93,24 @@ never sees the change. Both are destructive and prompt for three seconds first.
 ## Running tests
 
 ```bash
-# Backend
-cargo test
+# Backend, against the dev stack
+make test-backend
 
 # Frontend
 pnpm test
 ```
 
+Use `make test-backend` rather than `cargo test` directly. Parts of the suite
+talk to a real Postgres, Redis and object store, and the target starts them,
+loads the root `.env` and points the endpoints at the host. A bare `cargo test`
+reads none of that and fails on a missing variable, which reads like a bad
+value rather than a file nothing opened. `make test` runs this plus the
+frontend half.
+
 ## Before opening a PR
 
 - [ ] Commits are signed off (`-s`)
-- [ ] `cargo test` and `pnpm test` pass locally
+- [ ] `make test-backend` and `pnpm test` pass locally
 - [ ] `cargo audit` and `pnpm audit` are clean (or documented if not)
 - [ ] New auth/permissions logic includes tests for the relevant role transitions
 - [ ] Lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) are committed if dependencies changed
