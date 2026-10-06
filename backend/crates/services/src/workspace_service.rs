@@ -87,7 +87,7 @@ pub async fn create_workspace(
         name: Set(input.name),
         slug: Set(slug),
         description: Set(input.description),
-        color: Set(input.color),
+        color: Set(input.color.as_str().to_string()),
         r#type: Set(input.r#type.as_str().to_string()),
         platform: Set(input.platform.map(|p| p.as_str().to_string())),
         mode: Set(input.mode.as_str().to_string()),
@@ -245,7 +245,7 @@ pub async fn list_workspaces_for_user(
                 id: w.id,
                 slug: w.slug,
                 name: w.name,
-                color: w.color,
+                color: w.color.parse().unwrap_or_default(),
                 avatar_version: w.avatar_version,
                 archived: w.archived,
                 starts_at: w.starts_at.map(Into::into),
@@ -274,7 +274,7 @@ pub async fn update_workspace(
         active_model.description = Set(description);
     }
     if let Some(color) = input.color {
-        active_model.color = Set(color);
+        active_model.color = Set(color.as_str().to_string());
     }
     if let Some(lock_after_end) = input.lock_after_end {
         active_model.lock_after_end = Set(lock_after_end);
