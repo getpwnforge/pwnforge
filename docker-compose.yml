@@ -1,6 +1,10 @@
 services:
   db:
-    image: postgres:17-alpine
+    # Major tag on purpose: security fixes arrive with the next pull. The 18
+    # image keeps its data under /var/lib/postgresql (PGDATA is
+    # /var/lib/postgresql/18/docker) and declares that directory as its
+    # volume, hence the mount point below.
+    image: postgres:18-alpine
     restart: unless-stopped
     user: "1001:1001"
     cap_drop: [ALL]
@@ -11,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
