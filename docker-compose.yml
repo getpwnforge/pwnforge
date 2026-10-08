@@ -11,9 +11,9 @@ services:
     cap_add: [CHOWN, FOWNER, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
     volumes:
       - db-data:/var/lib/postgresql
     healthcheck:
@@ -31,6 +31,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # The image's own redis user (uid 999, gid 1000). Started as root, the
+    # entrypoint drops to it with setpriv, which needs CAP_SETUID and so fails
+    # under cap_drop: [ALL]. Started as that user, the entrypoint skips the
+    # drop and needs no capability. Not 1001 like the other services: /data
+    # belongs to uid 999 in the image, and a redis that cannot write its
+    # snapshot there refuses writes.
+    user: "999:1000"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
@@ -111,10 +118,10 @@ services:
       GARAGE_ADMIN_URL: http://garage:3903
       PWNFORGE_GARAGE_CAPACITY: ${PWNFORGE_GARAGE_CAPACITY:-100G}
       PWNFORGE_GARAGE_ZONE: ${PWNFORGE_GARAGE_ZONE:-pwnforge}
-      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID}
-      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY}
-      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS}
-      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID:?PWNFORGE_S3_ACCESS_KEY_ID must be set}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY:?PWNFORGE_S3_SECRET_ACCESS_KEY must be set}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS:?PWNFORGE_S3_BUCKET_ATTACHMENTS must be set}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS:?PWNFORGE_S3_BUCKET_AVATARS must be set}
     command: ["python3", "/init/bootstrap.py"]
     volumes:
       - ./ops/garage/bootstrap.py:/init/bootstrap.py:ro
@@ -132,17 +139,24 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      JWT_SECRET: ${JWT_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      PORT: ${PORT}
-      CORS_ORIGIN: ${CORS_ORIGIN}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      # Fixed, not an operator setting: frontend/nginx.conf proxies to
+      # backend:3000, so the two must stay aligned. The instance is exposed
+      # through HTTP_PORT on the frontend, never through this port.
+      PORT: "3000"
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set}
       TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
-      PUBLIC_URL: ${PUBLIC_URL}
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL must be set}
       EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@localhost}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      # No value on purpose: passed through only when set. An empty string
+      # would reach the backend as a configured but blank secret, and every
+      # route behind Turnstile would then fail its verification.
+      TURNSTILE_SECRET_KEY:
       CHECK_PWNED_PASSWORDS: ${CHECK_PWNED_PASSWORDS:-true}
       # Scoped application credential, never the Garage admin token. Defaults
       # point at the bundled Garage; an operator on AWS/R2/Scaleway overrides
@@ -150,11 +164,11 @@ services:
       # per-provider presets.
       PWNFORGE_S3_ENDPOINT: ${PWNFORGE_S3_ENDPOINT-http://garage:3900}
       PWNFORGE_S3_REGION: ${PWNFORGE_S3_REGION:-garage}
-      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID}
-      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID:?PWNFORGE_S3_ACCESS_KEY_ID must be set}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY:?PWNFORGE_S3_SECRET_ACCESS_KEY must be set}
       PWNFORGE_S3_FORCE_PATH_STYLE: ${PWNFORGE_S3_FORCE_PATH_STYLE:-true}
-      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS}
-      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS:?PWNFORGE_S3_BUCKET_ATTACHMENTS must be set}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS:?PWNFORGE_S3_BUCKET_AVATARS must be set}
       PWNFORGE_S3_KEY_PREFIX: ${PWNFORGE_S3_KEY_PREFIX:-}
       PWNFORGE_S3_PUBLIC_BASE_URL: ${PWNFORGE_S3_PUBLIC_BASE_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -206,7 +220,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "${HTTP_PORT}:8080"
+      - "${HTTP_PORT:?HTTP_PORT must be set}:8080"
     deploy:
       resources:
         limits:
