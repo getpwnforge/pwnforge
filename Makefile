@@ -1,5 +1,5 @@
 # Makefile for PwnForge project
-.PHONY: help up down migrate seed reset-db reset-storage test test-backend lint clean
+.PHONY: help up down migrate seed reset-db reset-storage test test-backend lint prod-check clean
 
 # Set the default goal to 'help' if no target is specified
 .DEFAULT_GOAL := help
@@ -103,6 +103,17 @@ lint:
 	@echo "Running frontend linting..."
 	cd frontend && pnpm lint && pnpm tsc --noEmit
 
+
+## prod-check: Run the production compose from local images in a throwaway project
+#
+# Builds the backend and frontend images from this checkout, starts every
+# service of docker-compose.yml in the `pwnforge-prodcheck` project with
+# generated test values, and fails unless all of them turn healthy within
+# PRODCHECK_TIMEOUT_SECS (default 300). It removes everything it created,
+# failure included, and touches no other container or volume. The details
+# are in ops/prod-check.sh.
+prod-check:
+	@./ops/prod-check.sh
 
 ## clean: Remove build artifacts and temporary files
 clean:
