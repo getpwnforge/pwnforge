@@ -212,7 +212,10 @@ impl Config {
 
             // --- Secrets ---
             jwt_secret: required("JWT_SECRET")?,
-            turnstile_secret_key: std::env::var("TURNSTILE_SECRET_KEY").ok(),
+            // Blank counts as unset, like the S3 settings: a compose file that
+            // passes an empty value would otherwise enable verification with an
+            // empty secret, and every route behind Turnstile would fail.
+            turnstile_secret_key: non_empty("TURNSTILE_SECRET_KEY"),
             encryption_key: required("ENCRYPTION_KEY")?,
 
             // --- Security ---
