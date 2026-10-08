@@ -182,7 +182,10 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
       BACKEND_ENV: ${BACKEND_ENV:-production}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${PORT}/api/v1/health"]
+      # The binary probes itself: the runtime image has no curl. It reads PORT
+      # from the container's environment and asks /api/v1/health on the
+      # loopback (see crates/api/src/healthcheck.rs).
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -216,6 +219,13 @@ services:
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      # Static files only: this says whether nginx serves the app, not whether
+      # the backend is up, which has its own check. The image ships wget.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       backend:
         condition: service_healthy
