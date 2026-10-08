@@ -13,10 +13,10 @@ members = [
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
-# The toolchain actually used: rust-toolchain.toml pins 1.97.1 and the
-# backend image builds on rust:1.97. Declared at the minor version so a cached
-# 1.97.0 image still satisfies it; the resolver uses it to pick dependencies.
-rust-version = "1.97"
+# The toolchain actually used: rust-toolchain.toml and the backend image both
+# pin 1.99.0. Declared at the minor version, as cargo compares it; the
+# resolver uses it to pick dependencies.
+rust-version = "1.99"
 
 [workspace.dependencies]
 domain = { path = "crates/domain" }
