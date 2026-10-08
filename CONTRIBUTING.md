@@ -115,6 +115,16 @@ frontend half.
 - [ ] New auth/permissions logic includes tests for the relevant role transitions
 - [ ] Lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) are committed if dependencies changed
 
+### Audit exceptions
+
+`pnpm audit` ignores one advisory, listed under `audit.ignore` in
+`frontend/pnpm-workspace.yaml`: GHSA-vfj7-8cjw-p6xm, a stack-exhaustion denial
+of service in `braces` 3.0.3. `braces` reaches the tree only through the
+`shadcn` CLI (via `fast-glob` and `micromatch`), which runs when a developer
+adds a component. It is never executed by the CSS the app imports from
+`shadcn/tailwind.css` and never ends up in the bundle. No patched release of
+`braces` is published; the exception goes as soon as one is.
+
 ## Code style
 
 - Rust: `cargo fmt` and `cargo clippy` clean before submitting

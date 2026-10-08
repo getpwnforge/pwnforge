@@ -1,3 +1,11 @@
+# GHSA-vfj7-8cjw-p6xm (braces 3.0.3) reaches the tree only through the shadcn
+# CLI, never the bundle or the imported CSS, and has no patched release yet.
+# Remove the entry once one is published. See "Audit exceptions" in
+# CONTRIBUTING.md.
+audit:
+  ignore:
+    - GHSA-vfj7-8cjw-p6xm
+
 overrides:
   brace-expansion: "^5.0.9"
   postcss: "^8.5.23"
