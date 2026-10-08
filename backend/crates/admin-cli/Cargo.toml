@@ -24,4 +24,4 @@ uuid.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 dialoguer = "0.12.0"                      # interactive confirmation prompts
-tabled = "0.21.0"
+tabled = "0.22.0"
