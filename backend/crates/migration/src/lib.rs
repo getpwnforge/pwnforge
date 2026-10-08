@@ -13,6 +13,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260917_163621_workspaces::Migration),
             Box::new(m20260922_101500_avatar_version::Migration),
             Box::new(m20260922_143000_drop_avatar_url::Migration),
+            Box::new(m20261008_090000_workspaces_enum_checks::Migration),
         ]
     }
 }
@@ -22,3 +23,4 @@ mod m20260911_141751_teams;
 mod m20260917_163621_workspaces;
 mod m20260922_101500_avatar_version;
 mod m20260922_143000_drop_avatar_url;
+mod m20261008_090000_workspaces_enum_checks;

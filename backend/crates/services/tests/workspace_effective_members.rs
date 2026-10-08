@@ -117,7 +117,7 @@ async fn create_workspace(
         slug: Set(format!("ws-members-test-{suffix}")),
         name: Set(format!("Workspace Members Test {suffix}")),
         color: Set("ember".to_owned()),
-        r#type: Set("platform".to_owned()),
+        r#type: Set("event".to_owned()),
         mode: Set(if team_id.is_some() { "team" } else { "solo" }.to_owned()),
         default_writeup_visibility: Set("draft".to_owned()),
         ..Default::default()

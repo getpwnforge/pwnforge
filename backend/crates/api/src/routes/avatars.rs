@@ -579,7 +579,7 @@ mod tests {
             slug: Set(unique("avatar-ws")),
             name: Set("Private Workspace".to_owned()),
             color: Set("blue".to_owned()),
-            r#type: Set("ctf".to_owned()),
+            r#type: Set("event".to_owned()),
             mode: Set("team".to_owned()),
             default_writeup_visibility: Set("team".to_owned()),
             ..Default::default()
