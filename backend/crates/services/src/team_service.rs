@@ -10,12 +10,13 @@ use sea_orm::{
 use uuid::Uuid;
 
 use domain::dto::team::{
-    CreateInvitationRequest, CreateTeamRequest, TeamColor, TeamInvitationResponse,
-    TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
+    CreateInvitationRequest, CreateTeamRequest, TeamInvitationResponse, TeamMemberResponse,
+    TeamPatch, TeamResponse, TeamRole,
 };
 use domain::entities::{
     team_invitations, team_members, teams, user_emails, users, workspace_members, workspaces,
 };
+use domain::types::AccentColor;
 
 use crate::config::Config;
 use crate::{auth_service, email_service, instance_service, slug_service, token_service};
@@ -523,7 +524,7 @@ pub async fn create_personal_team(
         id: Set(Uuid::now_v7()),
         slug: Set(slug),
         name: Set(name),
-        color: Set(TeamColor::default().as_str().to_string()),
+        color: Set(AccentColor::default().as_str().to_string()),
         personal: Set(true),
         created_by: Set(Some(user.id)),
         ..Default::default()
@@ -1034,7 +1035,8 @@ pub async fn accept_pending_email_invitations(
 mod tests {
     use super::*;
     use crate::config::{Config, EmailBackend, SmtpTls, StorageConfig};
-    use domain::dto::team::{CreateInvitationRequest, TeamColor};
+    use domain::dto::team::CreateInvitationRequest;
+    use domain::types::AccentColor;
     use sea_orm::{DatabaseBackend, MockDatabase, Value};
     use std::collections::BTreeMap;
 
@@ -1385,7 +1387,7 @@ mod tests {
     fn create_payload() -> CreateTeamRequest {
         CreateTeamRequest {
             name: "Team".to_owned(),
-            color: TeamColor::Ember,
+            color: AccentColor::Ember,
         }
     }
 

@@ -21,7 +21,7 @@ enum Teams {
 
 /// The closed palette `teams.color` is constrained to.
 ///
-/// Kept in sync with `domain::dto::team::TeamColor` and, on the frontend side,
+/// Kept in sync with `domain::types::AccentColor` and, on the frontend side,
 /// with `WS_COLORS` in `lib/ws-color.ts`. Duplicated here rather than imported
 /// because a migration must keep describing the schema it created even after
 /// the enum in the code moves on.

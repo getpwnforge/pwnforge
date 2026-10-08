@@ -1,6 +1,7 @@
 // backend/crates/domain/src/dto/team.rs
 
 use crate::entities::teams;
+use crate::types::AccentColor;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -59,66 +60,6 @@ impl std::str::FromStr for TeamRole {
 
 // ---- Teams --------------------------------------------------------------
 
-/// A team's accent colour.
-///
-/// A closed set, not a free string or a hex code: the frontend resolves it
-/// through `bgClasses[color]` in `WsIcon.tsx`, keyed by these exact names, so
-/// anything outside the list renders as an element with no background at all.
-/// The palette itself lives in `frontend/src/lib/ws-color.ts` and
-/// `globals.css` (`--color-ws-*`); the two must be changed together.
-///
-/// Serde rejects any other value on its own, so no separate validation rule is
-/// needed here: an unknown colour fails deserialization and comes back as a
-/// 422 through `JsonBody`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum TeamColor {
-    Ember,
-    Blue,
-    Violet,
-    Teal,
-    Rose,
-    Amber,
-}
-
-impl TeamColor {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TeamColor::Ember => "ember",
-            TeamColor::Blue => "blue",
-            TeamColor::Violet => "violet",
-            TeamColor::Teal => "teal",
-            TeamColor::Rose => "rose",
-            TeamColor::Amber => "amber",
-        }
-    }
-}
-
-impl std::str::FromStr for TeamColor {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ember" => Ok(TeamColor::Ember),
-            "blue" => Ok(TeamColor::Blue),
-            "violet" => Ok(TeamColor::Violet),
-            "teal" => Ok(TeamColor::Teal),
-            "rose" => Ok(TeamColor::Rose),
-            "amber" => Ok(TeamColor::Amber),
-            _ => Err("Invalid team color".into()),
-        }
-    }
-}
-
-/// Fallback for a row written before the column was constrained, or by hand.
-/// Mirrors how `TeamRole` degrades to `Viewer`: a bad value must not fail a
-/// read, and the safe default here is simply the first palette entry.
-impl Default for TeamColor {
-    fn default() -> Self {
-        TeamColor::Ember
-    }
-}
-
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTeamRequest {
@@ -128,7 +69,7 @@ pub struct CreateTeamRequest {
     /// cap on how many teams a user creates.
     #[validate(length(min = 1, max = 60))]
     pub name: String,
-    pub color: TeamColor,
+    pub color: AccentColor,
 }
 
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
@@ -136,7 +77,7 @@ pub struct CreateTeamRequest {
 pub struct TeamPatch {
     #[validate(length(min = 1, max = 60))]
     pub name: Option<String>,
-    pub color: Option<TeamColor>,
+    pub color: Option<AccentColor>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -144,7 +85,7 @@ pub struct TeamResponse {
     pub id: Uuid,
     pub slug: String,
     pub name: String,
-    pub color: TeamColor,
+    pub color: AccentColor,
     /// `None` when the team has no avatar. Non-`None` is the cache-busting
     /// version the client puts in the avatar URL:
     /// `/api/v1/avatars/teams/{id}/{avatar_version}/256.webp`.
@@ -161,7 +102,7 @@ pub struct TeamResponse {
 impl TeamResponse {
     /// Builds the response from a stored row plus the caller's role.
     ///
-    /// Single place where `teams.color` is read back into `TeamColor`, so the
+    /// Single place where `teams.color` is read back into `AccentColor`, so the
     /// fallback for an out-of-palette value cannot drift between the six call
     /// sites that used to construct this by hand.
     pub fn from_model(team: teams::Model, my_role: TeamRole) -> Self {
@@ -294,42 +235,6 @@ pub struct TeamInvitationResponse {
 mod tests {
     use super::*;
 
-    /// Positive: every palette entry survives the round trip through the form
-    /// it is stored in, so a team written today reads back as the same colour.
-    #[test]
-    fn team_color_round_trips_through_its_stored_form() {
-        let palette = [
-            TeamColor::Ember,
-            TeamColor::Blue,
-            TeamColor::Violet,
-            TeamColor::Teal,
-            TeamColor::Rose,
-            TeamColor::Amber,
-        ];
-
-        for color in palette {
-            let stored = color.as_str();
-            assert_eq!(
-                stored.parse::<TeamColor>(),
-                Ok(color),
-                "{stored} must parse back to the variant it came from"
-            );
-        }
-    }
-
-    /// Negative: anything outside the palette is refused at the edge. This is
-    /// what replaces a validation rule: a hex code is the shape the frontend
-    /// cannot resolve, so it must not get as far as the database.
-    #[test]
-    fn team_color_rejects_a_value_outside_the_palette() {
-        for rejected in ["#EB5927", "ember ", "Ember", "orange", ""] {
-            assert!(
-                rejected.parse::<TeamColor>().is_err(),
-                "{rejected:?} must not be accepted as a team colour"
-            );
-        }
-    }
-
     /// Negative: deserialization refuses an unknown colour outright, which is
     /// what turns a bad request into a 422 without any explicit check.
     #[test]
@@ -354,7 +259,7 @@ mod tests {
         let parsed: CreateTeamRequest =
             serde_json::from_str(body).expect("a palette colour must be accepted");
 
-        assert_eq!(parsed.color, TeamColor::Violet);
+        assert_eq!(parsed.color, AccentColor::Violet);
         assert!(parsed.validate().is_ok());
     }
 
@@ -364,7 +269,7 @@ mod tests {
     fn create_team_request_rejects_an_overlong_name() {
         let parsed = CreateTeamRequest {
             name: "a".repeat(61),
-            color: TeamColor::Ember,
+            color: AccentColor::Ember,
         };
 
         assert!(parsed.validate().is_err());
@@ -421,15 +326,5 @@ mod tests {
                 "{bad:?} must not be accepted as a username"
             );
         }
-    }
-
-    /// A row holding something outside the palette still renders, falling back
-    /// rather than failing the whole read.
-    #[test]
-    fn stored_color_outside_the_palette_falls_back() {
-        assert_eq!(
-            "#000000".parse::<TeamColor>().unwrap_or_default(),
-            TeamColor::Ember
-        );
     }
 }

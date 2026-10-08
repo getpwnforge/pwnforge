@@ -104,7 +104,7 @@ impl Modify for SecurityAddon {
         domain::dto::health::HealthResponse,
         domain::types::ContactCategory,
         domain::dto::team::TeamRole,
-        domain::dto::team::TeamColor,
+        domain::types::AccentColor,
         domain::dto::team::CreateTeamRequest,
         domain::dto::team::TeamPatch,
         domain::dto::team::TeamResponse,

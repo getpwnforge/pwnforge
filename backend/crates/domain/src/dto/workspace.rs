@@ -8,9 +8,10 @@ use utoipa::{PartialSchema, ToSchema};
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::dto::team::{TeamColor, TeamRole};
+use crate::dto::team::TeamRole;
 use crate::entities::workspaces;
 use crate::serde_helpers::deserialize_some;
+use crate::types::AccentColor;
 
 /// Access outcome for a user on a workspace: no access, explicitly excluded,
 /// sole ownership of a solo workspace, or an active role inherited/overridden
@@ -39,8 +40,8 @@ pub struct CreateWorkspaceInput {
     pub name: String,
     #[validate(length(max = 1000))]
     pub description: Option<String>,
-    /// Closed set enforced by serde, shared with teams: see `TeamColor`.
-    pub color: TeamColor,
+    /// Closed set enforced by serde, shared with teams: see `AccentColor`.
+    pub color: AccentColor,
     pub r#type: WorkspaceType,
     pub platform: Option<Platform>,
     pub mode: WorkspaceMode,
@@ -76,7 +77,7 @@ pub struct UpdateWorkspaceInput {
     #[schema(value_type = Option<String>)]
     #[validate(length(max = 1000))]
     pub description: Option<Option<String>>,
-    pub color: Option<TeamColor>,
+    pub color: Option<AccentColor>,
     pub lock_after_end: Option<bool>,
     pub default_writeup_visibility: Option<WriteupVisibility>,
 }
@@ -87,7 +88,7 @@ pub struct WorkspaceSummary {
     pub id: Uuid,
     pub slug: String,
     pub name: String,
-    pub color: TeamColor,
+    pub color: AccentColor,
     /// Same contract as `TeamResponse::avatar_version`, under
     /// `/api/v1/avatars/workspaces/{id}/{avatar_version}/256.webp`.
     pub avatar_version: Option<Uuid>,
@@ -108,7 +109,7 @@ pub struct WorkspaceResponse {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
-    pub color: TeamColor,
+    pub color: AccentColor,
     pub avatar_version: Option<Uuid>,
     pub r#type: WorkspaceType,
     pub platform: Option<Platform>,
