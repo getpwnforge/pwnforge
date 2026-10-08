@@ -39,7 +39,7 @@ sets the same variables itself and calls `cargo test --all-features
 
 ## Code style
 
-- Commits: [Conventional Commits](https://www.conventionalcommits.org/), format `type(scope): summary`. Scopes: `auth teams workspaces challenges writeups ws stats ui db docker ci`.
+- Commits: [Conventional Commits](https://www.conventionalcommits.org/), format `type(scope): summary`. Scopes: `auth teams workspaces challenges writeups ws stats api ui db docker ci repo`. `api` covers the backend's HTTP surface: routes, extractors, the mapping of errors to responses, and the OpenAPI spec. A feature scope wins when a change touches a single feature, its routes included, so `api` is kept for cross-cutting changes (shared extractors, error mapping, the OpenAPI spec as a whole, router configuration); `ws` covers everything WebSocket, the `ws-pubsub` crate included. `repo` covers repository metadata: root files such as AGENTS.md, CONTRIBUTING.md and README.md, and tooling configuration outside the CI workflows.
 - New primary keys: Postgres-native `uuidv7()`, not app-side UUID generation.
 - Case-insensitive text (email, handle, slug): `CITEXT`, not `TEXT`.
 - User-facing strings go through `t()` (i18next) even though only `en.json` exists today.
