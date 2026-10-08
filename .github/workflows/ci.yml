@@ -41,7 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Same image as the compose files: the migrations default keys to
+        # uuidv7(), which only exists from Postgres 18.
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: pwnforge
           # Ephemeral CI-only credential, never used outside this job. Still pulled from
