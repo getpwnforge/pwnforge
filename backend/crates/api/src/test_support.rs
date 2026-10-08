@@ -118,6 +118,14 @@ fn advisory_lock_statement(sql: &str) -> Statement {
 }
 
 pub(crate) async fn app(db: &sea_orm::DatabaseConnection) -> axum::Router {
+    app_with_config(db, config()).await
+}
+
+/// `app`, with a configuration of the test's own (Turnstile on, for one).
+pub(crate) async fn app_with_config(
+    db: &sea_orm::DatabaseConnection,
+    config: Config,
+) -> axum::Router {
     let db = db.clone();
 
     let redis_url = env_or("REDIS_URL", "redis://127.0.0.1:6379");
@@ -143,7 +151,6 @@ pub(crate) async fn app(db: &sea_orm::DatabaseConnection) -> axum::Router {
              (see .env.example)",
         );
 
-    let config = config();
     let storage = ObjectStore::S3(S3Store::new(&config.storage));
 
     crate::app::build_router(AppState {
