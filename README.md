@@ -29,6 +29,13 @@ Self-hostable, and built to scale from a solo player to a full team.
 git clone https://github.com/getpwnforge/pwnforge.git
 cd pwnforge
 cp .env.example .env
+
+# Prepare the host for the bundled object store (COMPOSE_PROFILES=garage, the
+# default): docker-compose.yml bind-mounts these two directories, and Garage
+# runs as uid 1001, so they must exist and belong to it before the first start.
+sudo mkdir -p /data/pwnforge/garage/meta /data/pwnforge/garage/data
+sudo chown 1001:1001 /data/pwnforge/garage/meta /data/pwnforge/garage/data
+
 docker compose up -d
 ```
 
