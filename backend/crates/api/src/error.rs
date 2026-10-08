@@ -372,7 +372,10 @@ fn setup_response(err: &SetupError) -> Response {
             (StatusCode::NOT_FOUND, "not_found")
         }
         SetupError::InvalidTimezone => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_timezone"),
-        SetupError::Email(_) => (StatusCode::BAD_GATEWAY, "email_send_failed"),
+        SetupError::Email(_) => {
+            tracing::error!(error = ?err, "setup email send failed");
+            (StatusCode::BAD_GATEWAY, "email_send_failed")
+        }
 
         // Only the register rules that can actually fire here. The rest of
         // AuthError has no meaning during setup.
@@ -438,17 +441,25 @@ fn legal_response(err: &LegalError) -> Response {
 
 fn contact_response(err: &ContactError) -> Response {
     match err {
-        ContactError::RateLimited { retry_after_secs } => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({ "error": "rate_limited", "retry_after_secs": retry_after_secs })),
-        )
-            .into_response(),
+        // Same body and same Retry-After header as every other rate limit.
+        ContactError::RateLimited { retry_after_secs } => rate_limited_response(*retry_after_secs),
         ContactError::Turnstile(_) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "turnstile_failed" })),
         )
             .into_response(),
-        ContactError::Email(_) | ContactError::Redis(_) => {
+        // The limiter is down. The route fails closed: nothing else bounds
+        // it, and it sends mail. 503 rather than 500, because the request
+        // was fine and retrying later is the right advice.
+        ContactError::Redis(_) => {
+            tracing::error!(error = ?err, "contact rate limiter unavailable, refusing");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "error": "service_unavailable" })),
+            )
+                .into_response()
+        }
+        ContactError::Email(_) => {
             tracing::error!(error = ?err, "contact notification failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -656,5 +667,66 @@ fn workspace_response(err: WorkspaceError) -> Response {
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn body_of(response: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body must be readable");
+        serde_json::from_slice(&bytes).expect("the body must be JSON")
+    }
+
+    /// The contact limiter being down is a refusal, not a crash: the route
+    /// fails closed with 503, which tells the client to retry later.
+    #[tokio::test]
+    async fn an_unreachable_contact_limiter_is_503_service_unavailable() {
+        let redis_down = redis::RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "redis is down",
+        ));
+
+        let response = AppError::Contact(ContactError::Redis(redis_down)).into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body_of(response).await["error"], "service_unavailable");
+    }
+
+    /// Control: a failed notification mail keeps its 500.
+    #[tokio::test]
+    async fn a_failed_contact_mail_stays_500_internal_error() {
+        let rejected = services::email_service::EmailError::Rejected("refused".to_owned());
+
+        let response = AppError::Contact(ContactError::Email(rejected)).into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body_of(response).await["error"], "internal_error");
+    }
+
+    /// The contact form's 429 carries the same Retry-After header as every
+    /// other rate limit, with the delay also in the body.
+    #[tokio::test]
+    async fn the_contact_rate_limit_carries_retry_after() {
+        let response = AppError::Contact(ContactError::RateLimited {
+            retry_after_secs: 42,
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .map(|value| value.to_str().unwrap()),
+            Some("42")
+        );
+
+        let body = body_of(response).await;
+        assert_eq!(body["error"], "rate_limited");
+        assert_eq!(body["retry_after_secs"], 42);
     }
 }
