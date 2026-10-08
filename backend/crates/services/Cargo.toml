@@ -2,6 +2,7 @@
 name = "services"
 edition.workspace = true
 version.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 domain.workspace = true

@@ -2,6 +2,7 @@
 name = "api"
 edition.workspace = true
 version.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 services = { path = "../services" }
