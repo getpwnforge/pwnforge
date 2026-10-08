@@ -135,6 +135,11 @@ pub struct Config {
     pub jwt_secret: String,
     #[allow(dead_code)] // consumed by flag encryption (Phase 4)
     pub encryption_key: String,
+    /// The two Turnstile keys go together: both set turns verification on,
+    /// both unset leaves it off, and `validate` refuses anything else. The
+    /// site key is public; the frontend reads it from the instance's public
+    /// configuration at startup.
+    pub turnstile_site_key: Option<String>,
     pub turnstile_secret_key: Option<String>,
 
     // --- Security ---
@@ -216,6 +221,7 @@ impl Config {
             // passes an empty value would otherwise enable verification with an
             // empty secret, and every route behind Turnstile would fail.
             turnstile_secret_key: non_empty("TURNSTILE_SECRET_KEY"),
+            turnstile_site_key: non_empty("TURNSTILE_SITE_KEY"),
             encryption_key: required("ENCRYPTION_KEY")?,
 
             // --- Security ---
@@ -301,6 +307,17 @@ impl Config {
         // malformed key fails on startup instead of on a user's first flag reveal.
         if self.encryption_key.len() < 32 {
             anyhow::bail!("ENCRYPTION_KEY must be at least 32 characters");
+        }
+
+        // One key without the other is a half-configured Turnstile. A secret
+        // alone verifies tokens no browser can obtain, which locks every user
+        // out of the protected forms; a site key alone shows a widget whose
+        // tokens nothing checks. Neither is a state to boot into.
+        if self.turnstile_site_key.is_some() != self.turnstile_secret_key.is_some() {
+            anyhow::bail!(
+                "TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must be set together, \
+                 or both left empty to disable Turnstile"
+            );
         }
 
         Ok(())

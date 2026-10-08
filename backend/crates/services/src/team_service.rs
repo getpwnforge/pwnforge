@@ -1097,6 +1097,7 @@ mod tests {
             redis_url: String::new(),
             jwt_secret: String::new(),
             encryption_key: String::new(),
+            turnstile_site_key: None,
             turnstile_secret_key: None,
             cookie_secure: false,
             trusted_proxy_count: 0,

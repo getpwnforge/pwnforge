@@ -300,6 +300,7 @@ fn setup_config() -> Config {
         redis_url: String::new(),
         jwt_secret: "x".repeat(32),
         encryption_key: "x".repeat(32),
+        turnstile_site_key: None,
         turnstile_secret_key: None,
         cookie_secure: false,
         trusted_proxy_count: 0,

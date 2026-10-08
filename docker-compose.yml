@@ -153,9 +153,10 @@ services:
       EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@localhost}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
-      # No value on purpose: passed through only when set. An empty string
-      # would reach the backend as a configured but blank secret, and every
-      # route behind Turnstile would then fail its verification.
+      # No value on purpose: each is passed through only when set. Turnstile
+      # is on when both are, off when neither is, and the backend refuses to
+      # start with only one.
+      TURNSTILE_SITE_KEY:
       TURNSTILE_SECRET_KEY:
       CHECK_PWNED_PASSWORDS: ${CHECK_PWNED_PASSWORDS:-true}
       # Scoped application credential, never the Garage admin token. Defaults
