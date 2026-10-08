@@ -38,25 +38,29 @@ Within **7 days** of acknowledgment, we share: the CVSS score and vector, confir
 
 We follow coordinated disclosure: the vulnerability stays private until a fix is released, or **90 days** from acknowledgment, whichever comes first, consistent with industry-standard disclosure windows (e.g. Google Project Zero). If a fix genuinely can't land in 90 days, we'll discuss an extension with you directly rather than let the deadline lapse silently.
 
-We publish through **GitHub Security Advisories** (GHSA) rather than a changelog line or a blog post, for reasons that matter specifically because PwnForge is self-hostable:
+We publish through **GitHub Security Advisories** (GHSA) rather than a changelog line or a blog post:
 
-- GHSA entries mirror into [OSV.dev](https://osv.dev), so container-scanning tools (Trivy, Grype) flag outdated self-hosted images automatically. Air-Gapped operators who never see our website or mailing list still get a signal at their next scan
 - Each advisory carries the CVSS score and vector, the affected version range, and the patched version in a structured, machine-readable format, not just prose
-- It's what feeds GitHub's own security tab and Dependabot alerts for anyone who forked or vendored the code
+- A CVE is requested from the advisory draft when the issue qualifies, GitHub being a CVE Numbering Authority, so it is assigned from the first publication
+- The fix is developed in a temporary private fork attached to the advisory, so nothing is public until the release
 
-Publication is **timed separately from the fix**, not simultaneous with it: publishing full exploit details the same day a patch lands gives Standard and Air-Gapped self-hosted operators (who patch on their own schedule, not automatically) a window where the advisory itself becomes the attacker's roadmap:
+Container scanners (Trivy, Grype) will not flag an outdated PwnForge image on their own: they match advisories against packages from registries such as crates.io or npm, and PwnForge ships as container images, not as a package in one of them. The dependable signal is the release itself: every security fix ships in a release whose notes carry a **Security** section linking the advisory.
 
-| Severity        | Advisory published            |
+Publication happens in two stages, through the same advisory:
+
+1. **At fix release**, the advisory is published with what a defender needs to act and nothing an attacker needs to build an exploit: the affected and patched versions, the CVSS score and vector, and the upgrade instruction. The release notes link it under a **Security** section.
+2. **After a delay**, the advisory is updated with the technical details: root cause, attack path, and any proof of concept.
+
+| Severity        | Technical details added       |
 | --------------- | ----------------------------- |
 | Critical / High | 30 days after the fix release |
 | Medium / Low    | 7 days after the fix release  |
 
-The fix itself ships as soon as it's ready regardless of this table. Only the public advisory (and CVE details) waits. If the vulnerability is already public or being actively exploited, we publish immediately instead of waiting out the delay.
+Withholding the whole advisory would not buy that window. The fix is a public commit in this repository, so anyone able to read the diff learns the vulnerability the day it ships. What a delay can still withhold is a ready-made write-up; what it must not withhold is the notice that tells operators to upgrade.
 
-Once published:
+The fix itself ships as soon as it's ready. If the vulnerability is already public or being actively exploited, the full advisory is published immediately.
 
-- A CVE is requested through GitHub's advisory workflow when the issue qualifies
-- Reporters are credited in the advisory, unless you'd prefer to stay anonymous (tell us your preference when you report)
+Reporters are credited in the advisory, unless they'd prefer to stay anonymous (tell us your preference when you report).
 
 ### 5. Safe harbor
 
@@ -95,6 +99,6 @@ Out of scope:
 
 ## Our security practices
 
-PwnForge follows secure-by-default principles: strict container hardening (non-root, read-only filesystems, dropped capabilities), no server-side file preview, encrypted secrets at rest, and automated dependency auditing (`cargo audit`, `pnpm audit`, Dependabot).
+PwnForge follows secure-by-default principles: container hardening in the production Compose file (every service drops all capabilities, adds back only the few it needs, and runs with `no-new-privileges`; the backend and frontend containers run as a non-root user on a read-only filesystem), no server-side file preview, and automated auditing (`cargo audit`, `pnpm audit`, CodeQL, Dependabot).
 
 Thank you for helping keep PwnForge and its community safe.
