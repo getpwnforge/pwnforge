@@ -12,7 +12,7 @@ use domain::dto::auth::{
 };
 use domain::dto::error_responses::{
     EmailNotVerifiedErrorResponse, RateLimitedErrorResponse, SimpleErrorResponse,
-    ValidationErrorResponse,
+    UnprocessableErrorResponse,
 };
 use services::{
     auth_service, jwt_service,
@@ -49,9 +49,11 @@ pub fn router() -> Router<AppState> {
     request_body = RegisterRequest,
     responses(
         (status = 201, description = "Account created", body = UserResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
         (status = 403, description = "Public signup is disabled", body = SimpleErrorResponse),
         (status = 409, description = "Username or email already taken, or username reserved", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )
@@ -102,8 +104,11 @@ async fn register(
     request_body = LoginRequest,
     responses(
         (status = 200, description = "Signed in", body = UserResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
         (status = 401, description = "Invalid credentials", body = SimpleErrorResponse),
         (status = 403, description = "Email not verified", body = EmailNotVerifiedErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "invalid_body: the body is JSON of the wrong shape", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
     )
 )]
@@ -252,7 +257,9 @@ async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserRe
     request_body = PasswordForgotRequest,
     responses(
         (status = 202, description = "Password reset email sent"),
-        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
     )
 )]
@@ -305,7 +312,9 @@ async fn password_forgot(
     request_body = PasswordResetRequest,
     responses(
         (status = 204, description = "Password reset"),
-        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, password_compromised, token_invalid, token_expired or token_consumed", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
     )
 )]
@@ -352,8 +361,10 @@ async fn password_reset(
     security(("access_token" = [])),
     responses(
         (status = 204, description = "Password changed"),
-        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, password_compromised or password_unchanged", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
     )
 )]
@@ -398,7 +409,9 @@ async fn password_change(
     request_body = EmailVerifyRequest,
     responses(
         (status = 204, description = "Email verified"),
-        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, token_invalid, token_expired or token_consumed", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
     )
 )]
@@ -425,7 +438,9 @@ async fn email_verify(
     request_body = EmailResendRequest,
     responses(
         (status = 202, description = "Verification email resent"),
-        (status = 422, description = "Validation failed", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body or token_invalid", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
     )
 )]

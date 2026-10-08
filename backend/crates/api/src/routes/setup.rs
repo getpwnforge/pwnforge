@@ -13,7 +13,7 @@ use axum::{
 };
 use domain::dto::{
     auth::UserResponse,
-    error_responses::{RateLimitedErrorResponse, SimpleErrorResponse},
+    error_responses::{RateLimitedErrorResponse, SimpleErrorResponse, UnprocessableErrorResponse},
     setup::{
         EmailConfigResponse, SetupRequest, SetupStatusResponse, TestEmailRequest,
         ValidateAdminRequest,
@@ -90,9 +90,11 @@ async fn email_config(
     request_body = TestEmailRequest,
     responses(
         (status = 204, description = "Test email sent"),
-        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 502, description = "Email send failed", body = SimpleErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
@@ -149,9 +151,11 @@ async fn test_email(
     request_body = ValidateAdminRequest,
     responses(
         (status = 204, description = "Admin credentials valid"),
-        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )
@@ -198,9 +202,11 @@ async fn validate_admin(
     request_body = SetupRequest,
     responses(
         (status = 201, description = "Setup completed", body = UserResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
-        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_timezone, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )

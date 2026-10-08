@@ -11,7 +11,7 @@ use validator::Validate;
 
 use crate::middleware::{auth::AuthUser, json::JsonBody};
 use crate::{error::AppError, state::AppState};
-use domain::dto::error_responses::{SimpleErrorResponse, ValidationErrorResponse};
+use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorResponse};
 use domain::dto::team::{
     ChangeMemberRoleRequest, CreateInvitationRequest, CreateTeamRequest, JoinTeamRequest,
     TeamInvitationResponse, TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
@@ -73,8 +73,10 @@ async fn list_teams(
     security(("access_token" = [])),
     responses(
         (status = 201, description = "Team created", body = TeamResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, team_name_not_sluggable, team_name_reserved or team_quota_reached", body = UnprocessableErrorResponse),
     )
 )]
 async fn create_team(
@@ -115,9 +117,11 @@ async fn get_team(
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Team updated", body = TeamResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 403, description = "Insufficient role", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
     )
 )]
 async fn update_team(
@@ -188,9 +192,11 @@ async fn list_members(
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Member role updated", body = TeamMemberResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 403, description = "Insufficient role, or attempts to grant/revoke Captain without being one", body = SimpleErrorResponse),
         (status = 404, description = "Team, target member not found, or caller not a member", body = SimpleErrorResponse),
-        (status = 422, description = "Would leave the team without a Captain", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "last_captain (would leave the team without a Captain) or invalid_body", body = UnprocessableErrorResponse),
     )
 )]
 async fn change_member_role(
@@ -225,7 +231,7 @@ async fn change_member_role(
         (status = 204, description = "Member removed"),
         (status = 403, description = "Insufficient role", body = SimpleErrorResponse),
         (status = 404, description = "Team, target member not found, or caller not a member", body = SimpleErrorResponse),
-        (status = 422, description = "Would leave the team without a Captain", body = SimpleErrorResponse),
+        (status = 422, description = "last_captain: would leave the team without a Captain", body = UnprocessableErrorResponse),
     )
 )]
 async fn remove_member(
@@ -279,10 +285,12 @@ async fn list_invitations(
     security(("access_token" = [])),
     responses(
         (status = 201, description = "Invitation created", body = TeamInvitationResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 403, description = "Insufficient role, or a non-Captain tried to invite as Captain", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
         (status = 409, description = "User is already invited or already a member", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
     )
 )]
 async fn create_invitation(
@@ -340,11 +348,13 @@ async fn revoke_invitation(
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Joined the team", body = TeamResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 403, description = "Invitation is addressed to a different email than the caller's verified one", body = SimpleErrorResponse),
         (status = 404, description = "Invitation not found", body = SimpleErrorResponse),
         (status = 409, description = "Already a member", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed, or invitation expired or exhausted", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invitation_expired or invitation_max_uses_reached", body = UnprocessableErrorResponse),
     )
 )]
 async fn accept_invitation_by_token(
@@ -386,7 +396,7 @@ async fn list_pending_invitations(
         (status = 403, description = "Invitation is not addressed to the current user", body = SimpleErrorResponse),
         (status = 404, description = "Invitation not found", body = SimpleErrorResponse),
         (status = 409, description = "Already a member", body = SimpleErrorResponse),
-        (status = 422, description = "Invitation expired", body = SimpleErrorResponse),
+        (status = 422, description = "invitation_expired", body = UnprocessableErrorResponse),
     )
 )]
 async fn accept_invitation_by_id(

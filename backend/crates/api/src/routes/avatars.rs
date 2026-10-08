@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::middleware::auth::AuthUser;
 use crate::{error::AppError, state::AppState};
-use domain::dto::error_responses::SimpleErrorResponse;
+use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorResponse};
 use domain::dto::team::TeamRole;
 use services::avatar_service::{self, AvatarError, MAX_UPLOAD_BYTES, OUTPUT_CONTENT_TYPE};
 use services::rate_limit_service::{self, RateLimitDecision};
@@ -118,7 +118,7 @@ async fn read_avatar(
         (status = 404, description = "The caller may not know this entity exists", body = SimpleErrorResponse),
         (status = 413, description = "Past the 5 MB upload limit", body = SimpleErrorResponse),
         (status = 415, description = "Not PNG, JPEG or WebP (SVG has its own code)", body = SimpleErrorResponse),
-        (status = 422, description = "Magic bytes matched but the image would not decode", body = SimpleErrorResponse),
+        (status = 422, description = "avatar_undecodable: the magic bytes matched but the image would not decode", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = SimpleErrorResponse),
         (status = 503, description = "Rate limiter or object store unavailable", body = SimpleErrorResponse),
     )

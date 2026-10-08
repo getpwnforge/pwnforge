@@ -16,13 +16,18 @@ pub struct SimpleErrorResponse {
     pub error: String,
 }
 
-/// `validation_failed`, with the offending fields mapped to validator codes.
+/// The envelope of every 422. `fields` is present only when `error` is
+/// `validation_failed`, mapping each offending field to the validator codes
+/// it failed; every other 422 code (`invalid_body`, `last_captain`, ...) is a
+/// bare `{ "error": ... }`.
 #[derive(serde::Serialize, utoipa::ToSchema)]
-pub struct ValidationErrorResponse {
+pub struct UnprocessableErrorResponse {
+    /// Stable machine-readable code, never a human sentence.
     pub error: String,
-    /// Field name to the list of validator codes it failed.
-    #[schema(value_type = Object)]
-    pub fields: std::collections::HashMap<String, Vec<String>>,
+    /// Field name to the list of validator codes it failed. Only with
+    /// `validation_failed`.
+    #[schema(value_type = Option<Object>)]
+    pub fields: Option<std::collections::HashMap<String, Vec<String>>>,
 }
 
 /// `rate_limited`, mirrored by the Retry-After header.

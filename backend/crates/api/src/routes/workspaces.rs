@@ -11,7 +11,7 @@ use validator::Validate;
 use crate::middleware::workspace::{WorkspaceMember, role};
 use crate::middleware::{auth::AuthUser, json::JsonBody};
 use crate::{error::AppError, state::AppState};
-use domain::dto::error_responses::{SimpleErrorResponse, ValidationErrorResponse};
+use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorResponse};
 use domain::dto::workspace::{
     CreateWorkspaceInput, EffectiveMember, Membership, UpdateWorkspaceInput, WorkspaceResponse,
     WorkspaceSummary,
@@ -80,10 +80,12 @@ async fn list_workspaces(
     security(("access_token" = [])),
     responses(
         (status = 201, description = "Workspace created", body = WorkspaceResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 403, description = "Team member below Admin", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed, invalid ownership, platform required, or ends before start", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_ownership, platform_required, ends_before_start, workspace_name_not_sluggable or workspace_name_reserved", body = UnprocessableErrorResponse),
     )
 )]
 async fn create_workspace(
@@ -127,11 +129,13 @@ async fn get_workspace(
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Workspace updated", body = WorkspaceResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 403, description = "Below Admin", body = SimpleErrorResponse),
         (status = 404, description = "Workspace not found, or no access to it", body = SimpleErrorResponse),
         (status = 409, description = "The workspace is archived", body = SimpleErrorResponse),
-        (status = 422, description = "Validation failed, or ends before start", body = ValidationErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body or ends_before_start", body = UnprocessableErrorResponse),
     )
 )]
 async fn update_workspace(

@@ -134,7 +134,7 @@ impl Modify for SecurityAddon {
         domain::dto::workspace::WorkspaceResponse,
         domain::dto::workspace::EffectiveMember,
         domain::dto::error_responses::SimpleErrorResponse,
-        domain::dto::error_responses::ValidationErrorResponse,
+        domain::dto::error_responses::UnprocessableErrorResponse,
         domain::dto::error_responses::RateLimitedErrorResponse,
         domain::dto::error_responses::EmailNotVerifiedErrorResponse,
         domain::dto::error_responses::LegalVersionStaleErrorResponse,

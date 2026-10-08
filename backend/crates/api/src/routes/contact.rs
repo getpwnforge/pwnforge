@@ -6,7 +6,7 @@ use axum::{
 };
 use domain::dto::{
     contact::ContactRequest,
-    error_responses::{RateLimitedErrorResponse, SimpleErrorResponse},
+    error_responses::{RateLimitedErrorResponse, SimpleErrorResponse, UnprocessableErrorResponse},
 };
 use services::contact_service;
 use std::net::SocketAddr;
@@ -33,9 +33,11 @@ pub fn router() -> Router<AppState> {
     request_body = ContactRequest,
     responses(
         (status = 204, description = "Contact request submitted"),
-        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limit exceeded", body = RateLimitedErrorResponse),
-        (status = 503, description = "Database unavailable", body = SimpleErrorResponse),
+        (status = 503, description = "service_unavailable: the rate limiter is unreachable, and the route fails closed", body = SimpleErrorResponse),
     )
 )]
 async fn submit(

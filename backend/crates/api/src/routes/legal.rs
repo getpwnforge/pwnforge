@@ -17,7 +17,9 @@ use axum::{
 use chrono::Utc;
 use domain::{
     dto::{
-        error_responses::{LegalVersionStaleErrorResponse, SimpleErrorResponse},
+        error_responses::{
+            LegalVersionStaleErrorResponse, SimpleErrorResponse, UnprocessableErrorResponse,
+        },
         legal::{LegalAcceptanceInput, LegalStatusDto, LegalVersionsDto},
     },
     legal::{CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION},
@@ -75,9 +77,11 @@ async fn status(
     request_body = LegalAcceptanceInput,
     responses(
         (status = 204, description = "Legal documents accepted"),
-        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 409, description = "Legal version stale", body = LegalVersionStaleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "invalid_body: the body is JSON of the wrong shape", body = UnprocessableErrorResponse),
     )
 )]
 async fn accept(
