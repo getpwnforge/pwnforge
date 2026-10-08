@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use super::{blocked_email_service, email_service, jwt_service, password_service, session_service};
 use crate::blocked_email_service::BlockedEmailError;
 use crate::config::Config;
+use crate::turnstile_service::TurnstileAction;
 use crate::{
     audit_service, auth_token_service, instance_service, legal_service, team_service,
     token_service, turnstile_service,
@@ -128,7 +129,13 @@ pub async fn register(
     // Check if public signup is allowed.
     let settings = instance_service::settings(db).await?;
 
-    turnstile_service::verify(config, &payload.turnstile_token, client_ip).await?;
+    turnstile_service::verify(
+        config,
+        &payload.turnstile_token,
+        TurnstileAction::Register,
+        client_ip,
+    )
+    .await?;
 
     if !settings.allow_public_signup {
         return Err(AuthError::PublicSignupDisabled);
@@ -211,7 +218,13 @@ pub async fn login(
     ctx: SessionContext,
     client_ip: IpAddr,
 ) -> Result<LoggedInUser, AuthError> {
-    turnstile_service::verify(config, &payload.turnstile_token, client_ip).await?;
+    turnstile_service::verify(
+        config,
+        &payload.turnstile_token,
+        TurnstileAction::Login,
+        client_ip,
+    )
+    .await?;
 
     let identifier = payload.username_or_email.trim();
 
@@ -384,7 +397,13 @@ pub async fn password_forgot(
     turnstile_token: &str,
     client_ip: IpAddr,
 ) -> Result<(), AuthError> {
-    turnstile_service::verify(config, turnstile_token, client_ip).await?;
+    turnstile_service::verify(
+        config,
+        turnstile_token,
+        TurnstileAction::ForgotPassword,
+        client_ip,
+    )
+    .await?;
 
     let email = normalize_email(email);
 

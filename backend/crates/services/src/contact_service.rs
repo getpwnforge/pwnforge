@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::config::Config;
 use crate::email_service::{self, EmailError};
 use crate::rate_limit_service::{self, RateLimitDecision};
-use crate::turnstile_service::{self, TurnstileError};
+use crate::turnstile_service::{self, TurnstileAction, TurnstileError};
 
 #[derive(Debug, Error)]
 pub enum ContactError {
@@ -51,7 +51,13 @@ pub async fn submit_contact(
         return Err(ContactError::RateLimited { retry_after_secs });
     }
 
-    turnstile_service::verify(config, &request.turnstile_token, client_ip).await?;
+    turnstile_service::verify(
+        config,
+        &request.turnstile_token,
+        TurnstileAction::Contact,
+        client_ip,
+    )
+    .await?;
 
     let reference = generate_ticket_reference();
 

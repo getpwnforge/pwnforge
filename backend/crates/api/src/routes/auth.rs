@@ -505,3 +505,54 @@ fn clear_auth_cookies(jar: CookieJar, config: &Config) -> CookieJar {
 
     jar.remove(access).remove(refresh)
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::{Request, StatusCode};
+    use std::net::SocketAddr;
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use crate::test_support::{app_with_config, config, db};
+
+    /// With Turnstile on, a sign-in that carries no token is refused with
+    /// 400 turnstile_failed. The refusal is local: the secret below is not a
+    /// real key, and no call to Cloudflare is needed to reach the answer.
+    #[tokio::test]
+    async fn an_empty_turnstile_token_is_refused_when_turnstile_is_on() {
+        let db = db().await;
+        let mut config = config();
+        config.turnstile_site_key = Some("test-site-key".to_owned());
+        config.turnstile_secret_key = Some("test-secret-key-never-sent".to_owned());
+        let app = app_with_config(&db, config).await;
+
+        let body = serde_json::json!({
+            "username_or_email": format!("nobody-{}", Uuid::now_v7().simple()),
+            "password": "long-enough-password",
+            "turnstile_token": "",
+        });
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request must build");
+        // The rate limiter reads the peer address; the router normally gets it
+        // from the listener.
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+
+        let response = app.oneshot(request).await.expect("router must answer");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body must be readable");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("the body must be JSON");
+        assert_eq!(value["error"], "turnstile_failed");
+    }
+}
