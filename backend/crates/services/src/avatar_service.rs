@@ -3,6 +3,7 @@ use crate::storage_service::{
     AvatarKind, AvatarSize, Bucket, ObjectStore, StorageError, avatar_key, avatar_prefix,
     avatar_version_prefix,
 };
+use chrono::Utc;
 use domain::entities::{teams, users, workspaces};
 use image::{ExtendedColorType, ImageEncoder, ImageReader, codecs::webp::WebPEncoder};
 use sea_orm::{ActiveValue::Set, DatabaseConnection, EntityTrait};
@@ -326,10 +327,12 @@ async fn set_version(
             let model = users::ActiveModel {
                 id: Set(id),
                 avatar_version: Set(version),
+                updated_at: Set(Utc::now().into()),
                 ..Default::default()
             };
             users::Entity::update(model).exec(db).await?;
         }
+        // `teams` has no `updated_at` column, so there is nothing to stamp.
         AvatarKind::Team => {
             let model = teams::ActiveModel {
                 id: Set(id),
@@ -342,6 +345,7 @@ async fn set_version(
             let model = workspaces::ActiveModel {
                 id: Set(id),
                 avatar_version: Set(version),
+                updated_at: Set(Utc::now().into()),
                 ..Default::default()
             };
             workspaces::Entity::update(model).exec(db).await?;

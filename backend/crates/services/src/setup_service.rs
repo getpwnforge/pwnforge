@@ -245,7 +245,7 @@ pub async fn complete(
         allow_public_signup: Set(payload.allow_public_signup),
         setup_completed_at: Set(Some(Utc::now().into())),
         hide_landing_page: Set(payload.hide_landing_page),
-        ..Default::default()
+        updated_at: Set(Utc::now().into()),
     }
     .update(&txn)
     .await?;

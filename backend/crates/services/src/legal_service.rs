@@ -152,6 +152,7 @@ pub async fn record<C: ConnectionTrait>(
     .await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(
             match document {
                 LegalDocument::Terms => users::Column::LegalTermsVersion,

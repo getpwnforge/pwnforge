@@ -487,6 +487,7 @@ pub async fn password_reset(
 
     let txn = db.begin().await?;
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::PasswordHash, Expr::value(hashed_password))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
@@ -563,6 +564,7 @@ pub async fn password_change(
     };
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::PasswordHash, Expr::value(hashed_password))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
@@ -634,6 +636,7 @@ pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), A
     // Idempotent by filtering on NULL: clicking the link twice is not an
     // error, and the second click must not overwrite the original timestamp.
     user_emails::Entity::update_many()
+        .col_expr(user_emails::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(user_emails::Column::VerifiedAt, Expr::current_timestamp())
         .filter(user_emails::Column::Id.eq(email_id))
         .filter(user_emails::Column::VerifiedAt.is_null())

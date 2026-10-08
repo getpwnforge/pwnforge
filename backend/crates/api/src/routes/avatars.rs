@@ -744,4 +744,64 @@ mod tests {
             "the refused writes must not have touched the stored version"
         );
     }
+
+    /// Setting an avatar is an update of the entity's row, so it stamps
+    /// `updated_at`: the version is written through a partial ActiveModel,
+    /// which only carries the columns it names. Both kinds that have the
+    /// column are checked; `teams` has none.
+    #[tokio::test]
+    async fn setting_an_avatar_moves_updated_at() {
+        use domain::entities::{users, workspaces};
+        use sea_orm::EntityTrait;
+
+        let db = db().await;
+        let app = app(&db).await;
+
+        let captain = create_user(&db).await;
+        let (workspace_id, _team_id) = create_workspace(&db, captain).await;
+
+        let user_before = users::Entity::find_by_id(captain)
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the user must exist")
+            .updated_at;
+        let workspace_before = workspaces::Entity::find_by_id(workspace_id)
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the workspace must exist")
+            .updated_at;
+
+        assert_eq!(
+            upload_avatar_as(&app, captain, "users", captain).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            upload_avatar_as(&app, captain, "workspaces", workspace_id).await,
+            StatusCode::OK
+        );
+
+        let user_after = users::Entity::find_by_id(captain)
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the user must exist")
+            .updated_at;
+        let workspace_after = workspaces::Entity::find_by_id(workspace_id)
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the workspace must exist")
+            .updated_at;
+
+        assert!(
+            user_after > user_before,
+            "the user's updated_at must move: {user_before} then {user_after}"
+        );
+        assert!(
+            workspace_after > workspace_before,
+            "the workspace's updated_at must move: {workspace_before} then {workspace_after}"
+        );
+    }
 }

@@ -78,6 +78,7 @@ pub async fn suspend_user(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::SuspendedAt, Expr::current_timestamp())
         .col_expr(users::Column::SuspendedUntil, Expr::value(until))
         .col_expr(
@@ -179,6 +180,7 @@ pub async fn unsuspend_user(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(
             users::Column::SuspendedAt,
             Expr::value(None::<DateTimeWithTimeZone>),
@@ -292,6 +294,7 @@ pub async fn delete_user(
             let purge_scheduled_at = (Utc::now() + Duration::days(30)).fixed_offset();
 
             users::Entity::update_many()
+                .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
                 .col_expr(
                     users::Column::PurgeScheduledAt,
                     Expr::value(purge_scheduled_at),
@@ -402,6 +405,7 @@ pub async fn cancel_deletion(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(
             users::Column::PurgeScheduledAt,
             Expr::value(None::<DateTimeWithTimeZone>),
@@ -474,6 +478,7 @@ pub async fn promote_admin(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::IsInstanceAdmin, Expr::value(true))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
@@ -551,6 +556,7 @@ pub async fn demote_admin(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::IsInstanceAdmin, Expr::value(false))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
@@ -617,6 +623,7 @@ pub async fn force_password_reset(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::PasswordHash, Expr::value(locked_hash))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
