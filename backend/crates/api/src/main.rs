@@ -1,6 +1,7 @@
 // crates/api/src/main.rs
 mod app;
 mod error;
+mod healthcheck;
 mod middleware;
 mod openapi;
 mod routes;
@@ -20,6 +21,12 @@ use services::storage_service::{ObjectStore, S3Store};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // The container healthcheck: probes the running server, before anything
+    // below loads configuration or opens a connection.
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        std::process::exit(healthcheck::run().await);
+    }
+
     dotenvy::dotenv().ok();
 
     // Initialize logging
