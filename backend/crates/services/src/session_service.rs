@@ -6,7 +6,7 @@ use crate::{
 use chrono::Utc;
 use domain::{
     dto::auth::{IssuedSession, RotatedSession, SessionContext},
-    entities::refresh_tokens,
+    entities::{refresh_tokens, users},
     types::RevokedReason,
 };
 use sea_orm::{
@@ -42,6 +42,10 @@ pub async fn issue(
 ) -> Result<IssuedSession, SessionError> {
     let refresh_token = token_service::generate_opaque_token();
 
+    // One transaction for the session and the activity stamp, so a sign-in
+    // never records activity for a session that does not exist.
+    let txn = db.begin().await?;
+
     // Store the refresh token in the database, associated with the user.
     let issued_session = refresh_tokens::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -55,8 +59,12 @@ pub async fn issue(
         last_used_at: Set(Some(Utc::now().into())),
         ..Default::default()
     }
-    .insert(db)
+    .insert(&txn)
     .await?;
+
+    touch_last_activity(&txn, user_id).await?;
+
+    txn.commit().await?;
 
     Ok(IssuedSession {
         secret: refresh_token.secret,
@@ -143,6 +151,10 @@ pub async fn rotate(
     .insert(&txn)
     .await?;
 
+    // Only a rotation that won the claim gets here: an unknown, expired or
+    // replayed token has returned above without touching the account.
+    touch_last_activity(&txn, token.user_id).await?;
+
     txn.commit().await?;
 
     Ok(RotatedSession {
@@ -150,6 +162,26 @@ pub async fn rotate(
         secret: new_refresh_token.secret,
         session_id: new_row.id,
     })
+}
+
+/// Stamps the account's last activity, with the database clock.
+///
+/// Last activity is measured on tokens: a sign-in issues the first one and
+/// every successful refresh the next, so this runs at exactly those two
+/// points, inside their transactions.
+///
+/// It is the one write on `users` that leaves `updated_at` alone, on purpose.
+/// `updated_at` says the account was changed. An active user refreshes their
+/// access token every 15 minutes; stamping `updated_at` here would rewrite it
+/// all day for everyone signed in and leave it meaning nothing.
+async fn touch_last_activity<C: ConnectionTrait>(conn: &C, user_id: Uuid) -> Result<(), DbErr> {
+    users::Entity::update_many()
+        .col_expr(users::Column::LastActivityAt, Expr::current_timestamp())
+        .filter(users::Column::Id.eq(user_id))
+        .exec(conn)
+        .await?;
+
+    Ok(())
 }
 
 /// Kills every live session of the token's owner and records why.

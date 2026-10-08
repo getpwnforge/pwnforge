@@ -16,6 +16,7 @@ use domain::entities::refresh_tokens;
 use migration::MigratorTrait;
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
 use services::session_service::{self, SessionError};
+use services::token_service;
 use uuid::Uuid;
 
 async fn connect() -> DatabaseConnection {
@@ -223,4 +224,110 @@ async fn uncontended_rotation_replaces_the_session() {
     );
     assert_eq!(rotated.user_id, user_id);
     assert_eq!(live_session_count(&db, user_id).await, 1);
+}
+
+// ---- users.last_activity_at ---------------------------------------------
+
+/// The two timestamps the activity stamp is about: the one it writes, and the
+/// one it must leave alone.
+async fn activity_and_updated_at(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> (
+    Option<sea_orm::prelude::DateTimeWithTimeZone>,
+    sea_orm::prelude::DateTimeWithTimeZone,
+) {
+    let user = domain::entities::users::Entity::find_by_id(user_id)
+        .one(db)
+        .await
+        .expect("the lookup must succeed")
+        .expect("the user must exist");
+
+    (user.last_activity_at, user.updated_at)
+}
+
+/// A sign-in issues the first token, and that is the first activity.
+#[tokio::test]
+async fn issuing_a_session_records_last_activity() {
+    let db = connect().await;
+    let user_id = create_user(&db).await;
+    let (never, created) = activity_and_updated_at(&db, user_id).await;
+    assert_eq!(never, None, "a fresh account has no activity yet");
+
+    session_service::issue(&db, user_id, &ctx())
+        .await
+        .expect("issuing must succeed");
+
+    let (activity, updated_at) = activity_and_updated_at(&db, user_id).await;
+    assert!(activity.is_some(), "the sign-in must record activity");
+    assert_eq!(updated_at, created, "updated_at must not move");
+}
+
+/// Each successful refresh moves the activity forward, and still leaves
+/// updated_at where it was.
+#[tokio::test]
+async fn a_successful_refresh_moves_last_activity_forward() {
+    let db = connect().await;
+    let user_id = create_user(&db).await;
+    let issued = session_service::issue(&db, user_id, &ctx())
+        .await
+        .expect("issuing must succeed");
+    let (signed_in, updated_before) = activity_and_updated_at(&db, user_id).await;
+
+    session_service::rotate(&db, &issued.secret, &ctx())
+        .await
+        .expect("the rotation must succeed");
+
+    let (refreshed, updated_after) = activity_and_updated_at(&db, user_id).await;
+    assert!(
+        refreshed > signed_in,
+        "the refresh must move last_activity_at: {signed_in:?} then {refreshed:?}"
+    );
+    assert_eq!(updated_after, updated_before, "updated_at must not move");
+}
+
+/// A refused refresh is not activity: an unknown, an expired and a replayed
+/// token all leave the stamp where the last success put it.
+#[tokio::test]
+async fn a_refused_refresh_leaves_last_activity_alone() {
+    let db = connect().await;
+    let user_id = create_user(&db).await;
+    let issued = session_service::issue(&db, user_id, &ctx())
+        .await
+        .expect("issuing must succeed");
+    session_service::rotate(&db, &issued.secret, &ctx())
+        .await
+        .expect("the first rotation must succeed");
+    let before = activity_and_updated_at(&db, user_id).await;
+
+    // Expired: a live row whose expiry has passed.
+    let expired = token_service::generate_opaque_token();
+    refresh_tokens::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        user_id: Set(user_id),
+        token_hash: Set(expired.hash),
+        expires_at: Set((chrono::Utc::now() - chrono::Duration::minutes(1)).into()),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .expect("the expired fixture must insert");
+
+    let refusals = [
+        ("unknown", "not-a-token-anyone-was-given".to_owned()),
+        ("expired", expired.secret),
+        // Replayed last: it revokes the whole chain.
+        ("replayed", issued.secret),
+    ];
+    for (kind, secret) in refusals {
+        assert!(
+            session_service::rotate(&db, &secret, &ctx()).await.is_err(),
+            "an {kind} token must be refused"
+        );
+        assert_eq!(
+            activity_and_updated_at(&db, user_id).await,
+            before,
+            "an {kind} token must not touch last_activity_at or updated_at"
+        );
+    }
 }

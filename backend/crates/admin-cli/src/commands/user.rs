@@ -34,6 +34,10 @@ struct UserRow {
     #[tabled(rename = "admin")]
     is_instance_admin: bool,
     status: String,
+    /// The last sign-in or token refresh, or `never`: an empty cell would read
+    /// like a missing value rather than an account nobody has used.
+    #[tabled(rename = "last activity")]
+    last_activity: String,
 }
 
 #[derive(Tabled)]
@@ -257,6 +261,10 @@ async fn list(ctx: &CliContext, suspended_only: bool) -> anyhow::Result<()> {
             } else {
                 "active".into()
             },
+            last_activity: user
+                .last_activity_at
+                .map(|at| at.to_rfc3339())
+                .unwrap_or_else(|| "never".into()),
         })
         .collect();
 
