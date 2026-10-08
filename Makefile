@@ -16,11 +16,11 @@ down:
 
 ## migrate: Apply pending migrations to the database
 migrate:
-	cargo run --bin migration --manifest-path backend/Cargo.toml
+	cd backend && cargo run --bin migration
 
 ## seed: Populate the database with test data
 seed:
-	cargo run --bin seed --manifest-path backend/Cargo.toml
+	cd backend && cargo run --bin seed
 
 ## reset-db: Destroy and recreate the development database (DESTRUCTIVE)
 #
@@ -53,7 +53,7 @@ reset-storage:
 
 ## test-backend: Run the backend suite against the dev stack
 #
-# Three things have to be true before `cargo test` passes from a clone, and
+# Four things have to be true before `cargo test` passes from a clone, and
 # none of them is legible from the failure you get when they are not:
 #
 #   1. The root `.env` has to be loaded. cargo does not read it and the test
@@ -67,6 +67,12 @@ reset-storage:
 #   3. `garage-init` is a one-shot behind the `garage` profile that provisions
 #      the buckets and the access key. A plain `up -d` skips it and leaves a
 #      Garage node with neither.
+#   4. cargo has to run from `backend/`. rustup picks the toolchain from the
+#      current directory, not from `--manifest-path`, so a run from the root
+#      ignores backend/rust-toolchain.toml and uses the default toolchain,
+#      which then trips over `rust-version` or, worse, quietly tests with a
+#      different compiler than CI and the image. Every cargo call in this file
+#      changes directory for that reason.
 #
 # Only the endpoints are rewritten here; passwords, buckets and the region all
 # come from `.env`, so changing one needs no edit in this file.
@@ -80,7 +86,7 @@ test-backend:
 	 REDIS_URL=$$(printf '%s' "$$REDIS_URL" | sed 's|@redis:|@127.0.0.1:|'); \
 	 PWNFORGE_S3_ENDPOINT=http://127.0.0.1:3900; \
 	 export DATABASE_URL REDIS_URL PWNFORGE_S3_ENDPOINT; \
-	 cargo test --all-features --no-fail-fast --manifest-path backend/Cargo.toml
+	 cd backend && cargo test --all-features --no-fail-fast
 
 ## test: Launch the test suite for backend and frontend
 #
@@ -93,7 +99,7 @@ test: test-backend
 ## lint: Check the code (clippy + eslint/tsc)
 lint:
 	@echo "Running backend linting..."
-	cargo clippy --all-targets --all-features --manifest-path backend/Cargo.toml -- -D warnings
+	cd backend && cargo clippy --all-targets --all-features -- -D warnings
 	@echo "Running frontend linting..."
 	cd frontend && pnpm lint && pnpm tsc --noEmit
 
