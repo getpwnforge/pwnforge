@@ -24,22 +24,19 @@ pub trait RequiredRole: Send + Sync + 'static {
     const MIN: TeamRole;
 }
 
-/// Zero-sized markers, one per `TeamRole`. Used as
-/// `WorkspaceMember<role::Admin>`.
+/// Zero-sized markers, one per minimum role a route actually demands. Used as
+/// `WorkspaceMember<role::Admin>`. No route requires `Member` yet, so there is
+/// no marker for it; add one alongside the first route that does.
 pub mod role {
     use super::RequiredRole;
     use domain::dto::team::TeamRole;
 
     pub struct Viewer;
-    pub struct Member;
     pub struct Admin;
     pub struct Captain;
 
     impl RequiredRole for Viewer {
         const MIN: TeamRole = TeamRole::Viewer;
-    }
-    impl RequiredRole for Member {
-        const MIN: TeamRole = TeamRole::Member;
     }
     impl RequiredRole for Admin {
         const MIN: TeamRole = TeamRole::Admin;

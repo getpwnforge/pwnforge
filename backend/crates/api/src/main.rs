@@ -6,6 +6,8 @@ mod openapi;
 mod routes;
 mod state;
 mod tasks;
+#[cfg(test)]
+mod test_support;
 
 use migration::MigratorTrait;
 use services::config::Config;

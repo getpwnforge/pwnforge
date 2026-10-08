@@ -631,6 +631,23 @@ fn workspace_response(err: WorkspaceError) -> Response {
             Json(json!({ "error": "solo_workspace" })),
         )
             .into_response(),
+        // 409 rather than 403: the caller holds the role, it is the state of
+        // the workspace that refuses the write, and unarchiving lifts it.
+        WorkspaceError::Archived => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "workspace_archived" })),
+        )
+            .into_response(),
+        WorkspaceError::InvalidDateRange => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "ends_before_start" })),
+        )
+            .into_response(),
+        WorkspaceError::PlatformRequired => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "platform_required" })),
+        )
+            .into_response(),
         WorkspaceError::DataIntegrity(integrity_err) => {
             tracing::error!(error = ?integrity_err, "workspace operation failed");
             (

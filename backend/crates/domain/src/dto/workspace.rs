@@ -68,16 +68,27 @@ pub struct UpdateWorkspaceInput {
     /// Same bounds as `CreateWorkspaceInput::name`, checked only when present.
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
-    /// Absent leaves it unchanged, explicit null clears it, a string sets it.
-    /// `value_type` because utoipa has no schema for the double Option; check
-    /// the exported spec documents it as one nullable string. If validator
-    /// refuses `length` on `Option<Option<String>>`, replace it with a
-    /// `custom` function that only inspects `Some(Some(s))`.
+    /// Absent leaves it unchanged, null clears it, a string sets it.
+    // `value_type` because utoipa has no schema for the double Option; the
+    // exported spec documents it as one nullable string. validator's `length`
+    // unwraps both Options (`ValidateLength for Option<T>` is recursive), so
+    // only `Some(Some(s))` is measured.
     #[serde(default, deserialize_with = "deserialize_some")]
     #[schema(value_type = Option<String>)]
     #[validate(length(max = 1000))]
     pub description: Option<Option<String>>,
     pub color: Option<AccentColor>,
+    /// Absent leaves it unchanged, null clears it, a date sets it. Must be
+    /// before `ends_at`, the stored one when only this bound is sent.
+    // The service checks the window on the stored values overlaid by these,
+    // so moving one bound alone is checked against the other.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[schema(value_type = Option<DateTime<Utc>>)]
+    pub starts_at: Option<Option<DateTime<Utc>>>,
+    /// Same three states as `starts_at`, and must be after it.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[schema(value_type = Option<DateTime<Utc>>)]
+    pub ends_at: Option<Option<DateTime<Utc>>>,
     pub lock_after_end: Option<bool>,
     pub default_writeup_visibility: Option<WriteupVisibility>,
 }
@@ -562,6 +573,43 @@ mod tests {
         assert!(
             Membership::Active(TeamRole::Captain).satisfies(TeamRole::Captain),
             "captain must satisfy captain"
+        );
+    }
+
+    /// The double Option on a PATCH: absent, null and a value are three
+    /// different requests, and only a present string is measured.
+    #[test]
+    fn update_input_tells_absent_from_null_and_bounds_the_description() {
+        let absent: UpdateWorkspaceInput = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.description, None);
+        assert_eq!(absent.ends_at, None);
+
+        let cleared: UpdateWorkspaceInput =
+            serde_json::from_str(r#"{"description":null,"ends_at":null}"#).unwrap();
+        assert_eq!(cleared.description, Some(None));
+        assert_eq!(cleared.ends_at, Some(None));
+        assert!(cleared.validate().is_ok());
+
+        let set: UpdateWorkspaceInput =
+            serde_json::from_str(r#"{"ends_at":"2026-10-08T12:00:00Z"}"#).unwrap();
+        assert!(matches!(set.ends_at, Some(Some(_))));
+
+        let too_long = UpdateWorkspaceInput {
+            description: Some(Some("a".repeat(1001))),
+            ..serde_json::from_str("{}").unwrap()
+        };
+        assert!(
+            too_long.validate().is_err(),
+            "a 1001-character description must be refused"
+        );
+
+        let at_limit = UpdateWorkspaceInput {
+            description: Some(Some("a".repeat(1000))),
+            ..serde_json::from_str("{}").unwrap()
+        };
+        assert!(
+            at_limit.validate().is_ok(),
+            "1000 characters is the ceiling, not past it"
         );
     }
 

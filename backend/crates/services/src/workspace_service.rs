@@ -2,11 +2,12 @@
 
 use domain::dto::team::TeamRole;
 use domain::dto::workspace::{
-    CreateWorkspaceInput, EffectiveMember, Membership, UpdateWorkspaceInput, WorkspaceMode,
-    WorkspaceSummary, WorkspaceType, WriteupVisibility,
+    CreateWorkspaceInput, EffectiveMember, Membership, Platform, UpdateWorkspaceInput,
+    WorkspaceMode, WorkspaceSummary, WorkspaceType, WriteupVisibility,
 };
 use domain::entities::{team_members, users, workspace_favorites, workspace_members, workspaces};
 
+use chrono::{DateTime, Utc};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -44,6 +45,15 @@ pub enum WorkspaceError {
 
     #[error("a solo workspace has no members to override")]
     SoloWorkspace,
+
+    #[error("the workspace is archived and read-only")]
+    Archived,
+
+    #[error("ends_at must be after starts_at")]
+    InvalidDateRange,
+
+    #[error("a platform workspace must name its platform")]
+    PlatformRequired,
 }
 
 /// Minimum team role required to create a workspace under that team.
@@ -59,6 +69,8 @@ pub async fn create_workspace(
     input: CreateWorkspaceInput,
 ) -> Result<workspaces::Model, WorkspaceError> {
     validate_ownership(input.mode, input.team_id)?;
+    validate_platform(input.r#type, input.platform)?;
+    validate_date_range(input.starts_at, input.ends_at)?;
 
     let (team_id, owner_id) = match input.mode {
         WorkspaceMode::Team => (input.team_id, None),
@@ -68,9 +80,12 @@ pub async fn create_workspace(
     if let WorkspaceMode::Team = input.mode {
         let team_id =
             team_id.expect("validate_ownership guarantees team_id is Some for WorkspaceMode::Team");
+        // The team, not a workspace, is what a non-member is asking about, so
+        // the answer is the one the team routes give: `team_not_found`, the
+        // same whether the team exists or not.
         let role = team_service::get_user_role_in_team(db, team_id, actor_id)
             .await?
-            .ok_or(WorkspaceError::WorkspaceNotFound)?;
+            .ok_or(team_service::TeamError::TeamNotFound)?;
         team_service::require_role(role, MIN_ROLE_TO_CREATE_WORKSPACE)?;
     }
 
@@ -126,18 +141,58 @@ pub async fn get_workspace_by_slug(
 /// unit, mirroring `team_service::get_team_for_member`: a missing workspace
 /// and a workspace the caller has no access to both surface as
 /// `WorkspaceNotFound`, so a non-member can't tell the two apart.
+///
+/// The entry point of the `WorkspaceMember` extractor. Routes that name the
+/// workspace by id go through `get_workspace_for_member_by_id`; both end in
+/// `admit`, so the rule exists once whatever the route.
 pub async fn get_workspace_for_member(
     db: &DatabaseConnection,
     slug: &str,
     user_id: Uuid,
 ) -> Result<(workspaces::Model, Membership), WorkspaceError> {
     let workspace = get_workspace_by_slug(db, slug).await?;
+    admit(db, workspace, user_id).await
+}
+
+/// Same as `get_workspace_for_member`, for routes that name the workspace by
+/// id (the avatar routes).
+pub async fn get_workspace_for_member_by_id(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+    admit(db, workspace, user_id).await
+}
+
+/// The single access decision for a loaded workspace. `None` and `Excluded`
+/// fold into `WorkspaceNotFound`: an excluded team member must not be able to
+/// tell the workspace apart from one that does not exist.
+async fn admit(
+    db: &DatabaseConnection,
+    workspace: workspaces::Model,
+    user_id: Uuid,
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
     let membership = permissions_service::effective_role(db, user_id, &workspace).await?;
 
     match membership {
         Membership::None | Membership::Excluded => Err(WorkspaceError::WorkspaceNotFound),
         Membership::Owner | Membership::Active(_) => Ok((workspace, membership)),
     }
+}
+
+/// Refuses any change to an archived workspace's content. Archiving makes a
+/// workspace read-only; unarchiving, deleting and favouriting stay possible,
+/// so this is called by the writes it guards rather than by the extractor.
+pub fn ensure_writable(workspace: &workspaces::Model) -> Result<(), WorkspaceError> {
+    if workspace.archived {
+        return Err(WorkspaceError::Archived);
+    }
+
+    Ok(())
 }
 
 /// Every workspace `user_id` can currently see: solo workspaces they own,
@@ -234,7 +289,7 @@ pub async fn list_workspaces_for_user(
         .collect();
 
     // Map to DTOs.
-    by_id
+    let mut summaries = by_id
         .into_values()
         .map(|w| {
             Ok(WorkspaceSummary {
@@ -252,9 +307,29 @@ pub async fn list_workspaces_for_user(
                 ends_at: w.ends_at.map(Into::into),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, WorkspaceError>>()?;
+
+    // Archived last, favourites included, then favourites first, then by
+    // name. The map above has no order of its own, so without this the
+    // selector would reshuffle on every load. `to_lowercase` for the same
+    // reason as the members roster: a byte order would file `Zeta` before
+    // `alpha`.
+    summaries.sort_by_cached_key(|summary| {
+        (
+            summary.archived,
+            std::cmp::Reverse(summary.favorite),
+            summary.name.to_lowercase(),
+        )
+    });
+
+    Ok(summaries)
 }
 
+/// Applies a PATCH. Refused on an archived workspace.
+///
+/// The date window is checked on the merged values, stored ones overlaid by
+/// the patch: a PATCH that moves only one bound can make the window invalid
+/// just as surely as one that sends both.
 pub async fn update_workspace(
     db: &DatabaseConnection,
     workspace_id: Uuid,
@@ -265,7 +340,19 @@ pub async fn update_workspace(
         .await?
         .ok_or(WorkspaceError::WorkspaceNotFound)?;
 
-    // Apply the update
+    ensure_writable(&workspace)?;
+
+    // Absent keeps the stored value, null clears it, a value replaces it.
+    let starts_at = match input.starts_at {
+        None => workspace.starts_at.map(Into::into),
+        Some(patched) => patched,
+    };
+    let ends_at = match input.ends_at {
+        None => workspace.ends_at.map(Into::into),
+        Some(patched) => patched,
+    };
+    validate_date_range(starts_at, ends_at)?;
+
     let mut active_model: workspaces::ActiveModel = workspace.into();
     if let Some(name) = input.name {
         active_model.name = Set(name);
@@ -283,6 +370,12 @@ pub async fn update_workspace(
         active_model.default_writeup_visibility =
             Set(default_writeup_visibility.as_str().to_string());
     }
+    active_model.starts_at = Set(starts_at.map(Into::into));
+    active_model.ends_at = Set(ends_at.map(Into::into));
+    // Written by the server on every change: no trigger, and no
+    // `before_save` hook in the entities, which are regenerated.
+    active_model.updated_at = Set(Utc::now().into());
+
     active_model.update(db).await.map_err(Into::into)
 }
 
@@ -309,9 +402,11 @@ pub async fn archive_workspace(
         .await?
         .ok_or(WorkspaceError::WorkspaceNotFound)?;
 
+    // Idempotent: setting the flag it already has is not an error.
     workspaces::ActiveModel {
         id: Set(workspace.id),
         archived: Set(true),
+        updated_at: Set(Utc::now().into()),
         ..Default::default()
     }
     .update(db)
@@ -328,9 +423,11 @@ pub async fn unarchive_workspace(
         .await?
         .ok_or(WorkspaceError::WorkspaceNotFound)?;
 
+    // Idempotent: setting the flag it already has is not an error.
     workspaces::ActiveModel {
         id: Set(workspace.id),
         archived: Set(false),
+        updated_at: Set(Utc::now().into()),
         ..Default::default()
     }
     .update(db)
@@ -338,6 +435,12 @@ pub async fn unarchive_workspace(
     .map_err(Into::into)
 }
 
+/// Marks a workspace as one of `user_id`'s favourites.
+///
+/// Access is the caller's job: the route sits behind
+/// `WorkspaceMember<role::Viewer>`. Called directly, this would favourite a
+/// workspace the user cannot see, and the foreign-key error on an unknown id
+/// would tell them which ids exist.
 pub async fn add_favorite(
     db: &DatabaseConnection,
     user_id: Uuid,
@@ -717,6 +820,35 @@ fn is_unique_violation(err: &sea_orm::DbErr) -> bool {
         err.sql_err(),
         Some(sea_orm::SqlErr::UniqueConstraintViolation(_))
     )
+}
+
+/// A platform workspace has to say which platform; `Other` is the way out for
+/// one that is not in the list. Optional for an event. Mirrors
+/// `ck_workspaces_platform_required`, which catches every other writer.
+fn validate_platform(
+    r#type: WorkspaceType,
+    platform: Option<Platform>,
+) -> Result<(), WorkspaceError> {
+    if r#type == WorkspaceType::Platform && platform.is_none() {
+        return Err(WorkspaceError::PlatformRequired);
+    }
+
+    Ok(())
+}
+
+/// Rejects a window that does not move forward in time. A zero-length window
+/// is refused too: it can never be "during". One missing bound is fine.
+fn validate_date_range(
+    starts_at: Option<DateTime<Utc>>,
+    ends_at: Option<DateTime<Utc>>,
+) -> Result<(), WorkspaceError> {
+    if let (Some(starts_at), Some(ends_at)) = (starts_at, ends_at)
+        && ends_at <= starts_at
+    {
+        return Err(WorkspaceError::InvalidDateRange);
+    }
+
+    Ok(())
 }
 
 fn validate_ownership(mode: WorkspaceMode, team_id: Option<Uuid>) -> Result<(), WorkspaceError> {
