@@ -42,7 +42,7 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const resend = useMutation({ mutationFn: resendVerification });
-  const turnstile = useTurnstile();
+  const turnstile = useTurnstile("login");
   usePageTitle(t("auth:login.tabTitle"));
 
   const {
@@ -153,7 +153,13 @@ export function LoginPage() {
           </Field>
         </FieldGroup>
 
-        <TurnstileWidget siteKey={turnstile.siteKey} widgetRef={turnstile.ref} onSuccess={turnstile.setToken} />
+        <TurnstileWidget
+          siteKey={turnstile.siteKey}
+          action={turnstile.action}
+          configError={turnstile.configError}
+          widgetRef={turnstile.ref}
+          onSuccess={turnstile.setToken}
+        />
 
         <Button type="submit" size="lg" className="w-full" disabled={submit.isPending || !turnstile.isReady}>
           {submit.isPending ? <Spinner /> : null}

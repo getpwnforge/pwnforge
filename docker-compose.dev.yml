@@ -203,7 +203,6 @@ services:
       - ./frontend:/app
       - frontend-node-modules:/app/node_modules
     environment:
-      VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY}
       VITE_DEV_ALLOWED_HOST: ${VITE_DEV_ALLOWED_HOST}
     depends_on:
       backend:

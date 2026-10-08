@@ -72,6 +72,7 @@
     "not_found": "Ressource introuvable",
     "conflict": "Cette action entre en conflit avec l'état actuel",
     "server_error": "Une erreur est survenue, merci de réessayer",
-    "network": "Connexion impossible, vérifiez votre réseau"
+    "network": "Connexion impossible, vérifiez votre réseau",
+    "config_unavailable": "Impossible de charger la configuration de l'instance. Rechargez la page pour réessayer."
   }
 }

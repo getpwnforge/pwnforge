@@ -22,7 +22,7 @@ export function ForgotPasswordPage() {
 	const { t } = useTranslation(["auth", "common"]);
 	const { forgotPassword } = useAuth();
 	const [requestedEmail, setRequestedEmail] = useState<string | null>(null);
-  const turnstile = useTurnstile();
+  const turnstile = useTurnstile("forgot_password");
   usePageTitle(t("auth:forgotPassword.tabTitle"));
 
 	const {
@@ -88,7 +88,13 @@ export function ForgotPasswordPage() {
 					</Field>
 				</FieldGroup>
 
-        <TurnstileWidget siteKey={turnstile.siteKey} widgetRef={turnstile.ref} onSuccess={turnstile.setToken} />
+        <TurnstileWidget
+          siteKey={turnstile.siteKey}
+          action={turnstile.action}
+          configError={turnstile.configError}
+          widgetRef={turnstile.ref}
+          onSuccess={turnstile.setToken}
+        />
 
 				<Button type="submit" size="lg" className="w-full" disabled={submit.isPending || !turnstile.isReady}>
 					{submit.isPending ? <Spinner /> : null}

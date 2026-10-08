@@ -92,7 +92,7 @@ export function RegisterPage() {
   // Set once the account exists; also the address the verification mail went to.
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const turnstile = useTurnstile();
+  const turnstile = useTurnstile("register");
   usePageTitle(t("auth:register.tabTitle"));
 
   const {
@@ -247,7 +247,13 @@ export function RegisterPage() {
           </span>
         </div>
 
-        <TurnstileWidget siteKey={turnstile.siteKey} widgetRef={turnstile.ref} onSuccess={turnstile.setToken} />
+        <TurnstileWidget
+          siteKey={turnstile.siteKey}
+          action={turnstile.action}
+          configError={turnstile.configError}
+          widgetRef={turnstile.ref}
+          onSuccess={turnstile.setToken}
+        />
 
         <Button
           type="submit"

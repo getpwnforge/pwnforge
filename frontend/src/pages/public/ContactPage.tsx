@@ -8,13 +8,15 @@ type Category = "general" | "self_hosting" | "billing" | "press" | "other";
 
 
 export function ContactPage() {
-  const { t, i18n } = useTranslation("public");
+  const { t, i18n } = useTranslation(["public", "errors"]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [category, setCategory] = useState<Category>("general");
   const [message, setMessage] = useState("");
-  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
-  const turnstile = useTurnstile();
+  const [status, setStatus] = useState<
+    "idle" | "submitting" | "success" | "error" | "turnstile_failed"
+  >("idle");
+  const turnstile = useTurnstile("contact");
   const canSubmit = status !== "submitting" && turnstile.isReady;
 
   async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
@@ -35,7 +37,16 @@ export function ContactPage() {
           locale: i18n.language,
         }),
       });
-      if (!res.ok) throw new Error(`Contact form submission failed (${res.status})`);
+      if (!res.ok) {
+        turnstile.reset();
+        // Same message as the other protected forms when the bot check is
+        // what failed; anything else keeps the generic one.
+        const body: unknown = await res.json().catch(() => null);
+        const code =
+          typeof body === "object" && body !== null && "error" in body ? body.error : null;
+        setStatus(code === "turnstile_failed" ? "turnstile_failed" : "error");
+        return;
+      }
       setStatus("success");
     } catch {
       turnstile.reset();
@@ -88,9 +99,18 @@ export function ContactPage() {
                     className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text resize-none" />
         </div>
 
-        <TurnstileWidget siteKey={turnstile.siteKey} widgetRef={turnstile.ref} onSuccess={turnstile.setToken} />
+        <TurnstileWidget
+          siteKey={turnstile.siteKey}
+          action={turnstile.action}
+          configError={turnstile.configError}
+          widgetRef={turnstile.ref}
+          onSuccess={turnstile.setToken}
+        />
 
         {status === "error" && <p className="text-sm text-danger-text">{t("contact.error")}</p>}
+        {status === "turnstile_failed" && (
+          <p className="text-sm text-danger-text">{t("errors:api.turnstile_failed")}</p>
+        )}
 
         <Button type="submit" disabled={!canSubmit}>
           {status === "submitting" ? t("contact.sending") : t("contact.submit")}

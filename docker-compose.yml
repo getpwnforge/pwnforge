@@ -155,7 +155,8 @@ services:
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       # No value on purpose: each is passed through only when set. Turnstile
       # is on when both are, off when neither is, and the backend refuses to
-      # start with only one.
+      # start with only one. The frontend reads the site key from the backend
+      # at startup, so the published images need no rebuild to turn it on.
       TURNSTILE_SITE_KEY:
       TURNSTILE_SECRET_KEY:
       CHECK_PWNED_PASSWORDS: ${CHECK_PWNED_PASSWORDS:-true}
