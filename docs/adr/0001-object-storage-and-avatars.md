@@ -139,7 +139,7 @@ change. It is recorded because it means that the day
 `PWNFORGE_S3_PUBLIC_BASE_URL` is genuinely used, for avatars and only for
 avatars, the path exists with no extra component to deploy.
 
-The 404/403 rule from [SECURITY.md](../../SECURITY.md#a-404-hides-existence-a-403-admits-it)
+The 404/403 rule from [docs/security-invariants.md](../security-invariants.md#a-404-hides-existence-a-403-admits-it)
 applies: a non-member gets `404`, because a `403` would confirm the team or
 workspace exists, and a member whose role is insufficient gets `403`.
 

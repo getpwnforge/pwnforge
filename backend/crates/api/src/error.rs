@@ -35,8 +35,8 @@ pub enum AppError {
 
     /// The caller is authenticated and may act on this resource's kind, but
     /// not with the role they hold. Distinct from `NotFound`, which is what a
-    /// caller with no access at all gets: see the 404/403 invariant in
-    /// SECURITY.md.
+    /// caller with no access at all gets: see "A 404 hides existence, a 403
+    /// admits it" in docs/security-invariants.md.
     #[error("forbidden")]
     Forbidden,
 

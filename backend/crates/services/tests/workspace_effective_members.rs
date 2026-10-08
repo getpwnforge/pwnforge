@@ -503,8 +503,8 @@ async fn the_roster_orders_handles_case_insensitively() {
 /// open the workspace. Listed-but-refused is the inverse: a row on a screen
 /// for a person the product says has no access. `WorkspaceNotFound` and not
 /// a permission error, because `get_workspace_for_member` must not confirm
-/// the workspace exists to someone excluded from it (SECURITY.md, "A 404
-/// hides existence, a 403 admits it").
+/// the workspace exists to someone excluded from it
+/// (docs/security-invariants.md, "A 404 hides existence, a 403 admits it").
 #[tokio::test]
 async fn an_excluded_member_is_both_unlisted_and_refused_the_workspace() {
     let db = connect().await;

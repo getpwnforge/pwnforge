@@ -145,8 +145,9 @@ async fn upload_avatar(
         // Fail closed. Nothing else bounds this route: it is reachable by any
         // authenticated account and it is the only one that hands
         // attacker-chosen bytes to an image decoder, so an unmetered one is a
-        // CPU sink. That places it in the second row of the table in
-        // SECURITY.md, with `register` and `contact`.
+        // CPU sink. It has its own row in the rate-limit table of
+        // docs/security-invariants.md, and fails closed like `register` and
+        // `contact`.
         Err(error) => {
             tracing::error!(?error, "avatar rate limiter unavailable");
             return Err(AppError::ServiceUnavailable);
@@ -248,7 +249,8 @@ fn rendition_response(bytes: Vec<u8>) -> Response {
 ///
 /// A non-member gets `404` rather than `403`: answering `403` would confirm
 /// that the team or workspace id they tried is real, which is the enumeration
-/// oracle SECURITY.md rules out.
+/// oracle docs/security-invariants.md rules out ("A 404 hides existence, a
+/// 403 admits it").
 async fn authorize_read(
     state: &AppState,
     auth: &AuthUser,
@@ -455,8 +457,9 @@ mod tests {
     ///
     /// An authenticated stranger asking for a private workspace's avatar must
     /// get `404`, not `403` and not the image. `403` would confirm the
-    /// workspace id is real, which is the enumeration oracle SECURITY.md rules
-    /// out; the image would mean the permission check is decorative.
+    /// workspace id is real, which is the enumeration oracle
+    /// docs/security-invariants.md rules out; the image would mean the
+    /// permission check is decorative.
     ///
     /// The member's `200` in the same test is what makes the `404` mean
     /// something. Without it, a route that answered `404` unconditionally -

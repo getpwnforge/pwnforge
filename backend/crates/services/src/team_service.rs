@@ -154,7 +154,8 @@ pub async fn get_team_by_slug(
 /// Resolves a team by slug and the caller's membership in it as a single
 /// unit. A missing team and a team the caller does not belong to both surface
 /// as `TeamNotFound`: a non-member must not be able to tell the two apart
-/// (see SECURITY.md 4 / AGENTS.md Testing instructions).
+/// (see "A 404 hides existence, a 403 admits it" in
+/// docs/security-invariants.md, and the Testing instructions in AGENTS.md).
 pub async fn get_team_for_member(
     db: &DatabaseConnection,
     slug: &str,
