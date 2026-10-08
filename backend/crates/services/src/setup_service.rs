@@ -270,7 +270,11 @@ pub async fn complete(
     )
     .await?;
 
-    // TODO(3.6): create the personal team here, same transaction.
+    // No personal team for this account, on purpose. It is the instance's
+    // administration account, and keeping privileges apart means it is not
+    // the one anyone uses day to day: the operator creates a separate account
+    // for that. `team_service::create_personal_team` refuses instance admins
+    // too, for the paths that do reach it.
 
     txn.commit().await?;
 

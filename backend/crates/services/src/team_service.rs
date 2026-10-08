@@ -493,10 +493,23 @@ async fn count_captains(db: &DatabaseConnection, team_id: Uuid) -> Result<u64, T
 /// raising an error, and the unique index catches the two transactions that
 /// interleave past it. A check alone is a race, and a constraint alone turns
 /// a normal second verification into a failed request.
+///
+/// The creator becomes the team's Captain in the same step, as `create_team`
+/// does: a team nobody belongs to is invisible to its own creator. Both guards
+/// return before that insert, so a second pass creates no second member either.
 pub async fn create_personal_team(
     txn: &DatabaseTransaction,
     user: &users::Model,
 ) -> Result<Option<teams::Model>, TeamError> {
+    // No personal team for an instance admin, whichever path gets here. Setup
+    // creates that account with its address already verified and never calls
+    // this, but a second address verified later does. The admin account is
+    // for administering the instance; everyday use belongs to a separate
+    // account, and a team of its own would invite exactly that use.
+    if user.is_instance_admin {
+        return Ok(None);
+    }
+
     let existing = teams::Entity::find()
         .filter(teams::Column::CreatedBy.eq(user.id))
         .filter(teams::Column::Personal.eq(true))
@@ -521,6 +534,13 @@ pub async fn create_personal_team(
     })
     .await?;
 
+    // A savepoint around the inserts. When the unique index refuses the team,
+    // Postgres aborts the enclosing transaction unless the failure is
+    // contained: every later statement would fail, and the caller's commit
+    // would silently roll back the email verification it carries. Rolling
+    // back to the savepoint keeps the rest of that transaction alive.
+    let savepoint = txn.begin().await?;
+
     let team = teams::ActiveModel {
         id: Set(Uuid::now_v7()),
         slug: Set(slug),
@@ -530,16 +550,33 @@ pub async fn create_personal_team(
         created_by: Set(Some(user.id)),
         ..Default::default()
     }
-    .insert(txn)
+    .insert(&savepoint)
     .await;
 
-    match team {
-        Ok(team) => Ok(Some(team)),
+    let team = match team {
+        Ok(team) => team,
         // Another transaction created it between the lookup and here. The goal
-        // state is reached either way, so this is a success, not a conflict.
-        Err(err) if is_unique_violation(&err) => Ok(None),
-        Err(err) => Err(err.into()),
+        // state is reached either way, so this is a success, not a conflict,
+        // and that transaction's call inserts the Captain.
+        Err(err) if is_unique_violation(&err) => {
+            savepoint.rollback().await?;
+            return Ok(None);
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    team_members::ActiveModel {
+        team_id: Set(team.id),
+        user_id: Set(user.id),
+        role: Set(TeamRole::Captain.as_str().to_string()),
+        ..Default::default()
     }
+    .insert(&savepoint)
+    .await?;
+
+    savepoint.commit().await?;
+
+    Ok(Some(team))
 }
 
 /// Whether a database error is a unique-constraint violation.

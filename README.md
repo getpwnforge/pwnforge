@@ -32,6 +32,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
+The account you create on the `/setup` page is the instance's administration account. Create a separate account for everyday use.
+
 > **Important**: `docker-compose.yml` is the **production** configuration. It pulls pre-built images from GHCR and does not reflect local source changes. If you're contributing code or want hot-reload, use `docker-compose.dev.yml` instead (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Self-hosted or cloud
