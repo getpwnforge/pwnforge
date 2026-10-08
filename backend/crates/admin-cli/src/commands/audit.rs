@@ -1,6 +1,8 @@
 //! `pwnforge-admin audit ...` - read-only access to the instance audit log.
-//! The DB role has no DELETE/UPDATE grant on `instance_audit_log` (see SECURITY.md),
-//! so this module is intentionally read/export only, never write.
+//! This module is intentionally read and export only, never write. The log's
+//! immutability is not enforced by the database: the migrations grant and
+//! revoke nothing on `instance_audit_logs` and no trigger guards it, so a role
+//! that can write to the table can change it.
 
 use crate::{CliContext, datetime::parse_datetime, lookup::resolve_user};
 

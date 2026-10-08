@@ -1,9 +1,10 @@
 //! `pwnforge-admin user ...` - account lifecycle and access management.
 //!
-//! Destructive actions require interactive confirmation. Self-suspension and
-//! "last remaining instance admin" guards described in SECURITY.md apply to
-//! the future HTTP admin routes; here we still enforce the admin-quorum check
-//! since the CLI can just as easily lock out the instance.
+//! `delete` and `cancel-deletion` ask for interactive confirmation; the other
+//! commands act as soon as they are run. The guards are in `admin_service`,
+//! not here: with an `--actor`, an admin cannot suspend, delete or demote
+//! their own account, and the last instance admin cannot be deleted or
+//! demoted.
 
 use crate::CliContext;
 use crate::datetime::parse_datetime;
