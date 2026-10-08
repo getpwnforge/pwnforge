@@ -14,13 +14,11 @@ use crate::middleware::auth::AuthUser;
 use crate::{error::AppError, state::AppState};
 use domain::dto::error_responses::SimpleErrorResponse;
 use domain::dto::team::TeamRole;
-use domain::dto::workspace::Membership;
-use domain::entities::workspaces;
-use sea_orm::EntityTrait;
 use services::avatar_service::{self, AvatarError, MAX_UPLOAD_BYTES, OUTPUT_CONTENT_TYPE};
 use services::rate_limit_service::{self, RateLimitDecision};
 use services::storage_service::{AvatarKind, AvatarSize};
-use services::{permissions_service, team_service};
+use services::team_service;
+use services::workspace_service::{self, WorkspaceError};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -271,7 +269,9 @@ async fn authorize_read(
         }
 
         AvatarKind::Workspace => {
-            workspace_membership(state, auth.id, id).await?;
+            workspace_service::get_workspace_for_member_by_id(&state.db, id, auth.id)
+                .await
+                .map_err(hide_workspace)?;
             Ok(())
         }
     }
@@ -306,9 +306,20 @@ async fn authorize_write(
             Ok(())
         }
 
+        // Access, then role, then state: 404 for no access, 403 for a role
+        // too low, 409 for an archived workspace. A member below Admin learns
+        // only that they may not write, not whether the workspace is archived.
         AvatarKind::Workspace => {
-            let role = workspace_membership(state, auth.id, id).await?;
-            team_service::require_role(role, TeamRole::Admin)?;
+            let (workspace, membership) =
+                workspace_service::get_workspace_for_member_by_id(&state.db, id, auth.id)
+                    .await
+                    .map_err(hide_workspace)?;
+
+            if !membership.satisfies(TeamRole::Admin) {
+                return Err(AppError::Forbidden);
+            }
+
+            workspace_service::ensure_writable(&workspace)?;
             Ok(())
         }
     }
@@ -328,25 +339,17 @@ async fn team_membership(
         .ok_or(AppError::NotFound)
 }
 
-/// Same, for a workspace, folding in solo ownership and workspace-level
-/// overrides through `permissions_service`.
-async fn workspace_membership(
-    state: &AppState,
-    user_id: Uuid,
-    workspace_id: Uuid,
-) -> Result<TeamRole, AppError> {
-    let workspace = workspaces::Entity::find_by_id(workspace_id)
-        .one(&state.db)
-        .await?
-        .ok_or(AppError::NotFound)?;
-
-    match permissions_service::effective_role(&state.db, user_id, &workspace).await? {
-        Membership::Owner => Ok(TeamRole::Captain),
-        Membership::Active(role) => Ok(role),
-        // Excluded is an explicit removal from a workspace the caller's team
-        // can otherwise see. They must not be able to tell that apart from a
-        // workspace that does not exist.
-        Membership::Excluded | Membership::None => Err(AppError::NotFound),
+/// The workspace access answer, translated for the avatar routes.
+///
+/// Access is resolved by `workspace_service`, the same function the workspace
+/// routes use, so the rule exists once. Only the shape of the refusal changes:
+/// these routes have always answered a bare `not_found`, the same body as an
+/// entity with no avatar, and `workspace_not_found` would tell a hidden
+/// workspace apart from a missing image.
+fn hide_workspace(err: WorkspaceError) -> AppError {
+    match err {
+        WorkspaceError::WorkspaceNotFound => AppError::NotFound,
+        other => other.into(),
     }
 }
 
@@ -372,7 +375,9 @@ fn parse_size(raw: &str) -> Result<AvatarSize, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{app, cookie_for, create_user, create_workspace, db};
+    use crate::test_support::{
+        add_team_member, app, cookie_for, create_user, create_workspace, db, request_as,
+    };
     use axum::body::Body;
     use axum::http::Request;
     use domain::entities::team_members;
@@ -651,6 +656,92 @@ mod tests {
             upload_avatar_as(&app, other, "users", owner).await,
             StatusCode::FORBIDDEN,
             "writing someone else's avatar is 403"
+        );
+    }
+
+    /// An archived workspace is read-only, and its avatar is part of it. The
+    /// write is refused with 409 for a member who holds the role, after the
+    /// access check (404 for a stranger) and the role check (403 for a
+    /// Viewer), so neither learns the state. Reading stays open.
+    #[tokio::test]
+    async fn an_archived_workspace_avatar_can_be_read_but_not_written() {
+        let db = db().await;
+        let app = app(&db).await;
+
+        let captain = create_user(&db).await;
+        let admin = create_user(&db).await;
+        let viewer = create_user(&db).await;
+        let stranger = create_user(&db).await;
+        let (workspace_id, team_id) = create_workspace(&db, captain).await;
+        add_team_member(&db, team_id, admin, TeamRole::Admin).await;
+        add_team_member(&db, team_id, viewer, TeamRole::Viewer).await;
+
+        // Control: before archiving, the Admin may write.
+        assert_eq!(
+            upload_avatar_as(&app, admin, "workspaces", workspace_id).await,
+            StatusCode::OK,
+            "an Admin must be able to set the avatar of a live workspace"
+        );
+
+        workspace_service::archive_workspace(&db, workspace_id)
+            .await
+            .expect("the archive must be written");
+
+        let version = services::avatar_service::current_version(
+            &db,
+            services::storage_service::AvatarKind::Workspace,
+            workspace_id,
+        )
+        .await
+        .expect("version lookup must succeed")
+        .expect("the upload must have recorded a version");
+
+        assert_eq!(
+            upload_avatar_as(&app, admin, "workspaces", workspace_id).await,
+            StatusCode::CONFLICT,
+            "an archived workspace refuses a new avatar"
+        );
+
+        let uri = format!("/api/v1/avatars/workspaces/{workspace_id}");
+        let (deleted, body) = request_as(&app, "DELETE", &uri, Some(admin), None).await;
+        assert_eq!(deleted, StatusCode::CONFLICT, "nor may it be cleared");
+        assert_eq!(body["error"], "workspace_archived");
+
+        // The order of the refusals: access, then role, then state.
+        assert_eq!(
+            upload_avatar_as(&app, viewer, "workspaces", workspace_id).await,
+            StatusCode::FORBIDDEN,
+            "the role is checked before the archived state"
+        );
+        assert_eq!(
+            upload_avatar_as(&app, stranger, "workspaces", workspace_id).await,
+            StatusCode::NOT_FOUND,
+            "a stranger learns nothing, archived or not"
+        );
+
+        // The body a stranger gets is the bare `not_found` of a missing image,
+        // not `workspace_not_found`, which would set the two apart.
+        let image = format!("/api/v1/avatars/workspaces/{workspace_id}/{version}/256.webp");
+        let (hidden, hidden_body) = request_as(&app, "GET", &image, Some(stranger), None).await;
+        assert_eq!(hidden, StatusCode::NOT_FOUND);
+        assert_eq!(hidden_body["error"], "not_found");
+
+        // Reading is not a write: the avatar is still served, unchanged.
+        assert_eq!(
+            read_avatar_as(&app, Some(viewer), "workspaces", workspace_id, version).await,
+            StatusCode::OK,
+            "an archived workspace's avatar must still be readable"
+        );
+        assert_eq!(
+            services::avatar_service::current_version(
+                &db,
+                services::storage_service::AvatarKind::Workspace,
+                workspace_id,
+            )
+            .await
+            .expect("version lookup must succeed"),
+            Some(version),
+            "the refused writes must not have touched the stored version"
         );
     }
 }
