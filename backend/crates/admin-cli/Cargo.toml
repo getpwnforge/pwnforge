@@ -12,7 +12,7 @@ domain = { path = "../domain" }
 services = { path = "../services" }
 seed = { path = "../seed" }
 
-clap = { version = "4.6.6", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 sea-orm.workspace = true
 dotenvy.workspace = true

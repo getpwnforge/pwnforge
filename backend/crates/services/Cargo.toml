@@ -15,21 +15,21 @@ tracing.workspace = true
 anyhow.workspace = true
 redis.workspace = true
 
-thiserror = "2.0.20"
-jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
+thiserror = "2.0.21"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
 argon2 = "0.6.0"
 sha2 = "0.11.0"
 sha1 = "0.11.0"
 base64 = "0.23.1"
 hex = "0.4.3"
 time = "0.3.55"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
-askama = "0.16.0"
-rust-i18n = "4.2.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+askama = "0.16.1"
+rust-i18n = "4.2.4"
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "tokio1-rustls-tls", "smtp-transport"] }
 chrono-tz = "0.10.4"
 subtle = "2.6.1"
-rand = "0.10.2"
+rand = "0.10.3"
 deunicode = "1.6.2"
 urlencoding = "2.1.3"
 
@@ -38,7 +38,7 @@ urlencoding = "2.1.3"
 # credential chain is not pulled in either (no `aws-config`): credentials come
 # from our own env, built into `aws_sdk_s3::config::Credentials` by hand, so
 # the process never attempts an IMDS or container-metadata lookup at boot.
-aws-sdk-s3 = { version = "1.148.0", default-features = false, features = ["rustls", "default-https-client", "rt-tokio", "behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.152.0", default-features = false, features = ["rustls", "default-https-client", "rt-tokio", "behavior-version-latest"] }
 
 # Exactly the three formats the avatar allowlist accepts, and no others. The
 # default feature set compiles in a dozen more decoders (avif, exr, tiff, dds,
