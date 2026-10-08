@@ -41,6 +41,22 @@ docker compose up -d
 
 The account you create on the `/setup` page is the instance's administration account. Create a separate account for everyday use.
 
+### Enable Turnstile (optional)
+
+[Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) adds a bot check to sign-in, registration, password reset requests and the contact form. It is off until you configure it.
+
+1. In the Cloudflare dashboard, create a Turnstile widget for the domain your instance is served on. It gives you a site key and a secret key.
+2. Set both in `.env`. They go together: the backend refuses to start with only one of them.
+
+   ```bash
+   TURNSTILE_SITE_KEY=your_site_key
+   TURNSTILE_SECRET_KEY=your_secret_key
+   ```
+
+3. Apply the change with `docker compose up -d`, which recreates the backend with the new values. The frontend reads the site key from the backend, so the published images work as they are.
+
+The backend must be able to reach `challenges.cloudflare.com` over HTTPS. Verification fails closed: if it cannot, every protected form is refused, so an instance without outbound Internet access must leave Turnstile off.
+
 > **Important**: `docker-compose.yml` is the **production** configuration. It pulls pre-built images from GHCR and does not reflect local source changes. If you're contributing code or want hot-reload, use `docker-compose.dev.yml` instead (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Self-hosted or cloud
