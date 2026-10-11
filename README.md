@@ -36,8 +36,17 @@ cp .env.example .env
 sudo mkdir -p /data/pwnforge/garage/meta /data/pwnforge/garage/data
 sudo chown 1001:1001 /data/pwnforge/garage/meta /data/pwnforge/garage/data
 
+# Garage's own configuration, gitignored because it holds the cluster's admin
+# credentials. Put one generated value in rpc_secret and another in
+# admin_token:
+cp ops/garage/garage.toml.example ops/garage/garage.toml
+openssl rand -hex 32   # -> rpc_secret
+openssl rand -hex 32   # -> admin_token
+
 docker compose up -d
 ```
+
+If you bring your own S3 instead, clear `COMPOSE_PROFILES` in `.env` and fill in the `PWNFORGE_S3_*` variables: neither the two directories nor `garage.toml` are needed then.
 
 The account you create on the `/setup` page is the instance's administration account. Create a separate account for everyday use.
 
