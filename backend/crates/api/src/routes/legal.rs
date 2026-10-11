@@ -64,11 +64,11 @@ async fn status(
 ///
 /// Records acceptance of the currently published documents. Returns 409 with
 /// `legal_version_stale` if the client submitted a superseded version.
-///
-/// No `ConnectInfo` fallback on the client IP, unlike the rate limit checks
-/// in `routes/auth.rs`. When the trusted-proxy chain does not resolve an
-/// address, the raw TCP peer is Cloudflare, not the user: recording the
-/// proxy's address as evidence would be worse than recording nothing.
+//
+// No `ConnectInfo` fallback on the client IP, unlike the rate limit checks
+// in `routes/auth.rs`. When the trusted-proxy chain does not resolve an
+// address, the raw TCP peer is Cloudflare, not the user: recording the
+// proxy's address as evidence would be worse than recording nothing.
 #[utoipa::path(
     post,
     path = "/api/v1/legal/accept",
@@ -109,9 +109,9 @@ async fn accept(
 )]
 /// `GET /api/v1/legal/versions`
 ///
-/// Public: the registration form needs it before any session exists. Read
-/// straight from the constants, so it cannot drift from what the backend will
-/// accept a moment later.
+/// Public: the registration form needs it before any session exists.
+// Read straight from the constants, so it cannot drift from what the backend
+// will accept a moment later.
 async fn versions() -> Json<LegalVersionsDto> {
     Json(LegalVersionsDto {
         terms_version: CURRENT_TERMS_VERSION,

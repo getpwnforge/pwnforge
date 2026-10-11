@@ -41,11 +41,13 @@ pub fn router() -> Router<AppState> {
 
 /// Serves one rendition of an avatar.
 ///
-/// Every request re-checks the caller's permission. Nothing here is served by
-/// a presigned URL: a presigned URL is a bearer token with a lifetime of its
-/// own, and once issued it cannot be withdrawn when someone is removed from a
-/// team. The object store is not reachable from outside the internal network
-/// at all, so this handler is the only way in.
+/// Every request re-checks the caller's permission.
+//
+// Nothing here is served by a presigned URL: a presigned URL is a bearer
+// token with a lifetime of its own, and once issued it cannot be withdrawn
+// when someone is removed from a team. The object store is not reachable
+// from outside the internal network at all, so this handler is the only way
+// in.
 #[utoipa::path(
     get,
     path = "/api/v1/avatars/{kind}/{id}/{version}/{size}",
@@ -92,12 +94,13 @@ async fn read_avatar(
 
 /// Replaces an avatar.
 ///
-/// The body is the raw image, not a multipart form. That is deliberate: it
-/// removes a parser that would otherwise run on attacker-controlled input
-/// ahead of the one that has to run anyway, and there is exactly one file, so
-/// a multipart envelope carries no information. The request's `Content-Type`
-/// is ignored entirely - magic bytes decide, and the uploader controls the
-/// header.
+/// The body is the raw image, not a multipart form. The request's
+/// `Content-Type` is ignored: the magic bytes decide.
+//
+// Raw rather than multipart on purpose: it removes a parser that would
+// otherwise run on attacker-controlled input ahead of the one that has to run
+// anyway, and there is exactly one file, so a multipart envelope carries no
+// information. The header is ignored because the uploader controls it.
 #[utoipa::path(
     post,
     path = "/api/v1/avatars/{kind}/{id}",
@@ -105,7 +108,7 @@ async fn read_avatar(
     security(("access_token" = [])),
     request_body(
         content = Vec<u8>,
-        description = "Raw PNG, JPEG or WebP, 5 MB maximum. Not multipart; the                        request Content-Type is ignored and the magic bytes decide.",
+        description = "Raw PNG, JPEG or WebP, 5 MB maximum. Not multipart; the request Content-Type is ignored and the magic bytes decide.",
     ),
     params(
         ("kind" = String, Path, description = "users, teams or workspaces"),

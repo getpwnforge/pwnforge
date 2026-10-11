@@ -142,8 +142,8 @@ async fn test_email(
 /// Dry run of the administrator rules, so the wizard can reject a reserved
 /// username or a breached password on the step that owns the field.
 ///
-/// Creates nothing and commits nothing: the same checks run again inside
-/// `complete`, which stays the authority.
+/// Creates nothing: POST /api/v1/setup runs the same checks again and stays
+/// the authority.
 #[utoipa::path(
     post,
     path = "/api/v1/setup/validate-admin",

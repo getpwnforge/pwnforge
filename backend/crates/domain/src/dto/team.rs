@@ -8,12 +8,12 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError};
 
 /// A member's role within a team.
-///
-/// Stored in the database as raw TEXT (`team_members.role`,
-/// `team_invitations.default_role`). The String <-> TeamRole conversion
-/// happens in the service layer, not via `DeriveActiveEnum` on the generated
-/// entity, to avoid depending on a manual edit after
-/// `sea-orm-cli generate entity`
+//
+// Stored in the database as raw TEXT (`team_members.role`,
+// `team_invitations.default_role`). The String <-> TeamRole conversion
+// happens in the service layer, not via `DeriveActiveEnum` on the generated
+// entity, to avoid depending on a manual edit after
+// `sea-orm-cli generate entity`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TeamRole {
@@ -63,10 +63,10 @@ impl std::str::FromStr for TeamRole {
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTeamRequest {
-    /// Bounded like every other free-text field in the API (see
-    /// `dto/auth.rs`): the column is unbounded TEXT, so without a ceiling a
-    /// single request could store the whole body limit, once per team, with no
-    /// cap on how many teams a user creates.
+    // Bounded like every other free-text field in the API (see
+    // `dto/auth.rs`): the column is unbounded TEXT, so without a ceiling a
+    // single request could store the whole body limit, once per team, with no
+    // cap on how many teams a user creates.
     #[validate(length(min = 1, max = 60))]
     pub name: String,
     pub color: AccentColor,
@@ -86,12 +86,12 @@ pub struct TeamResponse {
     pub slug: String,
     pub name: String,
     pub color: AccentColor,
-    /// `None` when the team has no avatar. Non-`None` is the cache-busting
-    /// version the client puts in the avatar URL:
+    /// `null` when the team has no avatar. Otherwise the cache-busting version
+    /// the client puts in the avatar URL, which it builds from the id:
     /// `/api/v1/avatars/teams/{id}/{avatar_version}/256.webp`.
-    ///
-    /// The URL is built client side from the id and this version rather than
-    /// stored, so no row ever names an object in the bucket.
+    //
+    // The URL is built client side rather than stored, so no row ever names
+    // an object in the bucket.
     pub avatar_version: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     /// Current user's role in this team, avoids an extra frontend round trip
@@ -126,7 +126,7 @@ pub struct TeamMemberResponse {
     pub username: String,
     pub first_name: String,
     pub last_name: String,
-    /// Same contract as `TeamResponse::avatar_version`, under
+    /// Same contract as `TeamResponse.avatar_version`, under
     /// `/api/v1/avatars/users/{user_id}/{avatar_version}/64.webp`.
     pub avatar_version: Option<Uuid>,
     pub role: TeamRole,
@@ -166,48 +166,45 @@ fn invitee_is_named_once(request: &CreateInvitationRequest) -> Result<(), Valida
 pub struct CreateInvitationRequest {
     pub default_role: TeamRole,
     pub expires_at: Option<DateTime<Utc>>,
-    /// Ignored and forced to `Some(1)` by the service if `username` or
-    /// `invited_email` is `Some`.
+    /// Ignored, and set to 1, when `username` or `invited_email` is given.
     pub max_uses: Option<i32>,
-    /// Who is allowed to accept, named the way people actually refer to each
-    /// other here.
-    ///
-    /// A username rather than a raw user id: the id is an internal handle the
-    /// caller has no legitimate way to obtain for someone outside their team,
-    /// and accepting one invited probing for valid accounts by identifier.
-    /// UUIDv7 encodes a timestamp, so that guessing game is cheaper than it
-    /// looks. A username is already a public identifier in this project,
-    /// since registration answers `username_taken` outright, so resolving by
-    /// name adds no enumeration surface that does not already exist.
-    ///
-    /// Left `None` for a generic invitation link, which anyone holding the
-    /// token may accept.
-    ///
-    /// Mutually exclusive with `invited_email`, see `invitee_is_named_once`.
-    /// The service finds the account's own verified address to write to, so
-    /// there is nothing for the caller to supply here beyond the name.
-    ///
-    /// Same bounds as `RegisterRequest::username`: an unbounded string would
-    /// otherwise reach the lookup untouched.
+    /// The only account allowed to accept, by username. Left out for a
+    /// generic invitation link, which anyone holding the token may accept.
+    /// Mutually exclusive with `invited_email`.
+    //
+    // A username rather than a raw user id: the id is an internal handle the
+    // caller has no legitimate way to obtain for someone outside their team,
+    // and accepting one invited probing for valid accounts by identifier.
+    // UUIDv7 encodes a timestamp, so that guessing game is cheaper than it
+    // looks. A username is already a public identifier in this project,
+    // since registration answers `username_taken` outright, so resolving by
+    // name adds no enumeration surface that does not already exist.
+    //
+    // Mutual exclusion is `invitee_is_named_once`. The service finds the
+    // account's own verified address to write to, so there is nothing for
+    // the caller to supply here beyond the name.
+    //
+    // Same bounds as `RegisterRequest::username`: an unbounded string would
+    // otherwise reach the lookup untouched.
     #[validate(length(min = 3, max = 32), regex(path = *crate::dto::auth::USERNAME_RE))]
     pub username: Option<String>,
     /// Invites someone who has no account here yet: they get a link to sign
     /// up, and join on verifying this address.
     ///
     /// Mutually exclusive with `username`. If the address already belongs to a
-    /// verified account the service pins the invitation to it, which makes
-    /// this the same thing as naming that account.
+    /// verified account, the invitation is for that account, the same as
+    /// naming it.
     #[validate(email)]
     pub invited_email: Option<String>,
 }
 
 /// Body of `POST /teams/join`.
-///
-/// The token travels in the body rather than the path so it stays out of the
-/// `tracing` request span (which records `path` at info level on every
-/// request) and out of nginx's access log. Same bounds as the other opaque
-/// tokens in `dto/auth.rs`: a generated one is 43 characters, the ceiling only
-/// exists to bound what reaches the hashing step.
+//
+// The token travels in the body rather than the path so it stays out of the
+// `tracing` request span (which records `path` at info level on every
+// request) and out of nginx's access log. Same bounds as the other opaque
+// tokens in `dto/auth.rs`: a generated one is 43 characters, the ceiling only
+// exists to bound what reaches the hashing step.
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JoinTeamRequest {
@@ -218,9 +215,11 @@ pub struct JoinTeamRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TeamInvitationResponse {
     pub id: Uuid,
-    /// Only populated in the creation response, never returned afterwards
-    /// (neither by list_active_invitations nor
-    /// list_pending_invitations_for_user).
+    /// Only in the response that creates the invitation, never returned by
+    /// any listing afterwards.
+    //
+    // Neither `list_active_invitations` nor
+    // `list_pending_invitations_for_user` fills it.
     pub token: Option<String>,
     pub default_role: TeamRole,
     pub invited_user_id: Option<Uuid>,

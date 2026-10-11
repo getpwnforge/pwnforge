@@ -31,8 +31,10 @@ pub enum Membership {
     Active(TeamRole),
 }
 
-/// Payload for POST /workspaces. Deliberately has no `owner_id`: that's
-/// always the authenticated actor for solo mode, never client-supplied.
+/// Payload for POST /workspaces. A solo workspace always belongs to the
+/// caller.
+// Deliberately has no `owner_id`: that's always the authenticated actor for
+// solo mode, never client-supplied.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateWorkspaceInput {
@@ -40,13 +42,14 @@ pub struct CreateWorkspaceInput {
     pub name: String,
     #[validate(length(max = 1000))]
     pub description: Option<String>,
-    /// Closed set enforced by serde, shared with teams: see `AccentColor`.
+    /// The palette shared with teams, see `AccentColor`.
     pub color: AccentColor,
     pub r#type: WorkspaceType,
     pub platform: Option<Platform>,
     pub mode: WorkspaceMode,
-    /// Required when `mode == WorkspaceMode::Team`, rejected for solo
-    /// (`InvalidOwnership`). Cross-field validation happens in `create_workspace`.
+    /// Required when `mode` is `team`, refused for `solo` (422
+    /// `invalid_ownership`).
+    // Cross-field validation happens in `create_workspace`.
     pub team_id: Option<Uuid>,
     pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,
@@ -54,18 +57,18 @@ pub struct CreateWorkspaceInput {
     pub default_writeup_visibility: Option<WriteupVisibility>,
 }
 
-/// Payload for PATCH /workspaces/{slug}. No `mode`, `team_id`, or `owner_id`
-/// field on purpose: a structural change can't even be expressed by this
-/// type (`workspace_service::update_workspace` is a second guard, not the
-/// only one).
-///
-/// No avatar either: it is only changed through
-/// POST /api/v1/avatars/workspaces/{id}, which has its own permission check,
-/// its own rate limit and its own re-encoding pipeline.
+/// Payload for PATCH /workspaces/{slug}. The mode, the team and the owner
+/// cannot be changed, and the avatar is changed through
+/// POST /api/v1/avatars/workspaces/{id}.
+//
+// No `mode`, `team_id`, or `owner_id` field on purpose: a structural change
+// can't even be expressed by this type (`workspace_service::update_workspace`
+// is a second guard, not the only one). The avatar route has its own
+// permission check, its own rate limit and its own re-encoding pipeline.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateWorkspaceInput {
-    /// Same bounds as `CreateWorkspaceInput::name`, checked only when present.
+    /// Same bounds as `CreateWorkspaceInput.name`, checked only when present.
     #[validate(length(min = 1, max = 100))]
     pub name: Option<String>,
     /// Absent leaves it unchanged, null clears it, a string sets it.
@@ -93,14 +96,15 @@ pub struct UpdateWorkspaceInput {
     pub default_writeup_visibility: Option<WriteupVisibility>,
 }
 
-/// One card in `WorkspaceSelector`.
+/// One workspace in the caller's list.
+// One card in `WorkspaceSelector`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WorkspaceSummary {
     pub id: Uuid,
     pub slug: String,
     pub name: String,
     pub color: AccentColor,
-    /// Same contract as `TeamResponse::avatar_version`, under
+    /// Same contract as `TeamResponse.avatar_version`, under
     /// `/api/v1/avatars/workspaces/{id}/{avatar_version}/256.webp`.
     pub avatar_version: Option<Uuid>,
     pub r#type: WorkspaceType,
@@ -112,8 +116,9 @@ pub struct WorkspaceSummary {
 }
 
 /// One workspace as GET, POST and PATCH return it, with the caller's own
-/// access. Only built for a caller already admitted, so `my_role` is never
-/// `None` or `Excluded`.
+/// access in `my_role`.
+// Only built for a caller already admitted, so `my_role` is never `None` or
+// `Excluded`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WorkspaceResponse {
     pub id: Uuid,
@@ -178,35 +183,40 @@ impl WorkspaceResponse {
     }
 }
 
-/// One row of `WorkspaceMembersScreen`, after `effective_role` has
-/// resolved inheritance and overrides. Never built for an `Excluded`
-/// membership, that case is filtered out upstream.
-///
-/// Carries the same display fields as `TeamMemberResponse` because the
-/// members table needs them: `workspaces.members.columns` lists `member` and
-/// `handle` as two separate columns, so the first one is a name and an
-/// avatar rather than a repeat of the handle, and `joined` is a third.
-/// Serving them from here is one query; leaving them out would have the page
-/// fetch the team roster a second time just to fill three cells.
-///
-/// The one column not served from here is `solved`, an aggregate over
-/// challenges that belongs to the stats path, not to membership resolution.
+/// One person with access to a workspace, with the role that applies there
+/// once team inheritance and workspace overrides are resolved. Excluded
+/// members are not listed.
+//
+// One row of `WorkspaceMembersScreen`, after `effective_role` has resolved
+// inheritance and overrides. Never built for an `Excluded` membership, that
+// case is filtered out upstream.
+//
+// Carries the same display fields as `TeamMemberResponse` because the
+// members table needs them: `workspaces.members.columns` lists `member` and
+// `handle` as two separate columns, so the first one is a name and an
+// avatar rather than a repeat of the handle, and `joined` is a third.
+// Serving them from here is one query; leaving them out would have the page
+// fetch the team roster a second time just to fill three cells.
+//
+// The one column not served from here is `solved`, an aggregate over
+// challenges that belongs to the stats path, not to membership resolution.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EffectiveMember {
     pub user_id: Uuid,
     pub handle: String,
     pub first_name: String,
     pub last_name: String,
-    /// Same contract as `TeamResponse::avatar_version`, under
+    /// Same contract as `TeamResponse.avatar_version`, under
     /// `/api/v1/avatars/users/{user_id}/{avatar_version}/64.webp`.
     pub avatar_version: Option<Uuid>,
     pub role: Membership,
     pub is_guest: bool,
     /// When this person gained access to *this workspace*, which is not the
-    /// same date as joining the team: a guest's is their `workspace_members`
-    /// row, a team member's is their `team_members` row, and a solo owner's
-    /// is the workspace's own creation date, there being no membership row
-    /// behind sole ownership.
+    /// same date as joining the team: a guest's admission to the workspace, a
+    /// team member's arrival in the team, and a solo owner's creation of the
+    /// workspace.
+    // A guest's date is their `workspace_members` row, a team member's their
+    // `team_members` row; no membership row stands behind sole ownership.
     pub joined_at: DateTime<Utc>,
 }
 
@@ -234,7 +244,8 @@ pub enum Platform {
     Other,
 }
 
-/// Only two values confirmed so far, from `writeups.visibility`: 'draft' | 'team'.
+/// The visibility a new writeup of the workspace starts with.
+// Only two values confirmed so far, from `writeups.visibility`: 'draft' | 'team'.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteupVisibility {

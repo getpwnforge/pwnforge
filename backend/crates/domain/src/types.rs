@@ -147,21 +147,22 @@ impl AlertKind {
 }
 
 /// The accent colour of a team or a workspace: one closed palette shared by
-/// both.
-///
-/// A closed set, not a free string or a hex code. The frontend resolves it
-/// through `bgClasses[color]` in `WsIcon.tsx`, keyed by these exact names, so
-/// anything outside the list would render with no background at all. The
-/// palette lives in `frontend/src/lib/ws-color.ts` (`WS_COLORS`) and in the
-/// `--color-ws-*` variables of `globals.css`; this enum and those two must be
-/// changed together.
-///
-/// Serde refuses any other value on its own, so no separate validation rule
-/// is needed: an unknown colour fails deserialization and comes back as a 422
-/// through `JsonBody`.
-///
-/// Read back from the database with `parse().unwrap_or_default()`, falling
-/// back to `Ember` (see `Default`): a display field must not fail a read.
+/// both. Any other value, a hex code included, is refused with 422
+/// `invalid_body`.
+//
+// A closed set, not a free string or a hex code. The frontend resolves it
+// through `bgClasses[color]` in `WsIcon.tsx`, keyed by these exact names, so
+// anything outside the list would render with no background at all. The
+// palette lives in `frontend/src/lib/ws-color.ts` (`WS_COLORS`) and in the
+// `--color-ws-*` variables of `globals.css`; this enum and those two must be
+// changed together.
+//
+// Serde refuses any other value on its own, so no separate validation rule
+// is needed: an unknown colour fails deserialization and comes back as a 422
+// through `JsonBody`.
+//
+// Read back from the database with `parse().unwrap_or_default()`, falling
+// back to `Ember` (see `Default`): a display field must not fail a read.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
 )]
