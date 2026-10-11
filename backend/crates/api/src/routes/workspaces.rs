@@ -17,7 +17,6 @@ use domain::dto::workspace::{
     WorkspaceSummary,
 };
 use domain::entities::workspaces;
-use services::permissions_service;
 use services::workspace_service::{self, WorkspaceError};
 
 /// Every route naming a workspace takes a `WorkspaceMember<_>`, whose marker
@@ -94,12 +93,10 @@ async fn create_workspace(
     JsonBody(input): JsonBody<CreateWorkspaceInput>,
 ) -> Result<(StatusCode, Json<WorkspaceResponse>), AppError> {
     input.validate()?;
-    let workspace = workspace_service::create_workspace(&state.db, user.id, input).await?;
-    let membership = permissions_service::effective_role(&state.db, user.id, &workspace).await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(to_response(workspace, membership)?),
-    ))
+    let (workspace, membership) =
+        workspace_service::create_workspace(&state.db, user.id, input).await?;
+    let response = to_response(workspace, membership)?;
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 #[utoipa::path(
@@ -819,5 +816,175 @@ mod tests {
             "the excluded member must not be listed"
         );
         assert_eq!(ids.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn the_list_needs_a_session() {
+        let db = db().await;
+        let app = app(&db).await;
+
+        let (status, _) = request_as(&app, "GET", "/api/v1/workspaces", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// Archiving makes a workspace read-only, not unreachable: reading it,
+    /// listing its members, favouriting it and deleting it all stay open.
+    #[tokio::test]
+    async fn an_archived_workspace_can_still_be_read_favorited_and_deleted() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let uri = ws_uri(&f.workspace.slug);
+        let favorite = format!("{uri}/favorite");
+
+        let (archived, _) = request_as(
+            &app,
+            "POST",
+            &format!("{uri}/archive"),
+            Some(f.captain),
+            None,
+        )
+        .await;
+        assert_eq!(archived, StatusCode::OK);
+
+        let (read, body) = request_as(&app, "GET", &uri, Some(f.viewer), None).await;
+        assert_eq!(read, StatusCode::OK);
+        assert_eq!(body["archived"], true);
+
+        let (members, _) =
+            request_as(&app, "GET", &format!("{uri}/members"), Some(f.viewer), None).await;
+        assert_eq!(members, StatusCode::OK);
+
+        let (added, _) = request_as(&app, "POST", &favorite, Some(f.viewer), None).await;
+        assert_eq!(added, StatusCode::NO_CONTENT);
+        let (removed, _) = request_as(&app, "DELETE", &favorite, Some(f.viewer), None).await;
+        assert_eq!(removed, StatusCode::NO_CONTENT);
+
+        let (deleted, _) = request_as(&app, "DELETE", &uri, Some(f.captain), None).await;
+        assert_eq!(deleted, StatusCode::NO_CONTENT);
+        let gone = workspaces::Entity::find_by_id(f.workspace.id)
+            .one(&db)
+            .await
+            .expect("the lookup must succeed");
+        assert!(gone.is_none(), "the archived workspace must be deleted");
+    }
+
+    /// The other half of favouriting: someone with no access gets the 404 of
+    /// a workspace that does not exist, and a member takes their favourite
+    /// back, twice over.
+    #[tokio::test]
+    async fn unfavoriting_needs_access_and_removes_the_row() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let stranger = create_user(&db).await;
+        let real = format!("{}/favorite", ws_uri(&f.workspace.slug));
+        let random = format!("{}/favorite", ws_uri(&unique("no-such")));
+
+        workspace_service::add_favorite(&db, f.viewer, f.workspace.id)
+            .await
+            .expect("the favourite must be written");
+
+        let (real_status, real_body) =
+            request_as(&app, "DELETE", &real, Some(stranger), None).await;
+        let (random_status, random_body) =
+            request_as(&app, "DELETE", &random, Some(stranger), None).await;
+        assert_eq!(real_status, StatusCode::NOT_FOUND);
+        assert_eq!(random_status, StatusCode::NOT_FOUND);
+        assert_eq!(real_body, random_body);
+
+        for _ in 0..2 {
+            let (status, _) = request_as(&app, "DELETE", &real, Some(f.viewer), None).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+        let row = workspace_favorites::Entity::find_by_id((f.viewer, f.workspace.id))
+            .one(&db)
+            .await
+            .expect("the lookup must succeed");
+        assert!(row.is_none(), "the favourite must be gone");
+    }
+
+    #[tokio::test]
+    async fn archiving_and_unarchiving_move_updated_at() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let uri = ws_uri(&f.workspace.slug);
+        let created = stored(&db, f.workspace.id).await.updated_at;
+
+        let (status, _) = request_as(
+            &app,
+            "POST",
+            &format!("{uri}/archive"),
+            Some(f.captain),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let archived = stored(&db, f.workspace.id).await.updated_at;
+        assert!(
+            archived > created,
+            "archiving must move updated_at: {created} then {archived}"
+        );
+
+        let (status, _) = request_as(
+            &app,
+            "POST",
+            &format!("{uri}/unarchive"),
+            Some(f.captain),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let unarchived = stored(&db, f.workspace.id).await.updated_at;
+        assert!(
+            unarchived > archived,
+            "unarchiving must move updated_at: {archived} then {unarchived}"
+        );
+    }
+
+    /// A segment that does not decode to UTF-8 names no workspace: the same
+    /// 404, body included, as a slug that names none.
+    #[tokio::test]
+    async fn an_undecodable_slug_gets_the_404_of_a_missing_workspace() {
+        let db = db().await;
+        let app = app(&db).await;
+        let user = create_user(&db).await;
+
+        let (undecodable, undecodable_body) =
+            request_as(&app, "GET", "/api/v1/workspaces/%FF", Some(user), None).await;
+        let (missing, missing_body) =
+            request_as(&app, "GET", &ws_uri(&unique("no-such")), Some(user), None).await;
+
+        assert_eq!(undecodable, StatusCode::NOT_FOUND);
+        assert_eq!(missing, StatusCode::NOT_FOUND);
+        assert_eq!(undecodable_body, missing_body);
+    }
+
+    /// Names are not unique. Equal ones, case aside, come back in id order
+    /// whatever order the map produced. Six of them, so a shuffled order
+    /// cannot pass by chance (1 in 720).
+    #[tokio::test]
+    async fn workspaces_with_the_same_name_are_listed_by_id() {
+        let db = db().await;
+        let app = app(&db).await;
+        let owner = create_user(&db).await;
+
+        let mut created = Vec::new();
+        for name in ["Same", "same", "SAME", "sAme", "saMe", "samE"] {
+            created.push(create_solo_workspace(&db, owner, name).await.id);
+        }
+        created.sort();
+
+        let (status, body) = request_as(&app, "GET", "/api/v1/workspaces", Some(owner), None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let listed: Vec<Uuid> = body
+            .as_array()
+            .expect("the list is an array")
+            .iter()
+            .map(|summary| summary["id"].as_str().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(listed, created);
     }
 }

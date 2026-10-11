@@ -7,7 +7,7 @@ use axum::http::request::Parts;
 use domain::dto::team::TeamRole;
 use domain::dto::workspace::Membership;
 use domain::entities::workspaces;
-use services::workspace_service;
+use services::workspace_service::{self, WorkspaceError};
 use uuid::Uuid;
 
 use crate::{error::AppError, middleware::auth::AuthUser, state::AppState};
@@ -89,6 +89,9 @@ impl<R: RequiredRole> FromRequestParts<AppState> for WorkspaceMember<R> {
 /// Reads the `{slug}` segment without assuming it is the route's only
 /// parameter, so the extractor keeps working on routes like
 /// `/workspaces/{slug}/members/{user_id}`.
+///
+/// A segment that does not decode names no workspace, so it gets the answer
+/// of every other refusal on these routes, body included.
 async fn extract_slug(parts: &mut Parts, state: &AppState) -> Result<String, AppError> {
     let map = Path::<HashMap<String, String>>::from_request_parts(parts, state)
         .await
@@ -97,11 +100,14 @@ async fn extract_slug(parts: &mut Parts, state: &AppState) -> Result<String, App
                 error = ?rejection,
                 "failed to extract slug from path parameters"
             );
-            AppError::NotFound
+            WorkspaceError::WorkspaceNotFound
         })?
         .0;
 
-    let slug = map.get(SLUG_PARAM).ok_or(AppError::NotFound)?.clone();
+    let slug = map
+        .get(SLUG_PARAM)
+        .ok_or(WorkspaceError::WorkspaceNotFound)?
+        .clone();
 
     Ok(slug)
 }

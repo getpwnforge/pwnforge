@@ -62,12 +62,16 @@ pub enum WorkspaceError {
 const MIN_ROLE_TO_CREATE_WORKSPACE: TeamRole = TeamRole::Admin;
 
 /// Creates a workspace, either solo (owned directly by `actor_id`) or under
-/// a team, and returns the persisted row.
+/// a team, and returns the persisted row with the creator's access to it.
+///
+/// That access comes from `admit`, the decision every other route reads,
+/// rather than from what this function already knows about the creator: the
+/// rule exists once, here as elsewhere.
 pub async fn create_workspace(
     db: &DatabaseConnection,
     actor_id: Uuid,
     input: CreateWorkspaceInput,
-) -> Result<workspaces::Model, WorkspaceError> {
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
     validate_ownership(input.mode, input.team_id)?;
     validate_platform(input.r#type, input.platform)?;
     validate_date_range(input.starts_at, input.ends_at)?;
@@ -121,7 +125,7 @@ pub async fn create_workspace(
     .insert(db)
     .await?;
 
-    Ok(workspace)
+    admit(db, workspace, actor_id).await
 }
 
 pub async fn get_workspace_by_slug(
@@ -310,15 +314,17 @@ pub async fn list_workspaces_for_user(
         .collect::<Result<Vec<_>, WorkspaceError>>()?;
 
     // Archived last, favourites included, then favourites first, then by
-    // name. The map above has no order of its own, so without this the
-    // selector would reshuffle on every load. `to_lowercase` for the same
-    // reason as the members roster: a byte order would file `Zeta` before
-    // `alpha`.
+    // name, then by id. The map above has no order of its own and two
+    // workspaces can share a name, so the id settles what the name leaves
+    // equal: without it the selector would reshuffle those on every load.
+    // `to_lowercase` for the same reason as the members roster: a byte order
+    // would file `Zeta` before `alpha`.
     summaries.sort_by_cached_key(|summary| {
         (
             summary.archived,
             std::cmp::Reverse(summary.favorite),
             summary.name.to_lowercase(),
+            summary.id,
         )
     });
 
