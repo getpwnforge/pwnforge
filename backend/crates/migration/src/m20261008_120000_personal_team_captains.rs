@@ -6,7 +6,9 @@
 //! This inserts `created_by` as Captain for each personal team that has a
 //! creator and no member at all. A team whose creator was deleted
 //! (`created_by` NULL) has no one to backfill, and a team that already has any
-//! member is left exactly as it is.
+//! member is left exactly as it is. Neither is a team whose creator is an
+//! instance admin: that account gets no personal team of its own today, and
+//! the backfill must not hand it one that the old code created.
 
 use sea_orm_migration::prelude::*;
 
@@ -26,6 +28,13 @@ enum TeamMembers {
     Role,
 }
 
+#[derive(DeriveIden)]
+enum Users {
+    Table,
+    Id,
+    IsInstanceAdmin,
+}
+
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
@@ -33,12 +42,16 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // INSERT INTO team_members (team_id, user_id, role)
-        // SELECT id, created_by, 'captain' FROM teams
-        // WHERE personal AND created_by IS NOT NULL
+        // SELECT teams.id, teams.created_by, 'captain' FROM teams
+        // JOIN users ON users.id = teams.created_by
+        // WHERE teams.personal AND NOT users.is_instance_admin
         //   AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = teams.id)
         //
+        // The inner join also drops a NULL `created_by`.
+        //
         // `joined_at` takes its column default. Built with sea-query, so the
-        // only literal, the role, is bound rather than spliced into the text.
+        // literals, the role among them, are bound rather than spliced into
+        // the text.
         let has_member = Query::select()
             .expr(Expr::val(1))
             .from(TeamMembers::Table)
@@ -53,8 +66,12 @@ impl MigrationTrait for Migration {
             .column((Teams::Table, Teams::CreatedBy))
             .expr(Expr::val("captain"))
             .from(Teams::Table)
+            .inner_join(
+                Users::Table,
+                Expr::col((Users::Table, Users::Id)).equals((Teams::Table, Teams::CreatedBy)),
+            )
             .and_where(Expr::col((Teams::Table, Teams::Personal)).eq(true))
-            .and_where(Expr::col((Teams::Table, Teams::CreatedBy)).is_not_null())
+            .and_where(Expr::col((Users::Table, Users::IsInstanceAdmin)).eq(false))
             .and_where(Expr::exists(has_member).not())
             .to_owned();
 

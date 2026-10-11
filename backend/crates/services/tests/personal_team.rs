@@ -374,15 +374,22 @@ async fn setup_creates_no_personal_team_for_the_admin() {
     .await;
 }
 
+const BACKFILL: &str = "m20261008_120000_personal_team_captains";
+
 /// The backfill inserts the missing Captain of a personal team and nothing
-/// else: a personal team with a member, an ordinary team, and an orphaned
-/// personal team are left alone. `down()` runs and removes nothing.
+/// else: a personal team with a member, an ordinary team, an orphaned
+/// personal team and an instance admin's personal team are left alone.
+/// `down()` runs and removes nothing.
 #[tokio::test]
 async fn the_backfill_adds_missing_captains_and_nothing_else() {
     in_scratch_database(|db| async move {
-        // Every migration but the backfill, which is the last one.
-        let before_backfill = migration::Migrator::migrations().len() as u32 - 1;
-        migration::Migrator::up(&db, Some(before_backfill))
+        // Every migration before the backfill, found by name: an index would
+        // point at another migration as soon as one is appended.
+        let before_backfill = migration::Migrator::migrations()
+            .iter()
+            .position(|m| m.name() == BACKFILL)
+            .expect("the backfill must be registered in the Migrator");
+        migration::Migrator::up(&db, Some(before_backfill as u32))
             .await
             .expect("the earlier migrations must apply");
 
@@ -429,7 +436,15 @@ async fn the_backfill_adds_missing_captains_and_nothing_else() {
             .await
             .expect("fixture team");
 
-        migration::Migrator::up(&db, None)
+        // Made by the old code before it refused instance admins.
+        let admin = create_user(&db, true).await;
+        let admins = team("admin-personal", true, Some(admin.id))
+            .insert(&db)
+            .await
+            .expect("fixture team");
+
+        // Exactly one step: the backfill and nothing appended after it.
+        migration::Migrator::up(&db, Some(1))
             .await
             .expect("the backfill must apply");
 
@@ -465,7 +480,13 @@ async fn the_backfill_adds_missing_captains_and_nothing_else() {
             members(orphan.id).await.is_empty(),
             "an orphan has no one to add"
         );
+        assert!(
+            members(admins.id).await.is_empty(),
+            "an instance admin is not made Captain of a personal team"
+        );
 
+        // The backfill is the last migration applied here, whatever comes
+        // after it in the Migrator.
         migration::Migrator::down(&db, Some(1))
             .await
             .expect("down must run");
