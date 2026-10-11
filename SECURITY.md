@@ -99,6 +99,6 @@ Out of scope:
 
 ## Our security practices
 
-PwnForge follows secure-by-default principles: container hardening in the production Compose file (every service drops all capabilities, adds back only the few it needs, and runs with `no-new-privileges`; the backend and frontend containers run as a non-root user on a read-only filesystem), no server-side file preview, and automated auditing (`cargo audit`, `pnpm audit`, CodeQL, Dependabot).
+PwnForge follows secure-by-default principles: container hardening in the production Compose file (every service drops all capabilities, adds none back, and runs with `no-new-privileges`; the backend and frontend containers run as a non-root user on a read-only filesystem), no server-side file preview, and automated auditing (`cargo audit`, `pnpm audit`, CodeQL, Dependabot).
 
 Thank you for helping keep PwnForge and its community safe.
