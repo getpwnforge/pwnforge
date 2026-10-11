@@ -92,8 +92,11 @@ export function ForgotPasswordPage() {
           siteKey={turnstile.siteKey}
           action={turnstile.action}
           configError={turnstile.configError}
+          issue={turnstile.issue}
           widgetRef={turnstile.ref}
-          onSuccess={turnstile.setToken}
+          onSuccess={turnstile.onSuccess}
+          onError={turnstile.onError}
+          onExpire={turnstile.onExpire}
         />
 
 				<Button type="submit" size="lg" className="w-full" disabled={submit.isPending || !turnstile.isReady}>

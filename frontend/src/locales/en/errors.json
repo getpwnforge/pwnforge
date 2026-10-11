@@ -74,5 +74,9 @@
     "server_error": "Something went wrong, please try again",
     "network": "Cannot connect, check your network",
     "config_unavailable": "This page could not load the instance configuration. Reload it to try again."
+  },
+  "turnstile": {
+    "widget_error": "The bot check could not run. Reload the page. If it keeps failing, make sure no extension or network filter blocks challenges.cloudflare.com.",
+    "widget_expired": "The bot check expired. Complete it again, then submit the form."
   }
 }

@@ -66,7 +66,7 @@ function RegistrationSuccess({ email }: Readonly<{ email: string }>) {
  *
  * Two shapes reach here: a semantic code from the table above, and a 422 whose
  * `fields` breakdown names the offending validator. Only the composition rule
- * is worth reading out of the second — every other rule in it is enforced by
+ * is worth reading out of the second: every other rule in it is enforced by
  * the schema, so seeing one means client and server have drifted apart.
  */
 function fieldForError(
@@ -137,11 +137,11 @@ export function RegisterPage() {
     },
   });
 
-  // Anything that did not land under an input — rate limit, backend down —
+  // Anything that did not land under an input (rate limit, backend down)
   // still has to be visible somewhere.
   const bannerError = submit.error && !fieldForError(submit.error) ? submit.error : null;
 
-  // Registering does not open a session — the account is unusable until the
+  // Registering does not open a session: the account is unusable until the
   // address is verified, so the only next step is the inbox.
   if (registeredEmail) {
     return <RegistrationSuccess email={registeredEmail} />;
@@ -251,8 +251,11 @@ export function RegisterPage() {
           siteKey={turnstile.siteKey}
           action={turnstile.action}
           configError={turnstile.configError}
+          issue={turnstile.issue}
           widgetRef={turnstile.ref}
-          onSuccess={turnstile.setToken}
+          onSuccess={turnstile.onSuccess}
+          onError={turnstile.onError}
+          onExpire={turnstile.onExpire}
         />
 
         <Button

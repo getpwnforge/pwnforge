@@ -78,8 +78,8 @@ export function LoginPage() {
       </header>
 
       <form onSubmit={handleSubmit((values) => submit.mutate(values))} className="flex flex-col gap-5">
-        {/* Every login failure is deliberately vague server-side — wrong
-            password and unknown account answer the same code — so there is
+        {/* Every login failure is deliberately vague server-side (wrong
+            password and unknown account answer the same code), so there is
             nothing to place under a specific field. */}
         <FormError
           error={submit.error}
@@ -157,8 +157,11 @@ export function LoginPage() {
           siteKey={turnstile.siteKey}
           action={turnstile.action}
           configError={turnstile.configError}
+          issue={turnstile.issue}
           widgetRef={turnstile.ref}
-          onSuccess={turnstile.setToken}
+          onSuccess={turnstile.onSuccess}
+          onError={turnstile.onError}
+          onExpire={turnstile.onExpire}
         />
 
         <Button type="submit" size="lg" className="w-full" disabled={submit.isPending || !turnstile.isReady}>

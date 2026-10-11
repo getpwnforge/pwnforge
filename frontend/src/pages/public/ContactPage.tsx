@@ -103,8 +103,11 @@ export function ContactPage() {
           siteKey={turnstile.siteKey}
           action={turnstile.action}
           configError={turnstile.configError}
+          issue={turnstile.issue}
           widgetRef={turnstile.ref}
-          onSuccess={turnstile.setToken}
+          onSuccess={turnstile.onSuccess}
+          onError={turnstile.onError}
+          onExpire={turnstile.onExpire}
         />
 
         {status === "error" && <p className="text-sm text-danger-text">{t("contact.error")}</p>}
