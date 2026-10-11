@@ -30,6 +30,16 @@ git clone https://github.com/getpwnforge/pwnforge.git
 cd pwnforge
 cp .env.example .env
 
+# Fill in .env before the first start; the comments in the file explain each
+# value. At least:
+#   - a value of its own, from `openssl rand -hex 32`, for each placeholder
+#     secret: POSTGRES_PASSWORD, REDIS_PASSWORD, JWT_SECRET, ENCRYPTION_KEY
+#     and PWNFORGE_S3_SECRET_ACCESS_KEY;
+#   - PUBLIC_URL and CORS_ORIGIN, both the address the instance is served on,
+#     and BACKEND_ENV=production;
+#   - EMAIL_BACKEND, EMAIL_FROM and the SMTP_* or RESEND_API_KEY values they
+#     need. Without them the stack refuses to start.
+
 # Prepare the host for the bundled object store (COMPOSE_PROFILES=garage, the
 # default): docker-compose.yml bind-mounts these two directories, and Garage
 # runs as uid 1001, so they must exist and belong to it before the first start.
