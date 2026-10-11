@@ -109,9 +109,10 @@ lint:
 # Builds the backend and frontend images from this checkout, starts every
 # service of docker-compose.yml in the `pwnforge-prodcheck` project with
 # generated test values, and fails unless all of them turn healthy within
-# PRODCHECK_TIMEOUT_SECS (default 300). It removes everything it created,
-# failure included, and touches no other container or volume. The details
-# are in ops/prod-check.sh.
+# PRODCHECK_TIMEOUT_SECS (default 300). It removes the containers, volumes,
+# network and images it created, failure included, but the build cache stays,
+# and it touches no other container or volume. On failure it prints the
+# state of every service. The details are in ops/prod-check.sh.
 prod-check:
 	@./ops/prod-check.sh
 

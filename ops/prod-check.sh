@@ -6,10 +6,14 @@
 # the runtime images, the users, read-only filesystems and capability sets of
 # docker-compose.yml, and every healthcheck in it.
 #
-# Nothing it creates outlives it. The project, its containers, its volumes, its
-# network, the two images it built and the temporary directory are removed on
-# exit, failure included. It touches no other container or volume, and pushes
-# nothing anywhere.
+# The project, its containers, its volumes, its network, the two images it
+# built and the temporary directory are removed on exit, failure included.
+# Two things stay: the build cache those images leave in Docker (`docker
+# builder prune` clears it) and any base image pulled to build or run them. It
+# touches no other container or volume, and pushes nothing anywhere.
+#
+# A failing step prints its own output, `docker compose ps` and the last log
+# lines of every service before the cleanup removes them.
 #
 # Two differences from a real deployment, both forced by running on a
 # developer machine:
@@ -62,6 +66,28 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+# The state of the project, for a failure: what runs, and what each service
+# said last.
+diagnose() {
+    echo "prod-check: docker compose ps"
+    compose ps -a 2>&1 | sed 's/^/    /'
+    for service in $SERVICES garage-init; do
+        echo "prod-check: last log lines of $service"
+        compose logs --tail 15 "$service" 2>&1 | sed 's/^/    /'
+    done
+}
+
+# Runs one step quietly, and on failure shows what it printed and the state
+# of the project.
+step() {
+    if ! "$@" >"$TMP/step.log" 2>&1; then
+        echo "prod-check: failed: $*"
+        sed 's/^/    /' "$TMP/step.log"
+        diagnose
+        exit 1
+    fi
+}
 
 hex() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
 
@@ -118,23 +144,19 @@ volumes:
 EOF
 
 echo "prod-check: creating project $PROJECT"
-compose up --no-start --quiet-pull >/dev/null 2>&1
+step compose up --no-start --quiet-pull
 
 # The step the README asks of an operator, applied to the named volumes.
-docker run --rm --network none \
+step docker run --rm --network none \
     -v "${PROJECT}_garage-meta:/meta" -v "${PROJECT}_garage-data:/data" \
     python:3.13-alpine chown 1001:1001 /meta /data
 
 echo "prod-check: provisioning object storage"
-compose up -d --quiet-pull garage >/dev/null 2>&1
-compose up --quiet-pull --exit-code-from garage-init garage-init >/dev/null 2>&1 || {
-    echo "prod-check: garage-init failed"
-    compose logs garage-init | tail -20
-    exit 1
-}
+step compose up -d --quiet-pull garage
+step compose up --quiet-pull --exit-code-from garage-init garage-init
 
 echo "prod-check: starting every service"
-compose up -d --quiet-pull >/dev/null 2>&1
+step compose up -d --quiet-pull
 
 health() {
     container=$(compose ps -q "$1")
@@ -165,11 +187,7 @@ done
 printf '  %-9s %s\n' garage-init "exited $(docker inspect -f '{{.State.ExitCode}}' "$(compose ps -aq garage-init)")"
 
 if [ "$failed" -ne 0 ]; then
-    for service in $SERVICES; do
-        [ "$(health "$service")" = healthy ] && continue
-        echo "prod-check: last log lines of $service"
-        compose logs --tail 15 "$service" 2>&1 | sed 's/^/    /'
-    done
+    diagnose
     echo "prod-check: FAILED"
     exit 1
 fi
