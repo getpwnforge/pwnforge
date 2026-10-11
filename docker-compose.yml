@@ -150,8 +150,11 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set}
       TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL must be set}
-      EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
-      EMAIL_FROM: ${EMAIL_FROM:-noreply@localhost}
+      # Required, no default: the development value, `console`, prints every
+      # mail to the logs, password reset links included. A forgotten setting
+      # must stop the deployment rather than leave it running like that.
+      EMAIL_BACKEND: ${EMAIL_BACKEND:?EMAIL_BACKEND must be set}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       # No value on purpose: each is passed through only when set. Turnstile
       # is on when both are, off when neither is, and the backend refuses to

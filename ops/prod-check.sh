@@ -86,6 +86,8 @@ PWNFORGE_S3_ACCESS_KEY_ID=GK$(hex 12)
 PWNFORGE_S3_SECRET_ACCESS_KEY=$(hex 32)
 PWNFORGE_S3_BUCKET_ATTACHMENTS=prodcheck-attachments
 PWNFORGE_S3_BUCKET_AVATARS=prodcheck-avatars
+EMAIL_BACKEND=console
+EMAIL_FROM=prodcheck@localhost
 EOF
 
 sed -e "s/^rpc_secret = .*/rpc_secret = \"$(hex 32)\"/" \
