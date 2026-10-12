@@ -25,10 +25,13 @@ use services::config::{Config, EmailBackend, SmtpTls, StorageConfig};
 use services::{auth_service, auth_token_service, setup_service, team_service};
 use uuid::Uuid;
 
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge".to_owned())
-}
+#[path = "common/migrations.rs"]
+mod migrations;
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use migrations::position_of;
+use scratch::{base_url, in_scratch_database};
 
 async fn connect() -> DatabaseConnection {
     let db = Database::connect(base_url())
@@ -241,54 +244,6 @@ async fn a_concurrent_creation_loses_only_the_team_not_the_transaction() {
     assert_eq!(members_of(&db, teams[0].id).await.len(), 1, "one member");
 }
 
-// ---- Throwaway databases ------------------------------------------------
-
-fn with_database(url: &str, database: &str) -> String {
-    let (prefix, _old) = url
-        .rsplit_once('/')
-        .expect("DATABASE_URL must contain a database name");
-
-    format!("{prefix}/{database}")
-}
-
-async fn admin_connection() -> DatabaseConnection {
-    Database::connect(with_database(&base_url(), "postgres"))
-        .await
-        .expect("a Postgres instance must be reachable (see the module docs)")
-}
-
-/// Runs `body` against a fresh, empty database and drops it afterwards, even
-/// when an assertion fails (the body runs in a task so a panic comes back as
-/// a `JoinError` instead of unwinding past the cleanup).
-async fn in_scratch_database<F, Fut>(body: F)
-where
-    F: FnOnce(DatabaseConnection) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    let name = format!("pwnforge_personal_team_test_{}", Uuid::now_v7().simple());
-    admin_connection()
-        .await
-        .execute_unprepared(&format!("CREATE DATABASE {name}"))
-        .await
-        .expect("must be able to create a scratch database");
-
-    let db = Database::connect(with_database(&base_url(), &name))
-        .await
-        .expect("the scratch database must be reachable");
-
-    let outcome = tokio::spawn(body(db)).await;
-
-    admin_connection()
-        .await
-        .execute_unprepared(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
-        .await
-        .expect("must be able to drop the scratch database");
-
-    if let Err(join_error) = outcome {
-        std::panic::resume_unwind(join_error.into_panic());
-    }
-}
-
 fn setup_config() -> Config {
     Config {
         port: 0,
@@ -385,11 +340,7 @@ async fn the_backfill_adds_missing_captains_and_nothing_else() {
     in_scratch_database(|db| async move {
         // Every migration before the backfill, found by name: an index would
         // point at another migration as soon as one is appended.
-        let before_backfill = migration::Migrator::migrations()
-            .iter()
-            .position(|m| m.name() == BACKFILL)
-            .expect("the backfill must be registered in the Migrator");
-        migration::Migrator::up(&db, Some(before_backfill as u32))
+        migration::Migrator::up(&db, Some(position_of(BACKFILL)))
             .await
             .expect("the earlier migrations must apply");
 

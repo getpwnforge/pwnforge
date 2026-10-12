@@ -22,70 +22,20 @@
 //! database happened to be in.
 
 use migration::MigratorTrait;
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
-use uuid::Uuid;
+use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
+
+#[path = "common/migrations.rs"]
+mod migrations;
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use migrations::position_of;
+use scratch::in_scratch_database;
 
 const MIGRATION: &str = "m20260922_101500_avatar_version";
 
 /// The three tables the migration touches.
 const TARGETS: [&str; 3] = ["users", "teams", "workspaces"];
-
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge".to_owned())
-}
-
-/// Swaps the database name in a connection URL, keeping everything else.
-///
-/// Splits on the last `/` rather than parsing the URL: the database name is
-/// the only part that changes, and a password may contain characters a naive
-/// parser would trip on.
-fn with_database(url: &str, database: &str) -> String {
-    let (prefix, _old) = url
-        .rsplit_once('/')
-        .expect("DATABASE_URL must contain a database name");
-
-    format!("{prefix}/{database}")
-}
-
-async fn admin_connection() -> DatabaseConnection {
-    // `postgres` always exists and is never the database under test, so it is
-    // safe to issue CREATE/DROP DATABASE from.
-    Database::connect(with_database(&base_url(), "postgres"))
-        .await
-        .expect("a Postgres instance must be reachable (see the module docs)")
-}
-
-/// Creates a throwaway database and returns a connection to it plus its name.
-async fn scratch_database() -> (DatabaseConnection, String) {
-    let admin = admin_connection().await;
-
-    // Unique per run, so a leftover from an interrupted run cannot collide
-    // with this one. Rendered without dashes because it has to be a valid
-    // unquoted identifier.
-    let name = format!("pwnforge_migration_test_{}", Uuid::now_v7().simple());
-
-    admin
-        .execute_unprepared(&format!("CREATE DATABASE {name}"))
-        .await
-        .expect("must be able to create a scratch database");
-
-    let db = Database::connect(with_database(&base_url(), &name))
-        .await
-        .expect("the scratch database must be reachable");
-
-    (db, name)
-}
-
-async fn drop_scratch_database(name: &str) {
-    // `WITH (FORCE)` because a pooled connection can outlive `close()` by a
-    // moment, and DROP DATABASE refuses while anything is still attached.
-    admin_connection()
-        .await
-        .execute_unprepared(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
-        .await
-        .expect("must be able to drop the scratch database");
-}
 
 /// Reads the column's type straight out of the catalog, so the assertion is
 /// about the schema rather than about what SeaORM believes the schema is.
@@ -114,26 +64,11 @@ async fn column_type(db: &DatabaseConnection, table: &str, column: &str) -> Opti
 /// would each need a scratch database of their own to avoid racing.
 #[tokio::test]
 async fn avatar_version_applies_and_rolls_back() {
-    let (db, name) = scratch_database().await;
-
-    // The body runs in a task so that a failed assertion surfaces as a
-    // `JoinError` here rather than unwinding straight out of the test. Without
-    // it, every red run would leave a scratch database behind, and the
-    // twentieth failure would be a disk-space problem instead of a test
-    // failure.
-    let outcome = tokio::spawn(async move {
+    in_scratch_database(|db| async move {
         assertions(&db).await;
         db.close().await.ok();
     })
     .await;
-
-    drop_scratch_database(&name).await;
-
-    if let Err(join_error) = outcome {
-        // Re-raise with the original panic payload, so the failure reads as
-        // the assertion that actually failed.
-        std::panic::resume_unwind(join_error.into_panic());
-    }
 }
 
 async fn assertions(db: &DatabaseConnection) {
@@ -184,12 +119,7 @@ async fn assertions(db: &DatabaseConnection) {
     // would quietly exercise that one's `down()` instead - which is exactly
     // what happened when `drop_avatar_url` landed. Everything from the target
     // to the end is unwound, so each of their `down()`s runs too.
-    let all = migration::Migrator::migrations();
-    let position = all
-        .iter()
-        .position(|m| m.name() == MIGRATION)
-        .expect("the migration under test must be registered in the Migrator");
-    let steps = (all.len() - position) as u32;
+    let steps = migration::Migrator::migrations().len() as u32 - position_of(MIGRATION);
 
     migration::Migrator::down(db, Some(steps))
         .await

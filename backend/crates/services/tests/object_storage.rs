@@ -15,45 +15,18 @@
 //! The variables come from `.env`; only the endpoint has to be overridden,
 //! since the value there is the in-network `http://garage:3900`.
 
-use services::config::StorageConfig;
 use services::storage_service::{
     AvatarKind, AvatarSize, Bucket, ObjectStore, S3Store, StorageError, avatar_key, avatar_prefix,
 };
 use uuid::Uuid;
 
-/// Reads the same variables the backend reads, so a test run exercises the
-/// configuration path rather than a hand-built struct.
-///
-/// Every field comes from the environment, including the region. That is not
-/// incidental: Garage signs against `garage` and Cloudflare R2 against `auto`,
-/// so a hardcoded `us-east-1` anywhere here would make the suite pass on one
-/// and fail on a signature mismatch everywhere else - which is exactly the
-/// portability this layer exists to have.
-fn config() -> StorageConfig {
-    StorageConfig {
-        endpoint: Some(
-            std::env::var("PWNFORGE_S3_ENDPOINT")
-                .unwrap_or_else(|_| "http://127.0.0.1:3900".to_owned()),
-        ),
-        region: std::env::var("PWNFORGE_S3_REGION").unwrap_or_else(|_| "us-east-1".to_owned()),
-        access_key_id: std::env::var("PWNFORGE_S3_ACCESS_KEY_ID")
-            .unwrap_or_else(|_| "pwnforge-app".to_owned()),
-        secret_access_key: std::env::var("PWNFORGE_S3_SECRET_ACCESS_KEY")
-            .expect("PWNFORGE_S3_SECRET_ACCESS_KEY must be set; see the module docs"),
-        force_path_style: std::env::var("PWNFORGE_S3_FORCE_PATH_STYLE")
-            .map(|raw| raw != "false")
-            .unwrap_or(true),
-        bucket_attachments: std::env::var("PWNFORGE_S3_BUCKET_ATTACHMENTS")
-            .unwrap_or_else(|_| "pwnforge-attachments".to_owned()),
-        bucket_avatars: std::env::var("PWNFORGE_S3_BUCKET_AVATARS")
-            .unwrap_or_else(|_| "pwnforge-avatars".to_owned()),
-        key_prefix: None,
-        public_base_url: None,
-    }
-}
+#[path = "common/storage.rs"]
+mod storage;
+
+use storage::storage_config;
 
 fn store() -> ObjectStore {
-    ObjectStore::S3(S3Store::new(&config()))
+    ObjectStore::S3(S3Store::new(&storage_config()))
 }
 
 /// A fresh entity id per test, so tests never collide with each other or with
@@ -80,7 +53,7 @@ async fn health_names_the_bucket_that_is_missing() {
     // Only the avatars bucket is changed, so everything else - endpoint,
     // region, credential, addressing style - stays whatever the provider under
     // test needs.
-    let mut config = config();
+    let mut config = storage_config();
     config.bucket_avatars = "pwnforge-no-such-bucket".to_owned();
 
     let error = ObjectStore::S3(S3Store::new(&config))

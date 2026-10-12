@@ -10,10 +10,17 @@
 use domain::entities::{users, workspaces};
 use migration::MigratorTrait;
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, EntityTrait, Set,
-    Statement,
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Set, Statement,
 };
 use uuid::Uuid;
+
+#[path = "common/migrations.rs"]
+mod migrations;
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use migrations::position_of;
+use scratch::in_scratch_database;
 
 const MIGRATION: &str = "m20261008_090000_workspaces_enum_checks";
 
@@ -26,65 +33,9 @@ const CHECKS: [&str; 5] = [
     "ck_workspaces_visibility",
 ];
 
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge".to_owned())
-}
-
-fn with_database(url: &str, database: &str) -> String {
-    let (prefix, _old) = url
-        .rsplit_once('/')
-        .expect("DATABASE_URL must contain a database name");
-
-    format!("{prefix}/{database}")
-}
-
-async fn admin_connection() -> DatabaseConnection {
-    Database::connect(with_database(&base_url(), "postgres"))
-        .await
-        .expect("a Postgres instance must be reachable (see the module docs)")
-}
-
-/// Runs `body` against a fresh, empty database and drops it afterwards, even
-/// when an assertion fails (the body runs in a task so a panic comes back as
-/// a `JoinError` instead of unwinding past the cleanup).
-async fn in_scratch_database<F, Fut>(body: F)
-where
-    F: FnOnce(DatabaseConnection) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    let name = format!("pwnforge_enum_checks_test_{}", Uuid::now_v7().simple());
-    admin_connection()
-        .await
-        .execute_unprepared(&format!("CREATE DATABASE {name}"))
-        .await
-        .expect("must be able to create a scratch database");
-
-    let db = Database::connect(with_database(&base_url(), &name))
-        .await
-        .expect("the scratch database must be reachable");
-
-    let outcome = tokio::spawn(body(db)).await;
-
-    admin_connection()
-        .await
-        .execute_unprepared(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
-        .await
-        .expect("must be able to drop the scratch database");
-
-    if let Err(join_error) = outcome {
-        std::panic::resume_unwind(join_error.into_panic());
-    }
-}
-
 /// Applies every migration before the one under test, found by name.
 async fn migrate_to_just_before(db: &DatabaseConnection) {
-    let position = migration::Migrator::migrations()
-        .iter()
-        .position(|m| m.name() == MIGRATION)
-        .expect("the migration under test must be registered in the Migrator");
-
-    migration::Migrator::up(db, Some(position as u32))
+    migration::Migrator::up(db, Some(position_of(MIGRATION)))
         .await
         .expect("the earlier migrations must apply");
 }
