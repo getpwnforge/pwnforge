@@ -194,12 +194,13 @@ async fn a_row_breaking_the_rule_fails_the_migration() {
             before,
             "the previous check must still be in place"
         );
+        // The first one still pending, whatever comes after it.
+        let pending = migration::Migrator::get_pending_migrations(&db)
+            .await
+            .expect("the pending migrations must load");
         assert_eq!(
-            migration::Migrator::get_pending_migrations(&db)
-                .await
-                .expect("the pending migrations must load")
-                .len(),
-            1,
+            pending.first().map(|m| m.name()),
+            Some(MIGRATION),
             "the migration must not be recorded as applied"
         );
         let kept = workspaces::Entity::find_by_id(breaking.id)
