@@ -4,8 +4,9 @@ use std::str::FromStr;
 
 use sea_orm::sea_query::Expr;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, ExprTrait, PaginatorTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -676,6 +677,69 @@ pub async fn transfer_captaincy(
     Ok(())
 }
 
+/// What became of a team whose Captain's account is being deleted.
+pub(crate) enum Succession {
+    /// The Captain was the only member, and the team went with them: these
+    /// are its objects to purge once the deletion is committed.
+    TeamDeleted(ObjectsToPurge),
+    /// This member is the Captain now.
+    Promoted(Uuid),
+    /// The role moved by transfer after the team was listed: there is no
+    /// succession to arrange, and the membership goes with the account.
+    NoLongerCaptain,
+}
+
+/// The team side of deleting an account that is still a team's Captain, run
+/// in the deletion's own transaction.
+///
+/// A team with no other member is deleted with its workspaces. Otherwise its
+/// longest-standing Admin becomes Captain, or its longest-standing member
+/// when it has no Admin, ties broken by id: among the active members first,
+/// neither suspended nor scheduled for deletion, and among all of them when
+/// none is active, so the team keeps a Captain either way. The departing
+/// Captain's own row goes first, since the index allows one Captain per
+/// team at every statement; the account's deletion would have removed it
+/// anyway.
+pub(crate) async fn succeed_captain<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+    captain_id: Uuid,
+) -> Result<Succession, TeamError> {
+    // Locked so a transfer, or a member joining (its foreign key check takes
+    // this row too), waits for the deletion to commit. A member leaving does
+    // not wait: if it is the one chosen below, the promotion finds no row
+    // and fails the whole deletion rather than leave the team without a
+    // Captain, and the purge tries again on its next pass.
+    teams::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(conn)
+        .await?
+        .ok_or(TeamError::TeamNotFound)?;
+
+    if current_captain(conn, team_id).await? != Some(captain_id) {
+        return Ok(Succession::NoLongerCaptain);
+    }
+
+    let active = successor_among(conn, team_id, captain_id, true).await?;
+    let successor = match active {
+        Some(active) => Some(active),
+        None => successor_among(conn, team_id, captain_id, false).await?,
+    };
+
+    let Some(successor) = successor else {
+        return Ok(Succession::TeamDeleted(
+            delete_team_rows(conn, team_id).await?,
+        ));
+    };
+
+    team_members::Entity::delete_by_id((team_id, captain_id))
+        .exec(conn)
+        .await?;
+    set_role(conn, team_id, successor, TeamRole::Captain).await?;
+
+    Ok(Succession::Promoted(successor))
+}
+
 /// The team's Captain, if it has one.
 async fn current_captain<C: ConnectionTrait>(
     conn: &C,
@@ -686,6 +750,65 @@ async fn current_captain<C: ConnectionTrait>(
         .column(team_members::Column::UserId)
         .filter(team_members::Column::TeamId.eq(team_id))
         .filter(team_members::Column::Role.eq(TeamRole::Captain.as_str()))
+        .into_tuple()
+        .one(conn)
+        .await?)
+}
+
+/// The longest-standing Admin other than `except`, or failing one the
+/// longest-standing member, among the active members only when
+/// `active_only`.
+async fn successor_among<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+    except: Uuid,
+    active_only: bool,
+) -> Result<Option<Uuid>, TeamError> {
+    let admin = longest_standing(conn, team_id, except, Some(TeamRole::Admin), active_only).await?;
+    match admin {
+        Some(admin) => Ok(Some(admin)),
+        None => longest_standing(conn, team_id, except, None, active_only).await,
+    }
+}
+
+/// The member who joined first, other than `except`, with `role` when one is
+/// given. Ties on the date go to the lower id, so the answer never depends on
+/// the order Postgres happens to return rows in.
+///
+/// With `active_only`, an account scheduled for deletion or suspended is
+/// left out. Suspended reads as `auth_service::suspension_error` reads it: a
+/// suspension whose end date has passed no longer counts.
+async fn longest_standing<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+    except: Uuid,
+    role: Option<TeamRole>,
+    active_only: bool,
+) -> Result<Option<Uuid>, TeamError> {
+    let mut query = team_members::Entity::find()
+        .select_only()
+        .column(team_members::Column::UserId)
+        .filter(team_members::Column::TeamId.eq(team_id))
+        .filter(team_members::Column::UserId.ne(except));
+
+    if let Some(role) = role {
+        query = query.filter(team_members::Column::Role.eq(role.as_str()));
+    }
+
+    if active_only {
+        query = query
+            .inner_join(users::Entity)
+            .filter(users::Column::PurgeScheduledAt.is_null())
+            .filter(
+                Condition::any()
+                    .add(users::Column::SuspendedAt.is_null())
+                    .add(users::Column::SuspendedUntil.lte(chrono::Utc::now())),
+            );
+    }
+
+    Ok(query
+        .order_by_asc(team_members::Column::JoinedAt)
+        .order_by_asc(team_members::Column::UserId)
         .into_tuple()
         .one(conn)
         .await?)
@@ -709,6 +832,57 @@ async fn set_role<C: ConnectionTrait>(
     }
 
     Ok(())
+}
+
+/// The teams other than personal ones whose Captain is `user_id` and that
+/// have at least one other member: the teams a deletion request for that
+/// account would leave without a Captain.
+pub(crate) async fn captained_teams_with_others<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<Vec<teams::Model>, TeamError> {
+    let captained = teams::Entity::find()
+        .inner_join(team_members::Entity)
+        .filter(team_members::Column::UserId.eq(user_id))
+        .filter(team_members::Column::Role.eq(TeamRole::Captain.as_str()))
+        .filter(teams::Column::Personal.eq(false))
+        .order_by_asc(teams::Column::Slug)
+        .all(conn)
+        .await?;
+
+    let mut with_others = Vec::new();
+    for team in captained {
+        let others = team_members::Entity::find()
+            .filter(team_members::Column::TeamId.eq(team.id))
+            .filter(team_members::Column::UserId.ne(user_id))
+            .count(conn)
+            .await?;
+
+        if others > 0 {
+            with_others.push(team);
+        }
+    }
+
+    Ok(with_others)
+}
+
+/// The teams other than personal ones whose Captain is `user_id`, in a
+/// fixed order.
+pub(crate) async fn captained_teams<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<Vec<Uuid>, TeamError> {
+    Ok(teams::Entity::find()
+        .select_only()
+        .column(teams::Column::Id)
+        .inner_join(team_members::Entity)
+        .filter(team_members::Column::UserId.eq(user_id))
+        .filter(team_members::Column::Role.eq(TeamRole::Captain.as_str()))
+        .filter(teams::Column::Personal.eq(false))
+        .order_by_asc(teams::Column::Id)
+        .into_tuple()
+        .all(conn)
+        .await?)
 }
 
 // ---- Personal team auto-creation (3.6) -------------------------------

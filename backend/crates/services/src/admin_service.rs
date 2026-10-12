@@ -7,7 +7,7 @@ use crate::{
     password_service::{self, PasswordError},
     session_service::{self, SessionError, revoke_all},
     storage_service::{AvatarKind, ObjectStore, ObjectsToPurge},
-    team_service::{self, TeamError},
+    team_service::{self, Succession, TeamError},
     workspace_service::{self, WorkspaceError},
 };
 use chrono::{Duration, Utc};
@@ -39,6 +39,11 @@ pub enum AdminError {
     /// An admin acting on their own account, where it makes no sense.
     #[error("self target")]
     SelfTarget,
+
+    /// A deletion request for the Captain of teams that have other members,
+    /// named here by slug: each needs its Captain role transferred first.
+    #[error("captain of teams with other members, transfer first: {}", .teams.join(", "))]
+    CaptainMustTransfer { teams: Vec<String> },
 
     #[error(transparent)]
     Session(#[from] SessionError),
@@ -282,6 +287,11 @@ pub struct DeletionRequest<'a> {
 /// performs the actual cascade delete once `purge_scheduled_at` is reached.
 /// `IllicitContent`/`SecurityThreat` bypass the grace period entirely, same
 /// immediate cascade as before.
+///
+/// A `Standard` request is refused while the account is the Captain of a
+/// team that has other members: the role goes to one of them by transfer
+/// first. An immediate deletion does not wait for that, and hands each such
+/// team to a successor itself (see `delete_account_rows`).
 pub async fn delete_user(
     db: &DatabaseConnection,
     redis: &mut ConnectionManager,
@@ -311,6 +321,23 @@ pub async fn delete_user(
     let purge_date: Option<DateTimeWithTimeZone> = match kind {
         DeletionKind::Standard => {
             let txn = db.begin().await?;
+
+            // Locked before the check: a transfer naming this account Captain
+            // takes the same row, so it either lands first and is refused
+            // here, or waits and then finds the account scheduled.
+            users::Entity::find_by_id(user.id)
+                .lock_exclusive()
+                .one(&txn)
+                .await?
+                .ok_or(AdminError::UserNotFound)?;
+
+            let captained = team_service::captained_teams_with_others(&txn, user.id).await?;
+            if !captained.is_empty() {
+                return Err(AdminError::CaptainMustTransfer {
+                    teams: captained.into_iter().map(|team| team.slug).collect(),
+                });
+            }
+
             let purge_scheduled_at = (Utc::now() + Duration::days(30)).fixed_offset();
 
             users::Entity::update_many()
@@ -838,7 +865,7 @@ async fn delete_account(
     )
     .await?;
 
-    let objects = delete_account_rows(&txn, user_id).await?;
+    let objects = delete_account_rows(&txn, user_id, record.ctx).await?;
     txn.commit().await?;
 
     store.purge(objects).await;
@@ -846,14 +873,21 @@ async fn delete_account(
 }
 
 /// The database half of `delete_account`: the account's solo workspaces, its
-/// personal team with that team's workspaces, then the account. Returns
-/// every object to purge once the caller has committed.
+/// personal team with that team's workspaces, the other teams it is still
+/// Captain of, then the account. Returns every object to purge once the
+/// caller has committed.
 ///
-/// A team the account merely belongs to is not touched; its membership goes
-/// with the account through the cascade.
+/// A team it is still Captain of goes with it when it was the only member,
+/// and otherwise gets a successor (`team_service::succeed_captain`), each
+/// promotion audited under `ctx`. For the scheduled purge this is a safety
+/// net: the request was refused while the account captained a team with
+/// other members, but the team may have changed since. A team the account
+/// merely belongs to is not touched; its membership goes with the account
+/// through the cascade.
 async fn delete_account_rows<C: ConnectionTrait>(
     conn: &C,
     user_id: Uuid,
+    ctx: &AuditContext,
 ) -> Result<ObjectsToPurge, AdminError> {
     // Locked first: a solo workspace or a personal team created for this
     // account meanwhile waits on this row, then fails on its foreign key,
@@ -888,6 +922,30 @@ async fn delete_account_rows<C: ConnectionTrait>(
         .await?;
     if let Some(team_id) = personal_team {
         objects.add(team_service::delete_team_rows(conn, team_id).await?);
+    }
+
+    for team_id in team_service::captained_teams(conn, user_id).await? {
+        match team_service::succeed_captain(conn, team_id, user_id).await? {
+            Succession::TeamDeleted(team_objects) => objects.add(team_objects),
+            Succession::NoLongerCaptain => {}
+            Succession::Promoted(successor) => {
+                audit_service::record(
+                    conn,
+                    domain::types::AuditAction::TeamCaptainPromoted,
+                    ctx,
+                    audit_service::AuditTarget {
+                        user_id: Some(successor),
+                        team_id: Some(team_id),
+                        workspace_id: None,
+                    },
+                    None,
+                    // The departing Captain is named here only, by id: the
+                    // account is gone once this commits.
+                    serde_json::json!({ "previous_captain": user_id }),
+                )
+                .await?;
+            }
+        }
     }
 
     objects.add(ObjectsToPurge::avatar(AvatarKind::User, user_id));

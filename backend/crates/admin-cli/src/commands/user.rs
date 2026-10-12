@@ -147,6 +147,14 @@ fn report(err: AdminError) -> anyhow::Error {
             eprintln!("Error: refusing to target the account you are running as.");
             std::process::exit(1);
         }
+        AdminError::CaptainMustTransfer { teams } => {
+            eprintln!(
+                "Error: this account is the Captain of teams that have other members: {}.\n\
+                 Transfer each one first (pwnforge-admin team transfer <slug> <user>).",
+                teams.join(", ")
+            );
+            std::process::exit(1);
+        }
         other => other.into(),
     }
 }
