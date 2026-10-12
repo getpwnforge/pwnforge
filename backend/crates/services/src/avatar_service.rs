@@ -1,6 +1,6 @@
 // backend/crates/services/src/avatar_service.rs
 use crate::storage_service::{
-    AvatarKind, AvatarSize, Bucket, ObjectStore, StorageError, avatar_key, avatar_prefix,
+    AvatarKind, AvatarSize, Bucket, ObjectStore, ObjectsToPurge, StorageError, avatar_key,
     avatar_version_prefix,
 };
 use chrono::Utc;
@@ -268,9 +268,9 @@ pub async fn read_current(
 
 /// Clears the avatar and purges every version the entity ever had.
 ///
-/// Uses the entity prefix rather than the current version: an interrupted
-/// upload can leave versions behind that no row names, and this is the only
-/// thing that ever collects them.
+/// Purges by entity prefix rather than by current version: an interrupted
+/// upload can leave versions behind that no row names, and this, with the
+/// deletion of the entity itself, is what collects them.
 pub async fn remove(
     db: &DatabaseConnection,
     store: &ObjectStore,
@@ -278,13 +278,7 @@ pub async fn remove(
     id: Uuid,
 ) -> Result<(), AvatarError> {
     set_version(db, kind, id, None).await?;
-
-    if let Err(error) = store
-        .delete_prefix(Bucket::Avatars, &avatar_prefix(kind, id))
-        .await
-    {
-        tracing::warn!(?error, ?kind, %id, "could not purge avatar objects");
-    }
+    store.purge(ObjectsToPurge::avatar(kind, id)).await;
 
     Ok(())
 }

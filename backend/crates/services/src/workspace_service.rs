@@ -8,10 +8,14 @@ use domain::dto::workspace::{
 use domain::entities::{team_members, users, workspace_favorites, workspace_members, workspaces};
 
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    Set, TransactionTrait,
+};
 use std::str::FromStr;
 use uuid::Uuid;
 
+use crate::storage_service::{AvatarKind, ObjectStore, ObjectsToPurge};
 use crate::{permissions_service, slug_service, team_service};
 
 #[derive(Debug, thiserror::Error)]
@@ -385,18 +389,37 @@ pub async fn update_workspace(
     active_model.update(db).await.map_err(Into::into)
 }
 
+/// Deletes a workspace, then its objects once the deletion is committed.
 pub async fn delete_workspace(
     db: &DatabaseConnection,
+    store: &ObjectStore,
     workspace_id: Uuid,
 ) -> Result<(), WorkspaceError> {
+    let txn = db.begin().await?;
+    let objects = delete_workspace_rows(&txn, workspace_id).await?;
+    txn.commit().await?;
+
+    store.purge(objects).await;
+    Ok(())
+}
+
+/// The database half of `delete_workspace`, for a caller that deletes more
+/// in the same transaction: deletes the row, which takes its members,
+/// favourites, invitations and tags with it, and returns the objects to purge
+/// once the caller has committed.
+pub(crate) async fn delete_workspace_rows<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+) -> Result<ObjectsToPurge, WorkspaceError> {
     let result = workspaces::Entity::delete_by_id(workspace_id)
-        .exec(db)
+        .exec(conn)
         .await?;
 
     if result.rows_affected == 0 {
         return Err(WorkspaceError::WorkspaceNotFound);
     }
-    Ok(())
+
+    Ok(ObjectsToPurge::avatar(AvatarKind::Workspace, workspace_id))
 }
 
 pub async fn archive_workspace(

@@ -171,6 +171,25 @@ impl ObjectStore {
         }
     }
 
+    /// Deletes everything `objects` names, best effort: each failure is logged
+    /// at warn with its prefix and the rest carries on, and nothing is returned
+    /// to the caller.
+    ///
+    /// Called once the rows naming these objects are committed as deleted.
+    /// The row is the source of truth, so an object that could not be deleted
+    /// is a few stray bytes rather than a reason to undo a deletion.
+    pub async fn purge(&self, objects: ObjectsToPurge) {
+        for prefix in objects.avatar_prefixes {
+            if let Err(error) = self.delete_prefix(Bucket::Avatars, &prefix).await {
+                tracing::warn!(
+                    ?error,
+                    prefix,
+                    "could not purge objects, they stay in the bucket"
+                );
+            }
+        }
+    }
+
     /// `HeadBucket` on both buckets. Called at boot so a misconfigured or
     /// unprovisioned instance fails to start rather than failing on a user's
     /// first upload.
@@ -477,6 +496,31 @@ pub fn avatar_version_prefix(kind: AvatarKind, id: Uuid, version: Uuid) -> Strin
 /// entity is deleted.
 pub fn avatar_prefix(kind: AvatarKind, id: Uuid) -> String {
     format!("avatars/{}/{}/", kind.segment(), id)
+}
+
+/// The objects of deleted entities, collected while their rows still say
+/// which ids had any, and purged by `ObjectStore::purge` after the commit.
+///
+/// Prefixes rather than keys: every version of an avatar sits under its
+/// entity's prefix, and an interrupted upload or a failed cleanup can leave
+/// versions that no row names any more. A prefix collects those too.
+#[derive(Debug, Default, PartialEq, Eq)]
+#[must_use = "the objects are only deleted when this is purged, after the commit"]
+pub struct ObjectsToPurge {
+    avatar_prefixes: Vec<String>,
+}
+
+impl ObjectsToPurge {
+    /// Every avatar object of one entity.
+    pub fn avatar(kind: AvatarKind, id: Uuid) -> Self {
+        Self {
+            avatar_prefixes: vec![avatar_prefix(kind, id)],
+        }
+    }
+
+    pub fn add(&mut self, other: ObjectsToPurge) {
+        self.avatar_prefixes.extend(other.avatar_prefixes);
+    }
 }
 
 /// Key for a challenge attachment: `{workspace_id}/{challenge_id}/{attachment_id}`.
@@ -957,6 +1001,42 @@ mod tests {
         assert_eq!(memory.len(), 3, "only the three versions must be gone");
         assert!(memory.contains(Bucket::Avatars, &keep_other_entity));
         assert!(memory.contains(Bucket::Avatars, &keep_other_kind));
+    }
+
+    /// A purge takes every version of every entity it names, stale ones
+    /// included, and nothing else.
+    #[tokio::test]
+    async fn a_purge_removes_every_version_of_the_named_entities_only() {
+        let store = ObjectStore::Memory(MemoryStore::new());
+        let team = Uuid::now_v7();
+        let workspace = Uuid::now_v7();
+        let kept = Uuid::now_v7();
+
+        for (kind, id) in [
+            (AvatarKind::Team, team),
+            (AvatarKind::Workspace, workspace),
+            (AvatarKind::Workspace, workspace),
+            (AvatarKind::Workspace, kept),
+        ] {
+            store
+                .put(
+                    Bucket::Avatars,
+                    &avatar_key(kind, id, Uuid::now_v7(), AvatarSize::Small),
+                    vec![1],
+                    "image/webp",
+                )
+                .await
+                .unwrap();
+        }
+
+        let mut objects = ObjectsToPurge::avatar(AvatarKind::Team, team);
+        objects.add(ObjectsToPurge::avatar(AvatarKind::Workspace, workspace));
+        store.purge(objects).await;
+
+        let ObjectStore::Memory(memory) = &store else {
+            unreachable!("constructed as Memory above")
+        };
+        assert_eq!(memory.len(), 1, "only the unnamed workspace's avatar stays");
     }
 
     /// The read limit is enforced by the store, not by its caller, so no

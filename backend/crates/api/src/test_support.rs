@@ -11,8 +11,11 @@ use domain::entities::{team_members, teams, users, workspaces};
 use domain::types::AccentColor;
 use migration::MigratorTrait;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DbBackend, Set, Statement};
+use services::avatar_service;
 use services::config::{Config, EmailBackend, SmtpTls, StorageConfig};
-use services::storage_service::{ObjectStore, S3Store};
+use services::storage_service::{
+    AvatarKind, AvatarSize, Bucket, ObjectStore, S3Store, StorageError, avatar_key,
+};
 use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -20,6 +23,46 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 pub(crate) const JWT_SECRET: &str = "test-secret-at-least-thirty-two-characters-long";
+
+/// A real 2x2 RGBA PNG. Small enough to inline, real enough that the decoder
+/// accepts it, which is the point: a hand-waved byte string would be rejected
+/// by the allowlist and the upload under test would never run.
+pub(crate) const TINY_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d,
+    0x24, 0x00, 0x00, 0x00, 0x16, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x60, 0x60, 0x68, 0xf8,
+    0x9f, 0x02, 0xc4, 0x0c, 0x0c, 0x29, 0x40, 0x06, 0x10, 0x03, 0x00, 0x39, 0x80, 0x07, 0x8d, 0xd8,
+    0xcd, 0x2b, 0xa8, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+/// The bucket the router under test writes to, for checking what it holds.
+pub(crate) fn store() -> ObjectStore {
+    ObjectStore::S3(S3Store::new(&storage_config()))
+}
+
+/// Gives an entity an avatar through the service, and returns its version.
+pub(crate) async fn upload_avatar(
+    db: &sea_orm::DatabaseConnection,
+    kind: AvatarKind,
+    id: Uuid,
+) -> Uuid {
+    avatar_service::upload(db, &store(), kind, id, TINY_PNG.to_vec())
+        .await
+        .expect("the avatar upload must succeed")
+}
+
+/// Whether the bucket still holds the large rendition of that version.
+pub(crate) async fn avatar_stored(kind: AvatarKind, id: Uuid, version: Uuid) -> bool {
+    let key = avatar_key(kind, id, version, AvatarSize::Large);
+    match store()
+        .get(Bucket::Avatars, &key, avatar_service::MAX_RENDITION_BYTES)
+        .await
+    {
+        Ok(_) => true,
+        Err(StorageError::NotFound) => false,
+        Err(error) => panic!("reading {key} failed: {error}"),
+    }
+}
 
 pub(crate) fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_owned())

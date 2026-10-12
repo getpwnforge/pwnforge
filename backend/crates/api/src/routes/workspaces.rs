@@ -163,7 +163,7 @@ async fn delete_workspace(
     State(state): State<AppState>,
     member: WorkspaceMember<role::Captain>,
 ) -> Result<StatusCode, AppError> {
-    workspace_service::delete_workspace(&state.db, member.workspace.id).await?;
+    workspace_service::delete_workspace(&state.db, &state.storage, member.workspace.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -272,14 +272,15 @@ async fn list_members(
 #[cfg(test)]
 mod tests {
     use crate::test_support::{
-        add_team_member, app, create_solo_workspace, create_team, create_team_workspace,
-        create_user, db, request_as, unique,
+        add_team_member, app, avatar_stored, create_solo_workspace, create_team,
+        create_team_workspace, create_user, db, request_as, unique, upload_avatar,
     };
     use axum::http::StatusCode;
     use domain::dto::team::TeamRole;
     use domain::entities::{workspace_favorites, workspaces};
     use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
     use serde_json::{Value, json};
+    use services::storage_service::AvatarKind;
     use services::workspace_service;
     use uuid::Uuid;
 
@@ -816,6 +817,35 @@ mod tests {
             "the excluded member must not be listed"
         );
         assert_eq!(ids.len(), 3);
+    }
+
+    /// Deleting a workspace takes its avatar out of the bucket too: once the
+    /// row is gone, nothing would name those objects again.
+    #[tokio::test]
+    async fn deleting_a_workspace_purges_its_avatar() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let version = upload_avatar(&db, AvatarKind::Workspace, f.workspace.id).await;
+        assert!(
+            avatar_stored(AvatarKind::Workspace, f.workspace.id, version).await,
+            "control: the avatar is in the bucket"
+        );
+
+        let (status, _) = request_as(
+            &app,
+            "DELETE",
+            &ws_uri(&f.workspace.slug),
+            Some(f.captain),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        assert!(
+            !avatar_stored(AvatarKind::Workspace, f.workspace.id, version).await,
+            "the deleted workspace's avatar must be purged"
+        );
     }
 
     #[tokio::test]
