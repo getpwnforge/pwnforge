@@ -5,7 +5,7 @@ use std::str::FromStr;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, ExprTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
+    EntityTrait, ExprTrait, PaginatorTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -19,6 +19,7 @@ use domain::entities::{
 use domain::types::AccentColor;
 
 use crate::config::Config;
+use crate::storage_service::{AvatarKind, ObjectStore, ObjectsToPurge};
 use crate::{auth_service, email_service, instance_service, slug_service, token_service};
 
 #[derive(Debug, thiserror::Error)]
@@ -266,14 +267,55 @@ pub async fn update_team(
     Ok(updated_team)
 }
 
-pub async fn delete_team(db: &DatabaseConnection, team_id: Uuid) -> Result<(), TeamError> {
-    let result = teams::Entity::delete_by_id(team_id).exec(db).await?;
+/// Deletes a team with its workspaces, then their objects once the deletion
+/// is committed.
+pub async fn delete_team(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    team_id: Uuid,
+) -> Result<(), TeamError> {
+    let txn = db.begin().await?;
+    let objects = delete_team_rows(&txn, team_id).await?;
+    txn.commit().await?;
 
-    if result.rows_affected == 0 {
-        return Err(TeamError::TeamNotFound);
+    store.purge(objects).await;
+    Ok(())
+}
+
+/// The database half of `delete_team`, for a caller that deletes more in the
+/// same transaction. Returns the objects to purge once the caller has
+/// committed: the team's avatar and those of all its workspaces.
+///
+/// The workspace ids are read before the delete because the cascade removes
+/// those rows, and with them the only record of which objects were theirs.
+/// The team row is locked first, so a workspace created meanwhile waits on
+/// it rather than landing between the read and the cascade.
+pub(crate) async fn delete_team_rows<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+) -> Result<ObjectsToPurge, TeamError> {
+    teams::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(conn)
+        .await?
+        .ok_or(TeamError::TeamNotFound)?;
+
+    let workspace_ids: Vec<Uuid> = workspaces::Entity::find()
+        .select_only()
+        .column(workspaces::Column::Id)
+        .filter(workspaces::Column::TeamId.eq(team_id))
+        .into_tuple()
+        .all(conn)
+        .await?;
+
+    teams::Entity::delete_by_id(team_id).exec(conn).await?;
+
+    let mut objects = ObjectsToPurge::avatar(AvatarKind::Team, team_id);
+    for workspace_id in workspace_ids {
+        objects.add(ObjectsToPurge::avatar(AvatarKind::Workspace, workspace_id));
     }
 
-    Ok(())
+    Ok(objects)
 }
 
 // ---- Members ----------------------------------------------------------

@@ -159,7 +159,7 @@ async fn delete_team(
     let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
     team_service::require_role(my_role, TeamRole::Captain)?;
 
-    team_service::delete_team(&state.db, team.id).await?;
+    team_service::delete_team(&state.db, &state.storage, team.id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -426,4 +426,65 @@ async fn reject_invitation_by_id(
 ) -> Result<StatusCode, AppError> {
     team_service::reject_invitation_by_id(&state.db, invitation_id, user.id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support::{
+        app, avatar_stored, create_team, create_team_workspace, create_user, db, request_as,
+        upload_avatar,
+    };
+    use axum::http::StatusCode;
+    use domain::entities::teams;
+    use sea_orm::EntityTrait;
+    use services::storage_service::AvatarKind;
+
+    /// Deleting a team takes its avatar out of the bucket, and those of every
+    /// workspace the cascade deletes with it.
+    #[tokio::test]
+    async fn deleting_a_team_purges_its_avatar_and_its_workspaces_avatars() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let team_id = create_team(&db, captain).await;
+        let first = create_team_workspace(&db, team_id, "First").await;
+        let second = create_team_workspace(&db, team_id, "Second").await;
+
+        let mut avatars = Vec::new();
+        for (kind, id) in [
+            (AvatarKind::Team, team_id),
+            (AvatarKind::Workspace, first.id),
+            (AvatarKind::Workspace, second.id),
+        ] {
+            let version = upload_avatar(&db, kind, id).await;
+            assert!(
+                avatar_stored(kind, id, version).await,
+                "control: the {kind:?} avatar is in the bucket"
+            );
+            avatars.push((kind, id, version));
+        }
+
+        let slug = teams::Entity::find_by_id(team_id)
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the team must exist")
+            .slug;
+        let (status, _) = request_as(
+            &app,
+            "DELETE",
+            &format!("/api/v1/teams/{slug}"),
+            Some(captain),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        for (kind, id, version) in avatars {
+            assert!(
+                !avatar_stored(kind, id, version).await,
+                "the {kind:?} avatar of {id} must be purged"
+            );
+        }
+    }
 }
