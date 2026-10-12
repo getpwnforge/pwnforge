@@ -18,9 +18,12 @@ use domain::types::ContactCategory;
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use sea_orm::Database;
-use services::config::{Config, EmailBackend, SmtpTls, StorageConfig};
+use services::config::Config;
 use services::contact_service::{self, ContactError};
 use services::rate_limit_service;
+
+#[path = "common/config.rs"]
+mod config;
 
 async fn connect_redis() -> ConnectionManager {
     let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned());
@@ -56,41 +59,8 @@ fn fresh_address() -> IpAddr {
 /// through, nothing else would stop it.
 fn config() -> Config {
     Config {
-        port: 0,
-        public_url: "http://localhost".to_owned(),
-        cors_origin: "http://localhost:5173".to_owned(),
-        setup_token: None,
-        database_url: String::new(),
-        database_max_connections: 1,
-        redis_url: String::new(),
-        jwt_secret: "x".repeat(32),
-        encryption_key: "x".repeat(32),
-        turnstile_site_key: None,
-        turnstile_secret_key: None,
-        cookie_secure: false,
-        trusted_proxy_count: 0,
-        block_disposable_emails: false,
-        check_pwned_passwords: false,
-        email_backend: EmailBackend::Console,
-        email_from: String::new(),
         support_email: Some("support@example.test".to_owned()),
-        smtp_host: String::new(),
-        smtp_port: 0,
-        smtp_username: String::new(),
-        smtp_password: String::new(),
-        smtp_tls: SmtpTls::None,
-        resend_api_key: String::new(),
-        storage: StorageConfig {
-            endpoint: None,
-            region: "unused".to_owned(),
-            access_key_id: "unused".to_owned(),
-            secret_access_key: "unused".to_owned(),
-            force_path_style: true,
-            bucket_attachments: "unused".to_owned(),
-            bucket_avatars: "unused".to_owned(),
-            key_prefix: None,
-            public_base_url: None,
-        },
+        ..config::config()
     }
 }
 

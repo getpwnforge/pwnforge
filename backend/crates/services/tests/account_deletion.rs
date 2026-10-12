@@ -17,17 +17,19 @@ use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait
 use services::admin_service::{self, DeletionKind, DeletionRequest, PurgeOutcome};
 use services::audit_service::AuditContext;
 use services::avatar_service;
-use services::config::{Config, EmailBackend, SmtpTls};
 use services::storage_service::{
     AvatarKind, AvatarSize, Bucket, ObjectStore, ObjectsToPurge, S3Store, StorageError, avatar_key,
 };
 use uuid::Uuid;
 
+#[path = "common/config.rs"]
+mod config;
 #[path = "common/scratch.rs"]
 mod scratch;
 #[path = "common/storage.rs"]
 mod storage;
 
+use config::config;
 use scratch::in_scratch_database;
 use storage::storage_config;
 
@@ -460,36 +462,4 @@ async fn an_object_store_failure_keeps_the_deletion() {
         db.close().await.ok();
     })
     .await;
-}
-
-/// Only what `delete_user` reaches: mail goes to the console, and the
-/// account has no address to send to anyway.
-fn config() -> Config {
-    Config {
-        port: 0,
-        public_url: "http://localhost".to_owned(),
-        cors_origin: "http://localhost:5173".to_owned(),
-        setup_token: None,
-        database_url: String::new(),
-        database_max_connections: 1,
-        redis_url: String::new(),
-        jwt_secret: "x".repeat(32),
-        encryption_key: "x".repeat(32),
-        turnstile_site_key: None,
-        turnstile_secret_key: None,
-        cookie_secure: false,
-        trusted_proxy_count: 0,
-        block_disposable_emails: false,
-        check_pwned_passwords: false,
-        email_backend: EmailBackend::Console,
-        email_from: String::new(),
-        support_email: None,
-        smtp_host: String::new(),
-        smtp_port: 0,
-        smtp_username: String::new(),
-        smtp_password: String::new(),
-        smtp_tls: SmtpTls::None,
-        resend_api_key: String::new(),
-        storage: storage_config(),
-    }
 }

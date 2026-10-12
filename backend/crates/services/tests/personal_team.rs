@@ -21,15 +21,17 @@ use sea_orm::{
     IsolationLevel, PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
 use services::audit_service::AuditContext;
-use services::config::{Config, EmailBackend, SmtpTls, StorageConfig};
 use services::{auth_service, auth_token_service, setup_service, team_service};
 use uuid::Uuid;
 
+#[path = "common/config.rs"]
+mod config;
 #[path = "common/migrations.rs"]
 mod migrations;
 #[path = "common/scratch.rs"]
 mod scratch;
 
+use config::config;
 use migrations::position_of;
 use scratch::{base_url, in_scratch_database};
 
@@ -244,48 +246,6 @@ async fn a_concurrent_creation_loses_only_the_team_not_the_transaction() {
     assert_eq!(members_of(&db, teams[0].id).await.len(), 1, "one member");
 }
 
-fn setup_config() -> Config {
-    Config {
-        port: 0,
-        public_url: "http://localhost".to_owned(),
-        cors_origin: "http://localhost:5173".to_owned(),
-        setup_token: None,
-        database_url: String::new(),
-        database_max_connections: 5,
-        redis_url: String::new(),
-        jwt_secret: "x".repeat(32),
-        encryption_key: "x".repeat(32),
-        turnstile_site_key: None,
-        turnstile_secret_key: None,
-        cookie_secure: false,
-        trusted_proxy_count: 0,
-        block_disposable_emails: false,
-        // No network call to the breach database from a test.
-        check_pwned_passwords: false,
-        email_backend: EmailBackend::Console,
-        email_from: String::new(),
-        support_email: None,
-        smtp_host: String::new(),
-        smtp_port: 0,
-        smtp_username: String::new(),
-        smtp_password: String::new(),
-        smtp_tls: SmtpTls::None,
-        resend_api_key: String::new(),
-        // Not used by setup.
-        storage: StorageConfig {
-            endpoint: None,
-            region: "garage".to_owned(),
-            access_key_id: "unused".to_owned(),
-            secret_access_key: "unused".to_owned(),
-            force_path_style: true,
-            bucket_attachments: "unused-attachments".to_owned(),
-            bucket_avatars: "unused-avatars".to_owned(),
-            key_prefix: None,
-            public_base_url: None,
-        },
-    }
-}
-
 /// The administrator created by the setup wizard is an administration
 /// account, and gets no personal team.
 #[tokio::test]
@@ -310,7 +270,7 @@ async fn setup_creates_no_personal_team_for_the_admin() {
             hide_landing_page: false,
         };
 
-        let (admin, _email) = setup_service::complete(&db, &setup_config(), &ctx, payload)
+        let (admin, _email) = setup_service::complete(&db, &config(), &ctx, payload)
             .await
             .expect("setup must complete on a fresh instance");
 
