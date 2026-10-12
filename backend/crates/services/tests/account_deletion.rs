@@ -3,9 +3,9 @@
 //! included, hand each other team it is still Captain of to a successor,
 //! active members first, or delete it when nobody else is left, leave a team
 //! the account merely belongs to alone, go on past an account that cannot be
-//! deleted, and keep the deletion when the object store does not answer. A
-//! deletion request is refused while the account captains a team with other
-//! members.
+//! deleted, keep the deletion when the object store does not answer, and
+//! name the account by id only in their audit entries. A deletion request
+//! is refused while the account captains a team with other members.
 //!
 //! Every test works in a throwaway database: the purge deletes every account
 //! past its deadline, and the shared database holds the accounts of other
@@ -770,6 +770,79 @@ async fn a_deletion_request_from_the_captain_of_a_team_with_members_is_refused()
             scheduled(&db, captain).await,
             "the account must be scheduled"
         );
+
+        db.close().await.ok();
+    })
+    .await;
+}
+
+async fn username_of(db: &DatabaseConnection, user: Uuid) -> String {
+    users::Entity::find_by_id(user)
+        .one(db)
+        .await
+        .expect("the lookup must succeed")
+        .expect("the account must exist")
+        .username
+}
+
+/// The entries a deletion writes keep the account's id and the kind of
+/// deletion in their own data, since their target is set to NULL with the
+/// account, and never its username: the purge's entry and an immediate
+/// deletion's alike.
+#[tokio::test]
+async fn deletion_audit_entries_keep_the_account_id_and_kind() {
+    in_scratch_database(|db| async move {
+        migrated(&db).await;
+        let purged = create_user(&db, true).await;
+        let deleted = create_user(&db, false).await;
+        let usernames = [
+            username_of(&db, purged).await,
+            username_of(&db, deleted).await,
+        ];
+
+        assert_eq!(
+            purge(&db, &store()).await,
+            PurgeOutcome {
+                purged: 1,
+                failed: 0
+            }
+        );
+        delete(&db, deleted, DeletionKind::SecurityThreat)
+            .await
+            .expect("the immediate deletion must succeed");
+
+        for (action, user, kind, username) in [
+            ("user.purged", purged, "standard", &usernames[0]),
+            (
+                "user.delete_by_admin",
+                deleted,
+                "security_threat",
+                &usernames[1],
+            ),
+        ] {
+            let entry = instance_audit_logs::Entity::find()
+                .filter(instance_audit_logs::Column::Action.eq(action))
+                .one(&db)
+                .await
+                .expect("the audit lookup must succeed")
+                .unwrap_or_else(|| panic!("the {action} entry must exist"));
+
+            assert_eq!(
+                entry.target_user_id, None,
+                "{action}: the target goes with the account"
+            );
+            assert_eq!(
+                entry.meta["user_id"],
+                user.to_string(),
+                "{action}: the account's id"
+            );
+            assert_eq!(entry.meta["kind"], kind, "{action}: the kind of deletion");
+            assert!(
+                !entry.meta.to_string().contains(username.as_str()),
+                "{action}: no username in the entry, got {}",
+                entry.meta
+            );
+        }
 
         db.close().await.ok();
     })

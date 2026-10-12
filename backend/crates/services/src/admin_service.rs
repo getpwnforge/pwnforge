@@ -259,6 +259,7 @@ pub async fn unsuspend_user(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeletionKind {
     Standard,
     IllicitContent,
@@ -380,9 +381,8 @@ pub async fn delete_user(
                 action: domain::types::AuditAction::UserDeleteByAdmin,
                 ctx,
                 reason,
+                kind,
                 details: serde_json::json!({
-                    "kind": kind.as_str(),
-                    "username": user.username,
                     "is_instance_admin": user.is_instance_admin,
                     "created_at": user.created_at,
                 }),
@@ -808,6 +808,8 @@ pub async fn purge_scheduled_deletions(
                 action: domain::types::AuditAction::UserPurged,
                 ctx: &ctx,
                 reason: None,
+                // The request that scheduled it was a standard one.
+                kind: DeletionKind::Standard,
                 details: serde_json::json!({}),
             };
 
@@ -837,6 +839,10 @@ struct DeletionRecord<'a> {
     action: domain::types::AuditAction,
     ctx: &'a AuditContext,
     reason: Option<&'a str>,
+    kind: DeletionKind,
+    /// More about the account, as a JSON object; `delete_account` adds its
+    /// id and `kind`. Never a username or an address: the entry outlives
+    /// the account, and must not keep what the deletion removes.
     details: serde_json::Value,
 }
 
@@ -851,6 +857,13 @@ async fn delete_account(
 ) -> Result<(), AdminError> {
     let txn = db.begin().await?;
 
+    // The account's id goes in the entry's own data, not only in its target:
+    // `target_user_id` is set to NULL with the account, and the entry would
+    // no longer say whom it was about.
+    let mut meta = record.details;
+    meta["user_id"] = serde_json::json!(user_id);
+    meta["kind"] = serde_json::json!(record.kind.as_str());
+
     audit_service::record(
         &txn,
         record.action,
@@ -861,7 +874,7 @@ async fn delete_account(
             workspace_id: None,
         },
         record.reason,
-        record.details,
+        meta,
     )
     .await?;
 
