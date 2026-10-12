@@ -167,11 +167,12 @@ impl MigrationTrait for Migration {
                             .to(Teams::Table, Teams::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
-                    // RESTRICT, not CASCADE: a solo workspace is the only copy
-                    // of its owner's work, so deleting the account must fail
-                    // loudly here rather than silently taking the workspace,
-                    // and everything hanging off it, with it. Account deletion
-                    // has to reassign or archive first.
+                    // RESTRICT, not CASCADE: an account is deleted through
+                    // its service, which deletes the account's solo
+                    // workspaces and their objects in the bucket. A delete
+                    // that went around the service would take the workspaces
+                    // and leave their objects behind with nothing naming
+                    // them, so it fails here instead.
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_workspaces_owner_id")

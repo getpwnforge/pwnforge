@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Background cleanup: runs hourly for the lifetime of the process.
-    tasks::cleanup::spawn(db);
+    tasks::cleanup::spawn(db, state.storage.clone());
 
     let app = app::build_router(state);
 

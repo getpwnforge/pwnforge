@@ -4,7 +4,10 @@ use domain::entities::{auth_tokens, refresh_tokens, team_invitations};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QuerySelect,
 };
-use services::{admin_service, jwt_service};
+use services::admin_service::{self, PurgeOutcome};
+use services::jwt_service;
+use services::storage_service::ObjectStore;
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -23,12 +26,12 @@ const BATCH_SIZE: u64 = 1000;
 
 /// Spawns the background cleanup loop. Returns immediately: the task runs for
 /// the lifetime of the process.
-pub fn spawn(db: DatabaseConnection) {
+pub fn spawn(db: DatabaseConnection, storage: Arc<ObjectStore>) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(3600));
         loop {
             ticker.tick().await;
-            run_once(&db).await;
+            run_once(&db, &storage).await;
         }
     });
 }
@@ -36,7 +39,7 @@ pub fn spawn(db: DatabaseConnection) {
 /// Each table is cleaned independently: a failure on one must not skip the
 /// other. Errors are logged and retried on the next tick, never propagated:
 /// cleanup must not take the server down.
-async fn run_once(db: &DatabaseConnection) {
+async fn run_once(db: &DatabaseConnection, storage: &ObjectStore) {
     match clean_refresh_tokens(db).await {
         Ok(n) if n > 0 => tracing::info!(deleted = n, "refresh tokens cleaned"),
         Ok(_) => {}
@@ -55,9 +58,15 @@ async fn run_once(db: &DatabaseConnection) {
         Err(err) => tracing::error!(error = ?err, "team invitation cleanup failed"),
     }
 
-    match admin_service::purge_scheduled_deletions(db).await {
-        Ok(n) if n > 0 => tracing::info!(purged = n, "scheduled account deletions purged"),
-        Ok(_) => {}
+    // Each account that failed is already logged with its id by the purge.
+    match admin_service::purge_scheduled_deletions(db, storage).await {
+        Ok(PurgeOutcome {
+            purged: 0,
+            failed: 0,
+        }) => {}
+        Ok(PurgeOutcome { purged, failed }) => {
+            tracing::info!(purged, failed, "scheduled account deletions purged")
+        }
         Err(err) => tracing::error!(error = ?err, "scheduled deletion purge failed"),
     }
 }

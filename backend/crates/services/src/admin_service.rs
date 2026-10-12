@@ -6,13 +6,18 @@ use crate::{
     email_service::{self, EmailError},
     password_service::{self, PasswordError},
     session_service::{self, SessionError, revoke_all},
+    storage_service::{AvatarKind, ObjectStore, ObjectsToPurge},
+    team_service::{self, TeamError},
+    workspace_service::{self, WorkspaceError},
 };
 use chrono::{Duration, Utc};
-use domain::entities::users;
+use domain::dto::workspace::WorkspaceMode;
+use domain::entities::{teams, users, workspaces};
 use redis::{AsyncCommands, aio::ConnectionManager};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait,
-    QueryFilter, QuerySelect, TransactionTrait, prelude::DateTimeWithTimeZone, sea_query::Expr,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait, prelude::DateTimeWithTimeZone,
+    sea_query::Expr,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -52,6 +57,14 @@ pub enum AdminError {
 
     #[error(transparent)]
     Password(#[from] PasswordError),
+
+    /// Deleting an account's solo workspaces failed.
+    #[error(transparent)]
+    Workspace(#[from] WorkspaceError),
+
+    /// Deleting an account's personal team failed.
+    #[error(transparent)]
+    Team(#[from] TeamError),
 }
 
 /// Suspends an account, optionally until a date.
@@ -257,6 +270,12 @@ impl DeletionKind {
     }
 }
 
+/// What an administrator asks for when deleting an account.
+pub struct DeletionRequest<'a> {
+    pub kind: DeletionKind,
+    pub reason: Option<&'a str>,
+}
+
 /// Deletes or schedules the deletion of an account, depending on `kind`.
 /// `Standard` opens the 30-day grace period promised in the Terms (§16.5):
 /// the row is marked, not removed, and a cron job (`purge_scheduled_deletions`)
@@ -266,12 +285,14 @@ impl DeletionKind {
 pub async fn delete_user(
     db: &DatabaseConnection,
     redis: &mut ConnectionManager,
+    store: &ObjectStore,
     config: &Config,
     ctx: &AuditContext,
     user_id: Uuid,
-    kind: DeletionKind,
-    reason: Option<&str>,
+    request: DeletionRequest<'_>,
 ) -> Result<(), AdminError> {
+    let DeletionRequest { kind, reason } = request;
+
     let user = users::Entity::find_by_id(user_id)
         .one(db)
         .await?
@@ -287,10 +308,9 @@ pub async fn delete_user(
 
     let primary_email = auth_service::primary_email(db, user.id).await?;
 
-    let txn = db.begin().await?;
-
     let purge_date: Option<DateTimeWithTimeZone> = match kind {
         DeletionKind::Standard => {
+            let txn = db.begin().await?;
             let purge_scheduled_at = (Utc::now() + Duration::days(30)).fixed_offset();
 
             users::Entity::update_many()
@@ -325,34 +345,26 @@ pub async fn delete_user(
             )
             .await?;
 
+            txn.commit().await?;
             Some(purge_scheduled_at)
         }
         DeletionKind::IllicitContent | DeletionKind::SecurityThreat => {
-            audit_service::record(
-                &txn,
-                domain::types::AuditAction::UserDeleteByAdmin,
+            let record = DeletionRecord {
+                action: domain::types::AuditAction::UserDeleteByAdmin,
                 ctx,
-                audit_service::AuditTarget {
-                    user_id: Some(user.id),
-                    team_id: None,
-                    workspace_id: None,
-                },
                 reason,
-                serde_json::json!({
+                details: serde_json::json!({
                     "kind": kind.as_str(),
                     "username": user.username,
                     "is_instance_admin": user.is_instance_admin,
                     "created_at": user.created_at,
                 }),
-            )
-            .await?;
+            };
 
-            users::Entity::delete_by_id(user.id).exec(&txn).await?;
+            delete_account(db, store, user.id, record).await?;
             None
         }
     };
-
-    txn.commit().await?;
 
     invalidate_suspension_cache(redis, user.id).await;
 
@@ -715,61 +727,173 @@ pub fn suspension_cache_key(user_id: Uuid) -> String {
     format!("user:{user_id}:suspension")
 }
 
+/// What one pass of `purge_scheduled_deletions` did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PurgeOutcome {
+    pub purged: u64,
+    pub failed: u64,
+}
+
 /// Deletes every account past its purge deadline. Called from the periodic
 /// task in api/src/tasks/cleanup.rs, not from the CLI.
 ///
 /// Cannot be a single bulk DELETE like the token cleanups: each row needs its
 /// own UserPurged audit entry, same granularity as every other action here.
-pub async fn purge_scheduled_deletions(db: &DatabaseConnection) -> Result<u64, AdminError> {
+///
+/// Each account is deleted on its own. One that fails is logged and left for
+/// the next pass, and the accounts after it are still purged: the walk goes
+/// by id, past the failures, so one account that cannot be deleted can
+/// neither stop the pass nor be selected again until it ends.
+pub async fn purge_scheduled_deletions(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+) -> Result<PurgeOutcome, AdminError> {
     const BATCH_SIZE: u64 = 1000;
-    let mut total = 0;
+    let due = Utc::now();
+    let mut outcome = PurgeOutcome::default();
+    let mut after: Option<Uuid> = None;
+
+    // System-initiated: no human actor behind a scheduled purge.
+    let ctx = AuditContext {
+        actor_id: None,
+        ip_address: None,
+        user_agent: None,
+    };
 
     loop {
-        let ids: Vec<Uuid> = users::Entity::find()
+        let mut batch = users::Entity::find()
             .select_only()
             .column(users::Column::Id)
-            .filter(users::Column::PurgeScheduledAt.lte(Utc::now()))
-            .limit(BATCH_SIZE)
-            .into_tuple()
-            .all(db)
-            .await?;
-
-        if ids.is_empty() {
-            break;
+            .filter(users::Column::PurgeScheduledAt.lte(due))
+            .order_by_asc(users::Column::Id)
+            .limit(BATCH_SIZE);
+        if let Some(after) = after {
+            batch = batch.filter(users::Column::Id.gt(after));
         }
+        let ids: Vec<Uuid> = batch.into_tuple().all(db).await?;
+
+        let Some(last) = ids.last().copied() else {
+            break;
+        };
 
         for user_id in ids {
-            let txn = db.begin().await?;
-            // System-initiated: no human actor behind a scheduled purge.
-            let ctx = AuditContext {
-                actor_id: None,
-                ip_address: None,
-                user_agent: None,
+            let record = DeletionRecord {
+                action: domain::types::AuditAction::UserPurged,
+                ctx: &ctx,
+                reason: None,
+                details: serde_json::json!({}),
             };
 
-            audit_service::record(
-                &txn,
-                domain::types::AuditAction::UserPurged,
-                &ctx,
-                audit_service::AuditTarget {
-                    user_id: Some(user_id),
-                    team_id: None,
-                    workspace_id: None,
-                },
-                None,
-                serde_json::json!({}),
-            )
-            .await?;
-
-            users::Entity::delete_by_id(user_id).exec(&txn).await?;
-            txn.commit().await?;
-            total += 1;
+            match delete_account(db, store, user_id, record).await {
+                Ok(()) => outcome.purged += 1,
+                Err(error) => {
+                    tracing::error!(
+                        %user_id,
+                        ?error,
+                        "scheduled deletion of this account failed, moving on to the next"
+                    );
+                    outcome.failed += 1;
+                }
+            }
         }
 
+        after = Some(last);
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    Ok(total)
+    Ok(outcome)
+}
+
+/// The audit entry an account deletion writes, in the same transaction as
+/// the deletion itself.
+struct DeletionRecord<'a> {
+    action: domain::types::AuditAction,
+    ctx: &'a AuditContext,
+    reason: Option<&'a str>,
+    details: serde_json::Value,
+}
+
+/// Deletes one account and what is only its own, in one transaction, then
+/// purges their objects once it is committed. The only path that deletes a
+/// user row: the scheduled purge and the immediate deletions both come here.
+async fn delete_account(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    user_id: Uuid,
+    record: DeletionRecord<'_>,
+) -> Result<(), AdminError> {
+    let txn = db.begin().await?;
+
+    audit_service::record(
+        &txn,
+        record.action,
+        record.ctx,
+        audit_service::AuditTarget {
+            user_id: Some(user_id),
+            team_id: None,
+            workspace_id: None,
+        },
+        record.reason,
+        record.details,
+    )
+    .await?;
+
+    let objects = delete_account_rows(&txn, user_id).await?;
+    txn.commit().await?;
+
+    store.purge(objects).await;
+    Ok(())
+}
+
+/// The database half of `delete_account`: the account's solo workspaces, its
+/// personal team with that team's workspaces, then the account. Returns
+/// every object to purge once the caller has committed.
+///
+/// A team the account merely belongs to is not touched; its membership goes
+/// with the account through the cascade.
+async fn delete_account_rows<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<ObjectsToPurge, AdminError> {
+    // Locked first: a solo workspace or a personal team created for this
+    // account meanwhile waits on this row, then fails on its foreign key,
+    // rather than landing between the lookups below and the delete.
+    users::Entity::find_by_id(user_id)
+        .lock_exclusive()
+        .one(conn)
+        .await?
+        .ok_or(AdminError::UserNotFound)?;
+
+    let mut objects = ObjectsToPurge::default();
+
+    let solo_workspaces: Vec<Uuid> = workspaces::Entity::find()
+        .select_only()
+        .column(workspaces::Column::Id)
+        .filter(workspaces::Column::Mode.eq(WorkspaceMode::Solo.as_str()))
+        .filter(workspaces::Column::OwnerId.eq(user_id))
+        .into_tuple()
+        .all(conn)
+        .await?;
+    for workspace_id in solo_workspaces {
+        objects.add(workspace_service::delete_workspace_rows(conn, workspace_id).await?);
+    }
+
+    let personal_team: Option<Uuid> = teams::Entity::find()
+        .select_only()
+        .column(teams::Column::Id)
+        .filter(teams::Column::CreatedBy.eq(user_id))
+        .filter(teams::Column::Personal.eq(true))
+        .into_tuple()
+        .one(conn)
+        .await?;
+    if let Some(team_id) = personal_team {
+        objects.add(team_service::delete_team_rows(conn, team_id).await?);
+    }
+
+    objects.add(ObjectsToPurge::avatar(AvatarKind::User, user_id));
+    users::Entity::delete_by_id(user_id).exec(conn).await?;
+
+    Ok(objects)
 }
 
 /// Counts remaining administrators, used by demote_admin.

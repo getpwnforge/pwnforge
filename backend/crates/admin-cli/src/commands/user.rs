@@ -15,9 +15,10 @@ use clap::{Args, Subcommand};
 use dialoguer::Confirm;
 use domain::entities::users;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use services::admin_service::{self, AdminError};
+use services::admin_service::{self, AdminError, DeletionRequest};
 use services::audit_service::AuditContext;
 use services::auth_service;
+use services::storage_service::{ObjectStore, S3Store};
 use tabled::{Table, Tabled};
 use uuid::Uuid;
 
@@ -319,15 +320,22 @@ async fn delete(
     }
 
     let mut redis = ctx.redis.clone();
+    // An immediate deletion purges the account's objects, so this command
+    // needs the store the instance writes to. Built here rather than in the
+    // context: no other command touches the bucket.
+    let store = ObjectStore::S3(S3Store::new(&ctx.config.storage));
 
     admin_service::delete_user(
         &ctx.db,
         &mut redis,
+        &store,
         &ctx.config,
         &cli_ctx(ctx),
         id,
-        kind.into(),
-        reason.as_deref(),
+        DeletionRequest {
+            kind: kind.into(),
+            reason: reason.as_deref(),
+        },
     )
     .await
     .map_err(report)?;
