@@ -965,7 +965,7 @@ pub async fn create_personal_team(
         // Another transaction created it between the lookup and here. The goal
         // state is reached either way, so this is a success, not a conflict,
         // and that transaction's call inserts the Captain.
-        Err(err) if is_unique_violation(&err) => {
+        Err(err) if is_second_personal_team(&err) => {
             savepoint.rollback().await?;
             return Ok(None);
         }
@@ -986,14 +986,20 @@ pub async fn create_personal_team(
     Ok(Some(team))
 }
 
-/// Whether a database error is a unique-constraint violation.
+/// Whether a database error is `idx_teams_one_personal_per_creator` refusing
+/// a second personal team for the account, the one unique violation that
+/// means the team already exists.
 ///
-/// Mirrors `auth_service::map_unique_violation`, kept local because the only
-/// thing this module needs to know is whether the row already existed.
-fn is_unique_violation(err: &sea_orm::DbErr) -> bool {
+/// Read from the constraint's name, as `auth_service::map_unique_violation`
+/// does. Any other unique violation is a real failure: a slug another
+/// transaction took between `generate_unique_slug` and the insert would
+/// otherwise pass for a team that exists, and the account would be left
+/// without one.
+fn is_second_personal_team(err: &sea_orm::DbErr) -> bool {
     matches!(
         err.sql_err(),
-        Some(sea_orm::SqlErr::UniqueConstraintViolation(_))
+        Some(sea_orm::SqlErr::UniqueConstraintViolation(detail))
+            if detail.contains("idx_teams_one_personal_per_creator")
     )
 }
 

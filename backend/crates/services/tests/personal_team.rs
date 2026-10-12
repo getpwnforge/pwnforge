@@ -246,6 +246,62 @@ async fn a_concurrent_creation_loses_only_the_team_not_the_transaction() {
     assert_eq!(members_of(&db, teams[0].id).await.len(), 1, "one member");
 }
 
+/// A unique violation other than the one-personal-team index is a failure,
+/// not a team that already exists. A trigger in this throwaway database
+/// gives the new personal team a slug another team holds, the way another
+/// transaction taking it between `generate_unique_slug` and the insert
+/// would: the creation fails, and no personal team is left claimed.
+#[tokio::test]
+async fn a_slug_taken_meanwhile_fails_the_creation() {
+    in_scratch_database(|db| async move {
+        migration::Migrator::up(&db, None)
+            .await
+            .expect("migrations must apply");
+        let holder = create_user(&db, false).await;
+        teams::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            slug: Set("taken-by-the-test".to_owned()),
+            name: Set("Holder".to_owned()),
+            color: Set(AccentColor::default().as_str().to_owned()),
+            created_by: Set(Some(holder.id)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("the team holding the slug must insert");
+        db.execute_unprepared(
+            "CREATE FUNCTION take_the_slug() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN NEW.slug := 'taken-by-the-test'; RETURN NEW; END $$",
+        )
+        .await
+        .expect("the trigger function must be created");
+        db.execute_unprepared(
+            "CREATE TRIGGER take_the_slug BEFORE INSERT ON teams FOR EACH ROW \
+             WHEN (NEW.personal) EXECUTE FUNCTION take_the_slug()",
+        )
+        .await
+        .expect("the trigger must be created");
+
+        let user = create_user(&db, false).await;
+        let txn = db.begin().await.expect("the transaction must open");
+        let outcome = team_service::create_personal_team(&txn, &user).await;
+        txn.rollback().await.ok();
+
+        let error = outcome.expect_err("a taken slug must fail the creation");
+        assert!(
+            error.to_string().contains("slug"),
+            "the failure must be the slug's unique violation, got {error}"
+        );
+        assert!(
+            personal_teams_of(&db, user.id).await.is_empty(),
+            "no personal team must exist"
+        );
+
+        db.close().await.ok();
+    })
+    .await;
+}
+
 /// The administrator created by the setup wizard is an administration
 /// account, and gets no personal team.
 #[tokio::test]
