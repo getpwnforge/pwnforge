@@ -15,8 +15,9 @@ use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorRespon
 use domain::dto::team::{
     ChangeMemberRoleRequest, CreateInvitationRequest, CreateTeamRequest, JoinTeamRequest,
     TeamInvitationResponse, TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
+    TransferCaptaincyRequest,
 };
-use services::team_service::{self, TeamError};
+use services::team_service::{self, TeamError, TransferBy};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -26,6 +27,7 @@ pub fn router() -> Router<AppState> {
             get(get_team).patch(update_team).delete(delete_team),
         )
         .route("/teams/{slug}/members", get(list_members))
+        .route("/teams/{slug}/transfer", post(transfer_captaincy))
         .route(
             "/teams/{slug}/members/{user_id}",
             patch(change_member_role).delete(remove_member),
@@ -193,10 +195,11 @@ async fn list_members(
     responses(
         (status = 200, description = "Member role updated", body = TeamMemberResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
-        (status = 403, description = "Insufficient role, or attempts to grant/revoke Captain without being one", body = SimpleErrorResponse),
+        (status = 403, description = "Insufficient role, or an Admin touching the Captain role", body = SimpleErrorResponse),
         (status = 404, description = "Team, target member not found, or caller not a member", body = SimpleErrorResponse),
+        (status = 409, description = "captain_must_transfer: the Captain role is named or given up only through POST /api/v1/teams/{slug}/transfer", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "last_captain (would leave the team without a Captain) or invalid_body", body = UnprocessableErrorResponse),
+        (status = 422, description = "invalid_body", body = UnprocessableErrorResponse),
     )
 )]
 async fn change_member_role(
@@ -229,9 +232,9 @@ async fn change_member_role(
     security(("access_token" = [])),
     responses(
         (status = 204, description = "Member removed"),
-        (status = 403, description = "Insufficient role", body = SimpleErrorResponse),
+        (status = 403, description = "Insufficient role, or an Admin removing the Captain", body = SimpleErrorResponse),
         (status = 404, description = "Team, target member not found, or caller not a member", body = SimpleErrorResponse),
-        (status = 422, description = "last_captain: would leave the team without a Captain", body = UnprocessableErrorResponse),
+        (status = 409, description = "The Captain cannot leave. captain_must_transfer: the team has other members, transfer the role first. captain_must_delete_team: the Captain is the only member, delete the team instead", body = SimpleErrorResponse),
     )
 )]
 async fn remove_member(
@@ -250,6 +253,43 @@ async fn remove_member(
     }
 
     team_service::remove_member(&state.db, team.id, target_user_id).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/teams/{slug}/transfer",
+    tag = "Teams",
+    request_body = TransferCaptaincyRequest,
+    security(("access_token" = [])),
+    responses(
+        (status = 204, description = "The member is Captain, and the previous Captain an Admin"),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 403, description = "insufficient_role: Captain only", body = SimpleErrorResponse),
+        (status = 404, description = "team_not_found: team not found or caller not a member. member_not_found: the target is not a member of the team", body = SimpleErrorResponse),
+        (status = 409, description = "personal_team_not_transferable, target_already_captain, or target_pending_deletion: the target's account is scheduled for deletion", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "invalid_body", body = UnprocessableErrorResponse),
+    )
+)]
+async fn transfer_captaincy(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(slug): Path<String>,
+    JsonBody(payload): JsonBody<TransferCaptaincyRequest>,
+) -> Result<StatusCode, AppError> {
+    let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
+    team_service::require_role(my_role, TeamRole::Captain)?;
+
+    team_service::transfer_captaincy(
+        &state.db,
+        team.id,
+        payload.user_id,
+        TransferBy::Captain(user.id),
+    )
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -288,7 +328,7 @@ async fn list_invitations(
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 403, description = "Insufficient role, or a non-Captain tried to invite as Captain", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
-        (status = 409, description = "User is already invited or already a member", body = SimpleErrorResponse),
+        (status = 409, description = "already_invited or already_member, or captain_must_transfer: an invitation cannot grant Captain, the role moves only by transfer", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
     )
@@ -304,8 +344,9 @@ async fn create_invitation(
     let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
     team_service::require_role(my_role, TeamRole::Admin)?;
 
-    // Only a Captain may mint an invitation that grants Captain on
-    // acceptance, same reasoning as `can_manage_role`.
+    // An Admin asking for a Captain invitation is refused as before, same
+    // reasoning as `can_manage_role`. A Captain asking is refused by the
+    // service: nobody joins as Captain, the role moves only by transfer.
     if payload.default_role == TeamRole::Captain && my_role != TeamRole::Captain {
         return Err(TeamError::InsufficientRole.into());
     }
@@ -431,13 +472,370 @@ async fn reject_invitation_by_id(
 #[cfg(test)]
 mod tests {
     use crate::test_support::{
-        app, avatar_stored, create_team, create_team_workspace, create_user, db, request_as,
-        upload_avatar,
+        add_team_member, app, avatar_stored, create_team, create_team_workspace, create_user, db,
+        request_as, unique, upload_avatar,
     };
     use axum::http::StatusCode;
-    use domain::entities::teams;
-    use sea_orm::EntityTrait;
+    use domain::dto::team::TeamRole;
+    use domain::entities::{team_members, teams, users};
+    use domain::types::AccentColor;
+    use sea_orm::sea_query::Expr;
+    use sea_orm::{
+        ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    };
+    use serde_json::json;
     use services::storage_service::AvatarKind;
+    use uuid::Uuid;
+
+    async fn slug_of(db: &DatabaseConnection, team_id: Uuid) -> String {
+        teams::Entity::find_by_id(team_id)
+            .one(db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the team must exist")
+            .slug
+    }
+
+    /// The member's role, `None` once they are off the team.
+    async fn role_of(db: &DatabaseConnection, team_id: Uuid, user_id: Uuid) -> Option<String> {
+        team_members::Entity::find_by_id((team_id, user_id))
+            .one(db)
+            .await
+            .expect("the lookup must succeed")
+            .map(|member| member.role)
+    }
+
+    /// A team with `captain` as Captain and one member per role given, in
+    /// that order, and the members' ids.
+    async fn team_with(
+        db: &DatabaseConnection,
+        captain: Uuid,
+        roles: &[TeamRole],
+    ) -> (Uuid, Vec<Uuid>) {
+        let team_id = create_team(db, captain).await;
+        let mut members = Vec::new();
+        for role in roles {
+            let member = create_user(db).await;
+            add_team_member(db, team_id, member, *role).await;
+            members.push(member);
+        }
+        (team_id, members)
+    }
+
+    async fn transfer(
+        app: &axum::Router,
+        db: &DatabaseConnection,
+        team_id: Uuid,
+        caller: Uuid,
+        target: Uuid,
+    ) -> (StatusCode, serde_json::Value) {
+        request_as(
+            app,
+            "POST",
+            &format!("/api/v1/teams/{}/transfer", slug_of(db, team_id).await),
+            Some(caller),
+            Some(json!({ "user_id": target })),
+        )
+        .await
+    }
+
+    /// The Captain hands the role over: the target is Captain, and the
+    /// Captain an Admin.
+    #[tokio::test]
+    async fn a_transfer_makes_the_target_captain_and_the_captain_an_admin() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Member]).await;
+
+        let (status, _) = transfer(&app, &db, team_id, captain, members[0]).await;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            role_of(&db, team_id, members[0]).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(
+            role_of(&db, team_id, captain).await.as_deref(),
+            Some("admin")
+        );
+    }
+
+    /// Captain only: a member of any other role knows the team and gets a
+    /// 403, someone outside it a 404. Nothing changes either way.
+    #[tokio::test]
+    async fn a_transfer_by_anyone_but_the_captain_is_refused() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) =
+            team_with(&db, captain, &[TeamRole::Admin, TeamRole::Member]).await;
+        let outsider = create_user(&db).await;
+
+        for caller in [members[0], members[1]] {
+            let (status, body) = transfer(&app, &db, team_id, caller, caller).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            assert_eq!(body["error"], "insufficient_role");
+        }
+
+        let (status, body) = transfer(&app, &db, team_id, outsider, members[0]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "team_not_found");
+
+        assert_eq!(
+            role_of(&db, team_id, captain).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(
+            role_of(&db, team_id, members[0]).await.as_deref(),
+            Some("admin")
+        );
+    }
+
+    /// The target has to be on the team, and not be its Captain already.
+    #[tokio::test]
+    async fn a_transfer_to_a_non_member_or_to_the_captain_is_refused() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[TeamRole::Member]).await;
+        let outsider = create_user(&db).await;
+
+        let (status, body) = transfer(&app, &db, team_id, captain, outsider).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "member_not_found");
+
+        let (status, body) = transfer(&app, &db, team_id, captain, captain).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "target_already_captain");
+
+        assert_eq!(
+            role_of(&db, team_id, captain).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(role_of(&db, team_id, outsider).await, None);
+    }
+
+    /// A personal team stays with the account it belongs to.
+    #[tokio::test]
+    async fn a_personal_team_is_not_transferable() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let team = teams::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            slug: Set(unique("test-personal")),
+            name: Set("Personal".to_owned()),
+            color: Set(AccentColor::Blue.as_str().to_owned()),
+            personal: Set(true),
+            created_by: Set(Some(captain)),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .expect("personal team fixture must insert");
+        add_team_member(&db, team.id, captain, TeamRole::Captain).await;
+        let member = create_user(&db).await;
+        add_team_member(&db, team.id, member, TeamRole::Member).await;
+
+        let (status, body) = transfer(&app, &db, team.id, captain, member).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "personal_team_not_transferable");
+        assert_eq!(
+            role_of(&db, team.id, captain).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(
+            role_of(&db, team.id, member).await.as_deref(),
+            Some("member")
+        );
+    }
+
+    /// An account scheduled for deletion cannot receive the role: its own
+    /// request would have been refused had it been Captain then.
+    #[tokio::test]
+    async fn a_transfer_to_an_account_pending_deletion_is_refused() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Admin]).await;
+        users::Entity::update_many()
+            .col_expr(
+                users::Column::PurgeScheduledAt,
+                Expr::value(chrono::Utc::now().fixed_offset() + chrono::Duration::days(30)),
+            )
+            .filter(users::Column::Id.eq(members[0]))
+            .exec(&db)
+            .await
+            .expect("the deletion must be scheduled");
+
+        let (status, body) = transfer(&app, &db, team_id, captain, members[0]).await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "target_pending_deletion");
+        assert_eq!(
+            role_of(&db, team_id, captain).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(
+            role_of(&db, team_id, members[0]).await.as_deref(),
+            Some("admin")
+        );
+    }
+
+    /// A role change neither names a Captain nor demotes the one there is,
+    /// whoever asks: the Captain is told to transfer, an Admin is refused
+    /// outright as before.
+    #[tokio::test]
+    async fn a_role_change_can_neither_name_nor_demote_the_captain() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) =
+            team_with(&db, captain, &[TeamRole::Admin, TeamRole::Member]).await;
+        let slug = slug_of(&db, team_id).await;
+        let patch = |target: Uuid, role: &str| {
+            (
+                format!("/api/v1/teams/{slug}/members/{target}"),
+                Some(json!({ "role": role })),
+            )
+        };
+
+        for (caller, target, role, expected, code) in [
+            (
+                captain,
+                members[1],
+                "captain",
+                StatusCode::CONFLICT,
+                "captain_must_transfer",
+            ),
+            (
+                captain,
+                captain,
+                "admin",
+                StatusCode::CONFLICT,
+                "captain_must_transfer",
+            ),
+            (
+                members[0],
+                captain,
+                "member",
+                StatusCode::FORBIDDEN,
+                "insufficient_role",
+            ),
+            (
+                members[0],
+                members[1],
+                "captain",
+                StatusCode::FORBIDDEN,
+                "insufficient_role",
+            ),
+        ] {
+            let (uri, body) = patch(target, role);
+            let (status, answer) = request_as(&app, "PATCH", &uri, Some(caller), body).await;
+            assert_eq!(status, expected, "{role} for {target}");
+            assert_eq!(answer["error"], code, "{role} for {target}");
+        }
+
+        assert_eq!(
+            role_of(&db, team_id, captain).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(
+            role_of(&db, team_id, members[0]).await.as_deref(),
+            Some("admin")
+        );
+        assert_eq!(
+            role_of(&db, team_id, members[1]).await.as_deref(),
+            Some("member")
+        );
+    }
+
+    /// An Admin cannot remove the Captain from the team.
+    #[tokio::test]
+    async fn an_admin_cannot_remove_the_captain() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Admin]).await;
+
+        let (status, body) = request_as(
+            &app,
+            "DELETE",
+            &format!(
+                "/api/v1/teams/{}/members/{captain}",
+                slug_of(&db, team_id).await
+            ),
+            Some(members[0]),
+            None,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "insufficient_role");
+        assert_eq!(
+            role_of(&db, team_id, captain).await.as_deref(),
+            Some("captain")
+        );
+    }
+
+    /// The Captain cannot leave: with others on the team they transfer
+    /// first, alone they delete the team instead of leaving it empty.
+    #[tokio::test]
+    async fn the_captain_cannot_leave() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (shared, _) = team_with(&db, captain, &[TeamRole::Member]).await;
+        let (alone, _) = team_with(&db, captain, &[]).await;
+
+        for (team_id, code) in [
+            (shared, "captain_must_transfer"),
+            (alone, "captain_must_delete_team"),
+        ] {
+            let (status, body) = request_as(
+                &app,
+                "DELETE",
+                &format!(
+                    "/api/v1/teams/{}/members/{captain}",
+                    slug_of(&db, team_id).await
+                ),
+                Some(captain),
+                None,
+            )
+            .await;
+
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(body["error"], code);
+            assert_eq!(
+                role_of(&db, team_id, captain).await.as_deref(),
+                Some("captain")
+            );
+        }
+    }
+
+    /// Joining never makes a Captain, so the Captain cannot mint an
+    /// invitation that would.
+    #[tokio::test]
+    async fn an_invitation_cannot_grant_captain() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+
+        let (status, body) = request_as(
+            &app,
+            "POST",
+            &format!("/api/v1/teams/{}/invitations", slug_of(&db, team_id).await),
+            Some(captain),
+            Some(json!({ "default_role": "captain" })),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "captain_must_transfer");
+    }
 
     /// Deleting a team takes its avatar out of the bucket, and those of every
     /// workspace the cascade deletes with it.

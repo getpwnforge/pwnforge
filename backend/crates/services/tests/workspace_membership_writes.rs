@@ -330,12 +330,12 @@ async fn leaving_a_team_leaves_guests_alone() {
     );
 }
 
-/// The refusal still comes first: a last captain is not removed, so their
+/// The refusal still comes first: the Captain is not removed, so their
 /// override is not cleaned up either. Adding a second delete to this path
 /// must not turn a refusal into a partial write.
 ///
-/// This does not demonstrate the transaction. The `LastCaptain` check runs
-/// before `begin()`, so this test passes whether the two deletes share one or
+/// This does not demonstrate the transaction. The Captain check runs before
+/// either delete, so this test passes whether the two deletes share one or
 /// not. What the transaction protects against is a failure *between* them,
 /// which needs fault injection to reach and has no test here.
 #[tokio::test]
@@ -355,7 +355,7 @@ async fn a_refused_removal_cleans_up_nothing() {
 
     let refused = team_service::remove_member(&db, f.team_id, f.captain_id).await;
 
-    assert!(refused.is_err(), "the last captain must not be removable");
+    assert!(refused.is_err(), "the Captain must not be removable");
     assert!(
         override_row(&db, f.workspace.id, f.captain_id)
             .await

@@ -91,6 +91,8 @@ pub enum AuditAction {
     AlertCreated,
     AlertUpdated,
     AlertDeleted,
+    /// An instance administrator handed a team's Captain role over.
+    TeamCaptaincyTransferred,
 }
 
 impl AuditAction {
@@ -113,6 +115,7 @@ impl AuditAction {
             Self::AlertCreated => "alert.created",
             Self::AlertUpdated => "alert.updated",
             Self::AlertDeleted => "alert.deleted",
+            Self::TeamCaptaincyTransferred => "team.captaincy_transferred",
         }
     }
 }

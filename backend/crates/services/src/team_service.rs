@@ -18,6 +18,7 @@ use domain::entities::{
 };
 use domain::types::AccentColor;
 
+use crate::audit_service::{self, AuditContext, AuditError};
 use crate::config::Config;
 use crate::storage_service::{AvatarKind, ObjectStore, ObjectsToPurge};
 use crate::{auth_service, email_service, instance_service, slug_service, token_service};
@@ -27,14 +28,36 @@ pub enum TeamError {
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
 
+    #[error(transparent)]
+    Audit(#[from] AuditError),
+
     #[error("team not found")]
     TeamNotFound,
 
     #[error("team member not found")]
     MemberNotFound,
 
-    #[error("cannot remove or demote the last captain of a team")]
-    LastCaptain,
+    /// The Captain role changes hands only through `transfer_captaincy`: a
+    /// role change, an invitation or a departure can neither name a Captain
+    /// nor take the role from the one there is.
+    #[error("the captain role changes only by transfer")]
+    CaptainMustTransfer,
+
+    /// The Captain is the team's only member. Leaving would leave an empty
+    /// team behind, so the way out is deleting the team.
+    #[error("the captain is the team's only member, so the team has to be deleted instead")]
+    CaptainMustDeleteTeam,
+
+    #[error("a personal team cannot be transferred")]
+    PersonalTeamNotTransferable,
+
+    #[error("the target is already the team's captain")]
+    TargetAlreadyCaptain,
+
+    /// A transfer to an account scheduled for deletion would get around the
+    /// refusal of a Captain's deletion request: request first, then receive.
+    #[error("the target account is scheduled for deletion")]
+    TargetPendingDeletion,
 
     #[error("invitation not found")]
     InvitationNotFound,
@@ -184,9 +207,10 @@ pub fn require_role(role: TeamRole, min: TeamRole) -> Result<(), TeamError> {
 
 /// Whether `actor` may change a member's role from `current` to `new`.
 ///
-/// Only a Captain may grant or revoke the Captain role: letting an Admin do
-/// either would let any Admin promote themselves (or an ally) to Captain,
-/// a privilege escalation.
+/// An Admin may not touch the Captain role either way: letting an Admin do
+/// so would let any Admin promote themselves (or an ally) to Captain, a
+/// privilege escalation. A Captain passes here and is then refused by
+/// `change_member_role`, since the role only moves by transfer.
 pub fn can_manage_role(actor: TeamRole, current: TeamRole, new: TeamRole) -> bool {
     if actor == TeamRole::Captain {
         return true;
@@ -198,8 +222,8 @@ pub fn can_manage_role(actor: TeamRole, current: TeamRole, new: TeamRole) -> boo
 }
 
 /// Whether `actor` may remove `target` (a member with role `target_role`)
-/// from the team. Removing yourself (leaving) is always allowed here; the
-/// last-captain rule is still enforced by `remove_member`.
+/// from the team. Removing yourself (leaving) is always allowed here; a
+/// Captain's departure is refused by `remove_member`.
 ///
 /// An Admin may not remove a Captain, for the same escalation reason as
 /// `can_manage_role`.
@@ -375,12 +399,20 @@ pub async fn get_team_member(
 
 /// Inserts a `team_members` row. Used both by direct addition and by
 /// invitation acceptance (token or id).
+///
+/// Never as Captain. A team gets its Captain when it is created and changes
+/// it by transfer; joining as one would hand the team to a second person
+/// without the first ever giving it up, and the database allows one.
 pub async fn add_member<C: ConnectionTrait>(
     db: &C,
     team_id: Uuid,
     user_id: Uuid,
     role: TeamRole,
 ) -> Result<team_members::Model, TeamError> {
+    if role == TeamRole::Captain {
+        return Err(TeamError::CaptainMustTransfer);
+    }
+
     let existing_member = team_members::Entity::find_by_id((team_id, user_id))
         .one(db)
         .await?;
@@ -401,28 +433,39 @@ pub async fn add_member<C: ConnectionTrait>(
     Ok(new_member)
 }
 
+/// Changes a member's role, never to or from Captain: that role only changes
+/// hands through `transfer_captaincy`.
 pub async fn change_member_role(
     db: &DatabaseConnection,
     team_id: Uuid,
     user_id: Uuid,
     new_role: TeamRole,
 ) -> Result<team_members::Model, TeamError> {
+    if new_role == TeamRole::Captain {
+        return Err(TeamError::CaptainMustTransfer);
+    }
+
+    let txn = db.begin().await?;
+
+    // Locked, and read inside the transaction that writes it: a transfer
+    // naming this member Captain meanwhile is either seen here and refused,
+    // or waits and lands on the role written here. Read outside, the write
+    // would demote the Captain the transfer had just named.
     let member = team_members::Entity::find_by_id((team_id, user_id))
-        .one(db)
+        .lock_exclusive()
+        .one(&txn)
         .await?
         .ok_or(TeamError::MemberNotFound)?;
 
-    if member.role == TeamRole::Captain.as_str() && new_role != TeamRole::Captain {
-        let captain_count = count_captains(db, team_id).await?;
-        if captain_count == 1 {
-            return Err(TeamError::LastCaptain);
-        }
+    if member.role == TeamRole::Captain.as_str() {
+        return Err(TeamError::CaptainMustTransfer);
     }
 
     let mut member_am: team_members::ActiveModel = member.into();
     member_am.role = Set(new_role.as_str().to_string());
 
-    let updated_member = member_am.update(db).await?;
+    let updated_member = member_am.update(&txn).await?;
+    txn.commit().await?;
 
     Ok(updated_member)
 }
@@ -432,18 +475,6 @@ pub async fn remove_member(
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), TeamError> {
-    let member = team_members::Entity::find_by_id((team_id, user_id))
-        .one(db)
-        .await?
-        .ok_or(TeamError::MemberNotFound)?;
-
-    if member.role == TeamRole::Captain.as_str() {
-        let captain_count = count_captains(db, team_id).await?;
-        if captain_count == 1 {
-            return Err(TeamError::LastCaptain);
-        }
-    }
-
     // One transaction, because the two deletes are one fact: this person is
     // no longer on this team. Committing the first alone leaves an override
     // row with no membership behind it, which
@@ -453,6 +484,32 @@ pub async fn remove_member(
     // removed from the team, and would not appear on any members list while
     // holding it.
     let txn = db.begin().await?;
+
+    // Locked for the same reason as in `change_member_role`: a transfer
+    // naming this member Captain meanwhile is either seen here, or waits and
+    // then finds no member to name.
+    let member = team_members::Entity::find_by_id((team_id, user_id))
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(TeamError::MemberNotFound)?;
+
+    // Nobody removes the Captain, the Captain included: the role goes first,
+    // by transfer, or the team goes with them. Leaving would otherwise
+    // strand the others without a Captain, or leave an empty team behind.
+    if member.role == TeamRole::Captain.as_str() {
+        let others = team_members::Entity::find()
+            .filter(team_members::Column::TeamId.eq(team_id))
+            .filter(team_members::Column::UserId.ne(user_id))
+            .count(&txn)
+            .await?;
+
+        return Err(if others > 0 {
+            TeamError::CaptainMustTransfer
+        } else {
+            TeamError::CaptainMustDeleteTeam
+        });
+    }
 
     let result = team_members::Entity::delete_by_id((team_id, user_id))
         .exec(&txn)
@@ -510,14 +567,148 @@ pub async fn get_user_role_in_team(
     Ok(member.map(|m| TeamRole::from_str(&m.role).unwrap_or(TeamRole::Viewer)))
 }
 
-async fn count_captains(db: &DatabaseConnection, team_id: Uuid) -> Result<u64, TeamError> {
-    let count = team_members::Entity::find()
+// ---- Captaincy ------------------------------------------------------------
+
+/// Who hands a team's Captain role over.
+pub enum TransferBy<'a> {
+    /// The Captain, through the API. They must still be the Captain once the
+    /// team is locked: of two transfers racing from the same Captain, the
+    /// second finds it is not one any more. Not audited, like every other
+    /// team action.
+    Captain(Uuid),
+    /// An instance administrator, from the CLI, who needs no seat in the
+    /// team; a team with no Captain then simply gets one. Audited, as every
+    /// other administrator action is.
+    InstanceAdmin {
+        ctx: &'a AuditContext,
+        reason: Option<&'a str>,
+    },
+}
+
+/// Hands the Captain role to another member: the Captain becomes an Admin
+/// and the target becomes Captain, in one transaction with the team row
+/// locked.
+///
+/// Refused for a personal team, for a target who is not a member or is
+/// already the Captain, and for a target scheduled for deletion.
+pub async fn transfer_captaincy(
+    db: &DatabaseConnection,
+    team_id: Uuid,
+    target_user_id: Uuid,
+    by: TransferBy<'_>,
+) -> Result<(), TeamError> {
+    let txn = db.begin().await?;
+
+    let team = teams::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(TeamError::TeamNotFound)?;
+
+    if team.personal {
+        return Err(TeamError::PersonalTeamNotTransferable);
+    }
+
+    let captain = current_captain(&txn, team_id).await?;
+
+    if let TransferBy::Captain(acting_captain) = by
+        && captain != Some(acting_captain)
+    {
+        return Err(TeamError::InsufficientRole);
+    }
+
+    // Locked so the member cannot leave or change role between this read
+    // and the promotion below (see `remove_member`).
+    let target = team_members::Entity::find_by_id((team_id, target_user_id))
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(TeamError::MemberNotFound)?;
+
+    if target.role == TeamRole::Captain.as_str() {
+        return Err(TeamError::TargetAlreadyCaptain);
+    }
+
+    // Shared lock on the account: a deletion request for it, which locks the
+    // same row before checking whether it is a Captain, either lands first
+    // and is seen here, or waits and then sees the role this commits.
+    let target_account = users::Entity::find_by_id(target_user_id)
+        .lock_shared()
+        .one(&txn)
+        .await?
+        .ok_or(TeamError::MemberNotFound)?;
+
+    if target_account.purge_scheduled_at.is_some() {
+        return Err(TeamError::TargetPendingDeletion);
+    }
+
+    // The Captain steps down before the target steps up: the index allows
+    // one Captain per team after every statement, not only at the commit.
+    if let Some(captain) = captain {
+        set_role(&txn, team_id, captain, TeamRole::Admin).await?;
+    }
+    set_role(&txn, team_id, target_user_id, TeamRole::Captain).await?;
+
+    if let TransferBy::InstanceAdmin { ctx, reason } = by {
+        audit_service::record(
+            &txn,
+            domain::types::AuditAction::TeamCaptaincyTransferred,
+            ctx,
+            audit_service::AuditTarget {
+                user_id: Some(target_user_id),
+                team_id: Some(team_id),
+                workspace_id: None,
+            },
+            reason,
+            // Identifiers only, all three in the entry's own data: the user
+            // target is set to NULL if that account is deleted later.
+            serde_json::json!({
+                "team_id": team_id,
+                "previous_captain": captain,
+                "new_captain": target_user_id,
+            }),
+        )
+        .await?;
+    }
+
+    txn.commit().await?;
+
+    Ok(())
+}
+
+/// The team's Captain, if it has one.
+async fn current_captain<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+) -> Result<Option<Uuid>, TeamError> {
+    Ok(team_members::Entity::find()
+        .select_only()
+        .column(team_members::Column::UserId)
         .filter(team_members::Column::TeamId.eq(team_id))
         .filter(team_members::Column::Role.eq(TeamRole::Captain.as_str()))
-        .count(db)
+        .into_tuple()
+        .one(conn)
+        .await?)
+}
+
+async fn set_role<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+    user_id: Uuid,
+    role: TeamRole,
+) -> Result<(), TeamError> {
+    let result = team_members::Entity::update_many()
+        .col_expr(team_members::Column::Role, Expr::value(role.as_str()))
+        .filter(team_members::Column::TeamId.eq(team_id))
+        .filter(team_members::Column::UserId.eq(user_id))
+        .exec(conn)
         .await?;
 
-    Ok(count)
+    if result.rows_affected == 0 {
+        return Err(TeamError::MemberNotFound);
+    }
+
+    Ok(())
 }
 
 // ---- Personal team auto-creation (3.6) -------------------------------
@@ -655,6 +846,13 @@ pub async fn create_invitation(
     creator_id: Uuid,
     payload: CreateInvitationRequest,
 ) -> Result<TeamInvitationResponse, TeamError> {
+    // Joining never makes a Captain (see `add_member`). Refused here, where
+    // the Captain asking can be told to transfer, rather than at acceptance,
+    // where the invitee would be the one to find out.
+    if payload.default_role == TeamRole::Captain {
+        return Err(TeamError::CaptainMustTransfer);
+    }
+
     let invited_email = payload
         .invited_email
         .as_deref()

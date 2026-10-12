@@ -18,8 +18,8 @@ pub struct SimpleErrorResponse {
 
 /// The envelope of every 422. `fields` is present only when `error` is
 /// `validation_failed`, mapping each offending field to the validator codes
-/// it failed; every other 422 code (`invalid_body`, `last_captain`, ...) is a
-/// bare `{ "error": ... }`.
+/// it failed; every other 422 code (`invalid_body`, `invitation_expired`,
+/// ...) is a bare `{ "error": ... }`.
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct UnprocessableErrorResponse {
     /// Stable machine-readable code, never a human sentence.

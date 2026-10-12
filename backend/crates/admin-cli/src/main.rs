@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use sea_orm::DatabaseConnection;
 use services::{ConnectionManager, config::Config};
 
-use commands::{alerts, audit, email, stats, user};
+use commands::{alerts, audit, email, stats, team, user};
 use uuid::Uuid;
 
 use crate::lookup::resolve_user;
@@ -29,6 +29,8 @@ struct Cli {
 enum Commands {
     /// User management (suspend, promote, sessions, ...)
     User(user::UserArgs),
+    /// Team administration (Captain transfer)
+    Team(team::TeamArgs),
     /// Read-only access to the instance audit log
     Audit(audit::AuditArgs),
     /// Manage blocked email domains
@@ -61,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::User(args) => user::handle(&ctx, args).await,
+        Commands::Team(args) => team::handle(&ctx, args).await,
         Commands::Audit(args) => audit::handle(&ctx, args).await,
         Commands::Email(args) => email::handle(&ctx, args).await,
         Commands::Stats(args) => stats::handle(&ctx, args).await,

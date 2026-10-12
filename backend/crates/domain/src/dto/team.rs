@@ -139,6 +139,14 @@ pub struct ChangeMemberRoleRequest {
     pub role: TeamRole,
 }
 
+/// Names the member who becomes Captain. The current Captain becomes an
+/// Admin in the same step.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TransferCaptaincyRequest {
+    pub user_id: Uuid,
+}
+
 // ---- Invitations ----------------------------------------------------------
 
 /// Rejects an invitation that names a person *and* an address.
