@@ -5,7 +5,8 @@
 //! the account merely belongs to alone, go on past an account that cannot be
 //! deleted, keep the deletion when the object store does not answer, and
 //! name the account by id only in their audit entries. A deletion request
-//! is refused while the account captains a team with other members.
+//! is refused while the account captains a team with other members, and an
+//! admin scheduled for deletion no longer counts as the last one.
 //!
 //! Every test works in a throwaway database: the purge deletes every account
 //! past its deadline, and the shared database holds the accounts of other
@@ -769,6 +770,51 @@ async fn a_deletion_request_from_the_captain_of_a_team_with_members_is_refused()
         assert!(
             scheduled(&db, captain).await,
             "the account must be scheduled"
+        );
+
+        db.close().await.ok();
+    })
+    .await;
+}
+
+async fn create_admin(db: &DatabaseConnection, scheduled: bool) -> Uuid {
+    users::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        username: Set(format!("adm-{}", Uuid::now_v7().simple())),
+        password_hash: Set("not-a-real-hash".to_owned()),
+        locale: Set("en".to_owned()),
+        is_instance_admin: Set(true),
+        purge_scheduled_at: Set(scheduled.then(|| (Utc::now() + Duration::days(30)).fixed_offset())),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("the fixture admin must insert")
+    .id
+}
+
+/// An admin scheduled for deletion is already out of the count, so demoting
+/// or deleting one leaves the instance with the admin it has: neither is
+/// refused as the last one. The one admin still counted is.
+#[tokio::test]
+async fn an_admin_scheduled_for_deletion_is_not_the_last_admin() {
+    in_scratch_database(|db| async move {
+        migrated(&db).await;
+        let active = create_admin(&db, false).await;
+        let demoted = create_admin(&db, true).await;
+        let deleted = create_admin(&db, true).await;
+
+        admin_service::demote_admin(&db, &config(), &ctx(), demoted, None)
+            .await
+            .expect("demoting an admin scheduled for deletion must go through");
+        delete(&db, deleted, DeletionKind::IllicitContent)
+            .await
+            .expect("deleting an admin scheduled for deletion must go through");
+
+        let refused = delete(&db, active, DeletionKind::Standard).await;
+        assert!(
+            matches!(refused, Err(AdminError::LastAdmin)),
+            "control: the admin still counted is the last one, got {refused:?}"
         );
 
         db.close().await.ok();

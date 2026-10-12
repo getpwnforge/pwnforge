@@ -313,7 +313,7 @@ pub async fn delete_user(
         return Err(AdminError::SelfTarget);
     }
 
-    if user.is_instance_admin && admin_count(db).await? == 1 {
+    if is_counted_admin(&user) && admin_count(db).await? == 1 {
         return Err(AdminError::LastAdmin);
     }
 
@@ -583,7 +583,8 @@ pub async fn demote_admin(
     let primary_email = auth_service::primary_email(db, user.id).await?;
 
     let count = admin_count(db).await?;
-    if count == 1 {
+    let counted = is_counted_admin(&user);
+    if counted && count == 1 {
         return Err(AdminError::LastAdmin);
     }
 
@@ -613,7 +614,7 @@ pub async fn demote_admin(
         reason,
         serde_json::json!({
             "previous": { "is_instance_admin": user.is_instance_admin },
-            "admin_count_after": count - 1,
+            "admin_count_after": if counted { count - 1 } else { count },
         }),
     )
     .await?;
@@ -965,6 +966,13 @@ async fn delete_account_rows<C: ConnectionTrait>(
     users::Entity::delete_by_id(user_id).exec(conn).await?;
 
     Ok(objects)
+}
+
+/// Whether `user` is one of the administrators `admin_count` counts. The
+/// last-admin guards apply to those only: an admin scheduled for deletion is
+/// already out of the count, so removing them leaves it where it is.
+fn is_counted_admin(user: &users::Model) -> bool {
+    user.is_instance_admin && user.purge_scheduled_at.is_none()
 }
 
 /// Counts remaining administrators, used by demote_admin.
