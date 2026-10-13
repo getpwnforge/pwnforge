@@ -50,7 +50,6 @@ fn report(err: TeamError) -> anyhow::Error {
     let message = match err {
         TeamError::TeamNotFound => "no such team.",
         TeamError::MemberNotFound => "that account is not a member of the team.",
-        TeamError::PersonalTeamNotTransferable => "a personal team cannot be transferred.",
         TeamError::TargetAlreadyCaptain => "that member is already the Captain.",
         TeamError::TargetPendingDeletion => {
             "that account is scheduled for deletion and cannot become Captain."

@@ -12,7 +12,7 @@ use crate::{
 };
 use chrono::{Duration, Utc};
 use domain::dto::workspace::WorkspaceMode;
-use domain::entities::{teams, users, workspaces};
+use domain::entities::{users, workspaces};
 use redis::{AsyncCommands, aio::ConnectionManager};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait,
@@ -67,7 +67,7 @@ pub enum AdminError {
     #[error(transparent)]
     Workspace(#[from] WorkspaceError),
 
-    /// Deleting an account's personal team failed.
+    /// Handing on or deleting a team the account is Captain of failed.
     #[error(transparent)]
     Team(#[from] TeamError),
 }
@@ -886,10 +886,9 @@ async fn delete_account(
     Ok(())
 }
 
-/// The database half of `delete_account`: the account's solo workspaces, its
-/// personal team with that team's workspaces, the other teams it is still
-/// Captain of, then the account. Returns every object to purge once the
-/// caller has committed.
+/// The database half of `delete_account`: the account's solo workspaces, the
+/// teams it is still Captain of, then the account. Returns every object to
+/// purge once the caller has committed.
 ///
 /// A team it is still Captain of goes with it when it was the only member,
 /// and otherwise gets a successor (`team_service::succeed_captain`), each
@@ -903,9 +902,9 @@ async fn delete_account_rows<C: ConnectionTrait>(
     user_id: Uuid,
     ctx: &AuditContext,
 ) -> Result<ObjectsToPurge, AdminError> {
-    // Locked first: a solo workspace or a personal team created for this
-    // account meanwhile waits on this row, then fails on its foreign key,
-    // rather than landing between the lookups below and the delete.
+    // Locked first: a solo workspace or a team created for this account
+    // meanwhile waits on this row, then fails on its foreign key, rather than
+    // landing between the lookups below and the delete.
     users::Entity::find_by_id(user_id)
         .lock_exclusive()
         .one(conn)
@@ -924,18 +923,6 @@ async fn delete_account_rows<C: ConnectionTrait>(
         .await?;
     for workspace_id in solo_workspaces {
         objects.add(workspace_service::delete_workspace_rows(conn, workspace_id).await?);
-    }
-
-    let personal_team: Option<Uuid> = teams::Entity::find()
-        .select_only()
-        .column(teams::Column::Id)
-        .filter(teams::Column::CreatedBy.eq(user_id))
-        .filter(teams::Column::Personal.eq(true))
-        .into_tuple()
-        .one(conn)
-        .await?;
-    if let Some(team_id) = personal_team {
-        objects.add(team_service::delete_team_rows(conn, team_id).await?);
     }
 
     for team_id in team_service::captained_teams(conn, user_id).await? {

@@ -212,8 +212,7 @@ impl std::str::FromStr for AccentColor {
 }
 
 /// The fallback for a stored value outside the palette, written by hand or
-/// before a column was constrained. The first palette entry, and the colour
-/// a personal team is created with.
+/// before a column was constrained: the first palette entry.
 impl Default for AccentColor {
     fn default() -> Self {
         AccentColor::Ember

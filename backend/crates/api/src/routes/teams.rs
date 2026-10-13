@@ -269,7 +269,7 @@ async fn remove_member(
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 403, description = "insufficient_role: Captain only", body = SimpleErrorResponse),
         (status = 404, description = "team_not_found: team not found or caller not a member. member_not_found: the target is not a member of the team", body = SimpleErrorResponse),
-        (status = 409, description = "personal_team_not_transferable, target_already_captain, or target_pending_deletion: the target's account is scheduled for deletion", body = SimpleErrorResponse),
+        (status = 409, description = "target_already_captain, or target_pending_deletion: the target's account is scheduled for deletion", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "invalid_body", body = UnprocessableErrorResponse),
     )
@@ -473,16 +473,13 @@ async fn reject_invitation_by_id(
 mod tests {
     use crate::test_support::{
         add_team_member, app, avatar_stored, create_team, create_team_workspace, create_user, db,
-        request_as, unique, upload_avatar,
+        request_as, upload_avatar,
     };
     use axum::http::StatusCode;
     use domain::dto::team::TeamRole;
     use domain::entities::{team_members, teams, users};
-    use domain::types::AccentColor;
     use sea_orm::sea_query::Expr;
-    use sea_orm::{
-        ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
-    };
+    use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
     use serde_json::json;
     use services::storage_service::AvatarKind;
     use uuid::Uuid;
@@ -614,42 +611,6 @@ mod tests {
             Some("captain")
         );
         assert_eq!(role_of(&db, team_id, outsider).await, None);
-    }
-
-    /// A personal team stays with the account it belongs to.
-    #[tokio::test]
-    async fn a_personal_team_is_not_transferable() {
-        let db = db().await;
-        let app = app(&db).await;
-        let captain = create_user(&db).await;
-        let team = teams::ActiveModel {
-            id: Set(Uuid::now_v7()),
-            slug: Set(unique("test-personal")),
-            name: Set("Personal".to_owned()),
-            color: Set(AccentColor::Blue.as_str().to_owned()),
-            personal: Set(true),
-            created_by: Set(Some(captain)),
-            ..Default::default()
-        }
-        .insert(&db)
-        .await
-        .expect("personal team fixture must insert");
-        add_team_member(&db, team.id, captain, TeamRole::Captain).await;
-        let member = create_user(&db).await;
-        add_team_member(&db, team.id, member, TeamRole::Member).await;
-
-        let (status, body) = transfer(&app, &db, team.id, captain, member).await;
-
-        assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body["error"], "personal_team_not_transferable");
-        assert_eq!(
-            role_of(&db, team.id, captain).await.as_deref(),
-            Some("captain")
-        );
-        assert_eq!(
-            role_of(&db, team.id, member).await.as_deref(),
-            Some("member")
-        );
     }
 
     /// An account scheduled for deletion cannot receive the role: its own

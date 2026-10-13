@@ -662,10 +662,6 @@ pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), A
         .exec(&txn)
         .await?;
 
-    // Returns None when the account already had one: verification can run
-    // more than once per account (a second address, a replayed link), and only
-    // the first pass should mint a team.
-    let _personal_team = team_service::create_personal_team(&txn, &user).await?;
     team_service::accept_pending_email_invitations(&txn, &email.email, user.id).await?;
 
     txn.commit().await?;

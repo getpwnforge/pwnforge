@@ -512,9 +512,9 @@ fn team_response(err: &TeamError) -> Response {
             Json(json!({ "error": "invitation_email_mismatch" })),
         )
             .into_response(),
-        // 409 for the five below: the caller may act on the team, it is the
+        // 409 for the four below: the caller may act on the team, it is the
         // team's state that refuses (who holds the role, who else is in it,
-        // what kind of team it is), and a transfer or a deletion changes it.
+        // whose account is leaving), and a transfer or a deletion changes it.
         TeamError::CaptainMustTransfer => (
             StatusCode::CONFLICT,
             Json(json!({ "error": "captain_must_transfer" })),
@@ -523,11 +523,6 @@ fn team_response(err: &TeamError) -> Response {
         TeamError::CaptainMustDeleteTeam => (
             StatusCode::CONFLICT,
             Json(json!({ "error": "captain_must_delete_team" })),
-        )
-            .into_response(),
-        TeamError::PersonalTeamNotTransferable => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": "personal_team_not_transferable" })),
         )
             .into_response(),
         TeamError::TargetAlreadyCaptain => (

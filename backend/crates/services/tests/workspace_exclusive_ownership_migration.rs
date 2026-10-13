@@ -52,7 +52,6 @@ async fn create_team(db: &DatabaseConnection) -> Uuid {
         slug: Set(format!("own-{}", Uuid::now_v7().simple())),
         name: Set("Ownership".to_owned()),
         color: Set("ember".to_owned()),
-        personal: Set(false),
         created_by: Set(None),
         ..Default::default()
     }

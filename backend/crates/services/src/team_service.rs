@@ -17,7 +17,6 @@ use domain::dto::team::{
 use domain::entities::{
     team_invitations, team_members, teams, user_emails, users, workspace_members, workspaces,
 };
-use domain::types::AccentColor;
 
 use crate::audit_service::{self, AuditContext, AuditError};
 use crate::config::Config;
@@ -48,9 +47,6 @@ pub enum TeamError {
     /// team behind, so the way out is deleting the team.
     #[error("the captain is the team's only member, so the team has to be deleted instead")]
     CaptainMustDeleteTeam,
-
-    #[error("a personal team cannot be transferred")]
-    PersonalTeamNotTransferable,
 
     #[error("the target is already the team's captain")]
     TargetAlreadyCaptain,
@@ -590,8 +586,8 @@ pub enum TransferBy<'a> {
 /// and the target becomes Captain, in one transaction with the team row
 /// locked.
 ///
-/// Refused for a personal team, for a target who is not a member or is
-/// already the Captain, and for a target scheduled for deletion.
+/// Refused for a target who is not a member or is already the Captain, and
+/// for a target scheduled for deletion.
 pub async fn transfer_captaincy(
     db: &DatabaseConnection,
     team_id: Uuid,
@@ -600,15 +596,11 @@ pub async fn transfer_captaincy(
 ) -> Result<(), TeamError> {
     let txn = db.begin().await?;
 
-    let team = teams::Entity::find_by_id(team_id)
+    teams::Entity::find_by_id(team_id)
         .lock_exclusive()
         .one(&txn)
         .await?
         .ok_or(TeamError::TeamNotFound)?;
-
-    if team.personal {
-        return Err(TeamError::PersonalTeamNotTransferable);
-    }
 
     let captain = current_captain(&txn, team_id).await?;
 
@@ -834,9 +826,9 @@ async fn set_role<C: ConnectionTrait>(
     Ok(())
 }
 
-/// The teams other than personal ones whose Captain is `user_id` and that
-/// have at least one other member: the teams a deletion request for that
-/// account would leave without a Captain.
+/// The teams whose Captain is `user_id` and that have at least one other
+/// member: the teams a deletion request for that account would leave
+/// without a Captain.
 pub(crate) async fn captained_teams_with_others<C: ConnectionTrait>(
     conn: &C,
     user_id: Uuid,
@@ -845,7 +837,6 @@ pub(crate) async fn captained_teams_with_others<C: ConnectionTrait>(
         .inner_join(team_members::Entity)
         .filter(team_members::Column::UserId.eq(user_id))
         .filter(team_members::Column::Role.eq(TeamRole::Captain.as_str()))
-        .filter(teams::Column::Personal.eq(false))
         .order_by_asc(teams::Column::Slug)
         .all(conn)
         .await?;
@@ -866,8 +857,7 @@ pub(crate) async fn captained_teams_with_others<C: ConnectionTrait>(
     Ok(with_others)
 }
 
-/// The teams other than personal ones whose Captain is `user_id`, in a
-/// fixed order.
+/// The teams whose Captain is `user_id`, in a fixed order.
 pub(crate) async fn captained_teams<C: ConnectionTrait>(
     conn: &C,
     user_id: Uuid,
@@ -878,129 +868,10 @@ pub(crate) async fn captained_teams<C: ConnectionTrait>(
         .inner_join(team_members::Entity)
         .filter(team_members::Column::UserId.eq(user_id))
         .filter(team_members::Column::Role.eq(TeamRole::Captain.as_str()))
-        .filter(teams::Column::Personal.eq(false))
         .order_by_asc(teams::Column::Id)
         .into_tuple()
         .all(conn)
         .await?)
-}
-
-// ---- Personal team auto-creation (3.6) -------------------------------
-
-/// Creates the account's personal team, or does nothing if it already has one.
-///
-/// Called from `auth_service::verify_email`, inside the same transaction that
-/// marks the address verified. That path is not once-per-account: a second
-/// verified address runs it again, and so would any replay that reached the
-/// verification step twice. Creating a duplicate team each time is both a
-/// correctness bug and an unbounded row source driven from an unauthenticated
-/// endpoint.
-///
-/// Guarded twice on purpose. The lookup answers the ordinary case without
-/// raising an error, and the unique index catches the two transactions that
-/// interleave past it. A check alone is a race, and a constraint alone turns
-/// a normal second verification into a failed request.
-///
-/// The creator becomes the team's Captain in the same step, as `create_team`
-/// does: a team nobody belongs to is invisible to its own creator. Both guards
-/// return before that insert, so a second pass creates no second member either.
-pub async fn create_personal_team(
-    txn: &DatabaseTransaction,
-    user: &users::Model,
-) -> Result<Option<teams::Model>, TeamError> {
-    // No personal team for an instance admin, whichever path gets here. Setup
-    // creates that account with its address already verified and never calls
-    // this, but a second address verified later does. The admin account is
-    // for administering the instance; everyday use belongs to a separate
-    // account, and a team of its own would invite exactly that use.
-    if user.is_instance_admin {
-        return Ok(None);
-    }
-
-    let existing = teams::Entity::find()
-        .filter(teams::Column::CreatedBy.eq(user.id))
-        .filter(teams::Column::Personal.eq(true))
-        .one(txn)
-        .await?;
-
-    if existing.is_some() {
-        return Ok(None);
-    }
-
-    let name = format!("{}'s team", user.username);
-
-    // The username is already constrained to `[a-zA-Z0-9][a-zA-Z0-9_-]*`, so
-    // the slug source can never come out empty here. Propagated rather than
-    // unwrapped anyway: the guarantee lives in another module's validator.
-    let slug = slug_service::generate_unique_slug(&name, move |candidate| async move {
-        Ok(teams::Entity::find()
-            .filter(teams::Column::Slug.eq(candidate))
-            .one(txn)
-            .await?
-            .is_some())
-    })
-    .await?;
-
-    // A savepoint around the inserts. When the unique index refuses the team,
-    // Postgres aborts the enclosing transaction unless the failure is
-    // contained: every later statement would fail, and the caller's commit
-    // would silently roll back the email verification it carries. Rolling
-    // back to the savepoint keeps the rest of that transaction alive.
-    let savepoint = txn.begin().await?;
-
-    let team = teams::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        slug: Set(slug),
-        name: Set(name),
-        color: Set(AccentColor::default().as_str().to_string()),
-        personal: Set(true),
-        created_by: Set(Some(user.id)),
-        ..Default::default()
-    }
-    .insert(&savepoint)
-    .await;
-
-    let team = match team {
-        Ok(team) => team,
-        // Another transaction created it between the lookup and here. The goal
-        // state is reached either way, so this is a success, not a conflict,
-        // and that transaction's call inserts the Captain.
-        Err(err) if is_second_personal_team(&err) => {
-            savepoint.rollback().await?;
-            return Ok(None);
-        }
-        Err(err) => return Err(err.into()),
-    };
-
-    team_members::ActiveModel {
-        team_id: Set(team.id),
-        user_id: Set(user.id),
-        role: Set(TeamRole::Captain.as_str().to_string()),
-        ..Default::default()
-    }
-    .insert(&savepoint)
-    .await?;
-
-    savepoint.commit().await?;
-
-    Ok(Some(team))
-}
-
-/// Whether a database error is `idx_teams_one_personal_per_creator` refusing
-/// a second personal team for the account, the one unique violation that
-/// means the team already exists.
-///
-/// Read from the constraint's name, as `auth_service::map_unique_violation`
-/// does. Any other unique violation is a real failure: a slug another
-/// transaction took between `generate_unique_slug` and the insert would
-/// otherwise pass for a team that exists, and the account would be left
-/// without one.
-fn is_second_personal_team(err: &sea_orm::DbErr) -> bool {
-    matches!(
-        err.sql_err(),
-        Some(sea_orm::SqlErr::UniqueConstraintViolation(detail))
-            if detail.contains("idx_teams_one_personal_per_creator")
-    )
 }
 
 // ---- Invitations --------------------------------------------------------
@@ -1447,9 +1318,9 @@ pub async fn reject_invitation_by_id(
 
 /// Joins `user_id` to every team with a pending email invitation for `email`,
 /// then removes those invitations. Meant to run inside the same transaction
-/// as marking that address verified (see `auth_service::verify_email`), the
-/// same way `create_personal_team` is called from `register`: an address
-/// that is not actually verified yet must not be able to join a team by it.
+/// as marking that address verified (see `auth_service::verify_email`): an
+/// address that is not actually verified yet must not be able to join a team
+/// by it.
 pub async fn accept_pending_email_invitations(
     txn: &DatabaseTransaction,
     email: &str,

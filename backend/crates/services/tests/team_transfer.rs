@@ -64,13 +64,12 @@ async fn create_user(db: &DatabaseConnection, scheduled: bool) -> Uuid {
 }
 
 /// A team with its members and their roles; no Captain unless one is listed.
-async fn create_team(db: &DatabaseConnection, personal: bool, members: &[(Uuid, &str)]) -> Uuid {
+async fn create_team(db: &DatabaseConnection, members: &[(Uuid, &str)]) -> Uuid {
     let team = teams::ActiveModel {
         id: Set(Uuid::now_v7()),
         slug: Set(format!("tr-{}", Uuid::now_v7().simple())),
         name: Set("Transfer".to_owned()),
         color: Set("ember".to_owned()),
-        personal: Set(personal),
         created_by: Set(members.first().map(|(user, _)| *user)),
         ..Default::default()
     }
@@ -109,7 +108,7 @@ async fn an_administrator_transfers_without_a_seat_in_the_team() {
         migrated(&db).await;
         let captain = create_user(&db, false).await;
         let member = create_user(&db, false).await;
-        let team = create_team(&db, false, &[(captain, "captain"), (member, "viewer")]).await;
+        let team = create_team(&db, &[(captain, "captain"), (member, "viewer")]).await;
 
         team_service::transfer_captaincy(&db, team, member, by_admin())
             .await
@@ -135,17 +134,9 @@ async fn the_administrator_path_refuses_what_the_route_refuses() {
         let outsider = create_user(&db, false).await;
         let team = create_team(
             &db,
-            false,
             &[(captain, "captain"), (member, "member"), (leaving, "admin")],
         )
         .await;
-        let personal = create_team(&db, true, &[(captain, "captain"), (member, "member")]).await;
-
-        let outcome = team_service::transfer_captaincy(&db, personal, member, by_admin()).await;
-        assert!(
-            matches!(outcome, Err(TeamError::PersonalTeamNotTransferable)),
-            "a personal team, got {outcome:?}"
-        );
         let outcome = team_service::transfer_captaincy(&db, team, outsider, by_admin()).await;
         assert!(
             matches!(outcome, Err(TeamError::MemberNotFound)),
@@ -162,16 +153,11 @@ async fn the_administrator_path_refuses_what_the_route_refuses() {
             "a target already Captain, got {outcome:?}"
         );
 
-        for team_id in [team, personal] {
-            assert_eq!(
-                role_of(&db, team_id, captain).await.as_deref(),
-                Some("captain")
-            );
-            assert_eq!(
-                role_of(&db, team_id, member).await.as_deref(),
-                Some("member")
-            );
-        }
+        assert_eq!(
+            role_of(&db, team, captain).await.as_deref(),
+            Some("captain")
+        );
+        assert_eq!(role_of(&db, team, member).await.as_deref(), Some("member"));
         assert_eq!(role_of(&db, team, leaving).await.as_deref(), Some("admin"));
 
         db.close().await.ok();
@@ -190,7 +176,6 @@ async fn a_former_captain_cannot_transfer_again() {
         let second = create_user(&db, false).await;
         let team = create_team(
             &db,
-            false,
             &[(captain, "captain"), (first, "member"), (second, "member")],
         )
         .await;
@@ -221,7 +206,7 @@ async fn an_administrator_gives_a_captainless_team_a_captain() {
         migrated(&db).await;
         let member = create_user(&db, false).await;
         let other = create_user(&db, false).await;
-        let team = create_team(&db, false, &[(member, "admin"), (other, "member")]).await;
+        let team = create_team(&db, &[(member, "admin"), (other, "member")]).await;
 
         team_service::transfer_captaincy(&db, team, member, by_admin())
             .await
@@ -243,7 +228,7 @@ async fn adding_a_member_as_captain_is_refused() {
         migrated(&db).await;
         let captain = create_user(&db, false).await;
         let joining = create_user(&db, false).await;
-        let team = create_team(&db, false, &[(captain, "captain")]).await;
+        let team = create_team(&db, &[(captain, "captain")]).await;
 
         let outcome = team_service::add_member(&db, team, joining, TeamRole::Captain).await;
 
@@ -279,8 +264,8 @@ async fn only_an_administrator_transfer_is_audited() {
         migrated(&db).await;
         let captain = create_user(&db, false).await;
         let member = create_user(&db, false).await;
-        let by_captain = create_team(&db, false, &[(captain, "captain"), (member, "member")]).await;
-        let by_cli = create_team(&db, false, &[(captain, "captain"), (member, "member")]).await;
+        let by_captain = create_team(&db, &[(captain, "captain"), (member, "member")]).await;
+        let by_cli = create_team(&db, &[(captain, "captain"), (member, "member")]).await;
 
         team_service::transfer_captaincy(&db, by_captain, member, TransferBy::Captain(captain))
             .await

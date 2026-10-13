@@ -1,6 +1,6 @@
 //! Deleting an account: the scheduled purge and the immediate deletion both
-//! take the account's solo workspaces and its personal team with it, objects
-//! included, hand each other team it is still Captain of to a successor,
+//! take the account's solo workspaces with it, objects included, hand each
+//! team it is still Captain of to a successor,
 //! active members first, or delete it when nobody else is left, leave a team
 //! the account merely belongs to alone, go on past an account that cannot be
 //! deleted, keep the deletion when the object store does not answer, and
@@ -102,13 +102,12 @@ async fn create_user_with(
     .id
 }
 
-async fn create_team(db: &DatabaseConnection, creator: Uuid, personal: bool) -> Uuid {
+async fn create_team(db: &DatabaseConnection, creator: Uuid) -> Uuid {
     let team = teams::ActiveModel {
         id: Set(Uuid::now_v7()),
         slug: Set(format!("del-{}", Uuid::now_v7().simple())),
         name: Set("Deletion".to_owned()),
         color: Set("ember".to_owned()),
-        personal: Set(personal),
         created_by: Set(Some(creator)),
         ..Default::default()
     }
@@ -349,54 +348,14 @@ async fn an_immediate_deletion_deletes_the_solo_workspace_and_their_objects() {
     .await;
 }
 
-#[tokio::test]
-async fn the_purge_deletes_the_personal_team_with_its_workspaces_and_objects() {
-    in_scratch_database(|db| async move {
-        migrated(&db).await;
-        let user = create_user(&db, true).await;
-        let team = create_team(&db, user, true).await;
-        let workspace = create_workspace(&db, Some(team), None).await;
-        let avatars = [
-            upload(&db, AvatarKind::Team, team).await,
-            upload(&db, AvatarKind::Workspace, workspace).await,
-        ];
-
-        assert_eq!(
-            purge(&db, &store()).await,
-            PurgeOutcome {
-                purged: 1,
-                failed: 0
-            }
-        );
-
-        assert!(
-            !team_exists(&db, team).await,
-            "the personal team must be gone"
-        );
-        assert!(
-            !workspace_exists(&db, workspace).await,
-            "its workspace must be gone"
-        );
-        for (kind, id, version) in avatars {
-            assert!(
-                !stored(kind, id, version).await,
-                "the {kind:?} avatar must be purged"
-            );
-        }
-
-        db.close().await.ok();
-    })
-    .await;
-}
-
-/// A team the account belongs to without having made it personal stays,
-/// with its workspace, its objects and its other members.
+/// A team the account belongs to without being its Captain stays, with its
+/// workspace, its objects and its other members.
 #[tokio::test]
 async fn a_team_the_account_only_belongs_to_survives_the_purge() {
     in_scratch_database(|db| async move {
         migrated(&db).await;
         let captain = create_user(&db, false).await;
-        let team = create_team(&db, captain, false).await;
+        let team = create_team(&db, captain).await;
         let workspace = create_workspace(&db, Some(team), None).await;
         let (kind, id, version) = upload(&db, AvatarKind::Workspace, workspace).await;
 
@@ -542,7 +501,7 @@ async fn captain_of_three_teams(db: &DatabaseConnection, scheduled: bool) -> Cap
     let now = Utc::now();
     let captain = create_user(db, scheduled).await;
 
-    let with_admins = create_team(db, captain, false).await;
+    let with_admins = create_team(db, captain).await;
     let veteran_member = create_user(db, false).await;
     let oldest_admin = create_user(db, false).await;
     let newer_admin = create_user(db, false).await;
@@ -573,7 +532,7 @@ async fn captain_of_three_teams(db: &DatabaseConnection, scheduled: bool) -> Cap
 
     // Fixed ids below every v7 one, so the tie is broken by id and nothing
     // else; the newcomer joined later and never comes into it.
-    let without_admins = create_team(db, captain, false).await;
+    let without_admins = create_team(db, captain).await;
     let first_by_id = create_user_with(db, Uuid::from_u128(0x10), "tie-first", false).await;
     let second_by_id = create_user_with(db, Uuid::from_u128(0x20), "tie-second", false).await;
     let newcomer = create_user(db, false).await;
@@ -589,7 +548,7 @@ async fn captain_of_three_teams(db: &DatabaseConnection, scheduled: bool) -> Cap
     )
     .await;
 
-    let alone = create_team(db, captain, false).await;
+    let alone = create_team(db, captain).await;
     let alone_workspace = create_workspace(db, Some(alone), None).await;
     let alone_avatars = [
         upload(db, AvatarKind::Team, alone).await,
@@ -730,19 +689,17 @@ async fn the_purge_hands_each_captained_team_to_a_successor() {
 }
 
 /// A deletion request is refused while the account is Captain of a team
-/// with other members, naming it; a team it is alone in and its personal
-/// team hold nothing back. Once the role is transferred, the same request
-/// goes through.
+/// with other members, naming it; a team it is alone in holds nothing back.
+/// Once the role is transferred, the same request goes through.
 #[tokio::test]
 async fn a_deletion_request_from_the_captain_of_a_team_with_members_is_refused() {
     in_scratch_database(|db| async move {
         migrated(&db).await;
         let captain = create_user(&db, false).await;
-        let shared = create_team(&db, captain, false).await;
+        let shared = create_team(&db, captain).await;
         let member = create_user(&db, false).await;
         add_member(&db, shared, member, "member").await;
-        create_team(&db, captain, false).await;
-        create_team(&db, captain, true).await;
+        create_team(&db, captain).await;
         let shared_slug = teams::Entity::find_by_id(shared)
             .one(&db)
             .await
@@ -923,7 +880,7 @@ async fn the_successor_is_chosen_among_active_members_first() {
         let captain = create_user(&db, false).await;
 
         // A newer active Admin passes an older suspended one.
-        let past_suspended = create_team(&db, captain, false).await;
+        let past_suspended = create_team(&db, captain).await;
         let suspended_admin = create_user(&db, false).await;
         let active_admin = create_user(&db, false).await;
         suspend(&db, suspended_admin, now - Duration::days(1), None).await;
@@ -945,7 +902,7 @@ async fn the_successor_is_chosen_among_active_members_first() {
         .await;
 
         // An active member passes an Admin scheduled for deletion.
-        let past_leaving = create_team(&db, captain, false).await;
+        let past_leaving = create_team(&db, captain).await;
         let leaving_admin = create_user(&db, true).await;
         let active_member = create_user(&db, false).await;
         add_member_at(
@@ -966,7 +923,7 @@ async fn the_successor_is_chosen_among_active_members_first() {
         .await;
 
         // Nobody active: the same rule over everyone, the Admin first.
-        let nobody_active = create_team(&db, captain, false).await;
+        let nobody_active = create_team(&db, captain).await;
         let inactive_admin = create_user(&db, true).await;
         let inactive_member = create_user(&db, false).await;
         suspend(
@@ -994,7 +951,7 @@ async fn the_successor_is_chosen_among_active_members_first() {
         .await;
 
         // A suspension that has ended no longer counts.
-        let suspension_over = create_team(&db, captain, false).await;
+        let suspension_over = create_team(&db, captain).await;
         let returned_admin = create_user(&db, false).await;
         let newer_admin = create_user(&db, false).await;
         suspend(

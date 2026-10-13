@@ -20,7 +20,6 @@ pub struct Model {
     pub color: String,
     pub avatar_version: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
-    pub personal: bool,
     pub created_by: Option<Uuid>,
 }
 
