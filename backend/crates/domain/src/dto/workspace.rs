@@ -220,6 +220,35 @@ pub struct EffectiveMember {
     pub joined_at: DateTime<Utc>,
 }
 
+/// A role a member can be given on one workspace: every team role but
+/// Captain, which belongs to the team and changes only by transfer. A guest
+/// holds at most `member` (`guest_role_above_member` otherwise).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceRole {
+    Admin,
+    Member,
+    Viewer,
+}
+
+impl From<WorkspaceRole> for TeamRole {
+    fn from(role: WorkspaceRole) -> Self {
+        match role {
+            WorkspaceRole::Admin => TeamRole::Admin,
+            WorkspaceRole::Member => TeamRole::Member,
+            WorkspaceRole::Viewer => TeamRole::Viewer,
+        }
+    }
+}
+
+/// Payload for PATCH /workspaces/{slug}/members/{user_id}. `captain`, or any
+/// value not listed, is refused at deserialization (422 `invalid_body`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetMemberRoleRequest {
+    pub role: WorkspaceRole,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceType {

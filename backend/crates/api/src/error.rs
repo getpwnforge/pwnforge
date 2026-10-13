@@ -660,9 +660,34 @@ fn workspace_response(err: WorkspaceError) -> Response {
             Json(json!({ "error": "target_already_in_team" })),
         )
             .into_response(),
+        // 409 like an archived workspace: the caller may act on it, it is
+        // what the workspace is that refuses. A solo workspace is strictly
+        // private, so it has no members to change.
         WorkspaceError::SoloWorkspace => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({ "error": "solo_workspace" })),
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "workspace_is_solo" })),
+        )
+            .into_response(),
+        // Same body as for an unknown account: this says the account is not
+        // on the workspace, never whether it exists.
+        WorkspaceError::MemberNotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "member_not_found" })),
+        )
+            .into_response(),
+        WorkspaceError::InsufficientRole => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "insufficient_role" })),
+        )
+            .into_response(),
+        WorkspaceError::TargetIsSelf => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "target_is_self" })),
+        )
+            .into_response(),
+        WorkspaceError::TargetIsCaptain => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "target_is_captain" })),
         )
             .into_response(),
         WorkspaceError::GuestRoleAboveMember => (

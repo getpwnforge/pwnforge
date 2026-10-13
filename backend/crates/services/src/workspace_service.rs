@@ -8,9 +8,10 @@ use domain::dto::workspace::{
 use domain::entities::{team_members, users, workspace_favorites, workspace_members, workspaces};
 
 use chrono::{DateTime, Utc};
+use sea_orm::sea_query::LockType;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    Set, TransactionTrait,
+    QuerySelect, Set, TransactionTrait,
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -49,6 +50,22 @@ pub enum WorkspaceError {
 
     #[error("a solo workspace has no members to override")]
     SoloWorkspace,
+
+    /// The target is neither on the workspace's team nor a guest of it,
+    /// which is all this says: not whether the account exists.
+    #[error("no such member of this workspace")]
+    MemberNotFound,
+
+    #[error("nobody changes their own access to a workspace")]
+    TargetIsSelf,
+
+    #[error("nobody changes the Captain's access to a workspace")]
+    TargetIsCaptain,
+
+    /// An Admin acting on someone at or above Admin, before or after the
+    /// change, or a role below Admin the caller holds.
+    #[error("caller's role does not permit this action")]
+    InsufficientRole,
 
     #[error("a guest's role is at most member")]
     GuestRoleAboveMember,
@@ -885,6 +902,191 @@ pub async fn remove_guest<C: ConnectionTrait>(
         .exec(db)
         .await?;
 
+    Ok(())
+}
+
+/// A change to one person's access to a team workspace, as the member routes
+/// ask for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberWrite {
+    /// Their role here: an override of the team role for a team member, the
+    /// role itself for a guest. Never Captain: the routes cannot name it.
+    SetRole(TeamRole),
+    /// A team member back to their team role. An exclusion is left alone.
+    ClearRoleOverride,
+    /// A team member out of this workspace, their team membership kept.
+    Exclude,
+    /// A team member's exclusion lifted, back to their team role. A role
+    /// override is left alone.
+    LiftExclusion,
+    /// A guest out of the workspace.
+    RemoveGuest,
+}
+
+impl MemberWrite {
+    /// Whether this write only ever takes access away, which an archived
+    /// workspace still allows (see `ensure_writable`).
+    fn only_takes_access_away(self) -> bool {
+        matches!(self, MemberWrite::Exclude | MemberWrite::RemoveGuest)
+    }
+}
+
+/// What a member write reads about one person, under lock.
+struct MemberState {
+    team_role: Option<TeamRole>,
+    row: Option<workspace_members::Model>,
+}
+
+impl MemberState {
+    fn is_excluded(&self) -> bool {
+        self.row
+            .as_ref()
+            .and_then(|row| row.role.as_deref())
+            .is_some_and(|role| role == Membership::Excluded.as_str())
+    }
+
+    /// A guest is someone with no team membership whose row admits them.
+    /// Someone admitted as a guest who later joined the team counts as the
+    /// team member they now are, as `list_effective_members` reads them.
+    fn is_guest(&self) -> bool {
+        self.team_role.is_none() && self.row.as_ref().is_some_and(|row| row.is_guest)
+    }
+
+    /// Their access once `write` is applied, or the reason it does not apply
+    /// to them: exclusions and role overrides are for team members, removal
+    /// for guests.
+    fn after(&self, write: MemberWrite, before: Membership) -> Result<Membership, WorkspaceError> {
+        let Some(team_role) = self.team_role else {
+            return match write {
+                MemberWrite::SetRole(role) => Ok(Membership::Active(role)),
+                MemberWrite::RemoveGuest => Ok(Membership::None),
+                MemberWrite::ClearRoleOverride
+                | MemberWrite::Exclude
+                | MemberWrite::LiftExclusion => Err(WorkspaceError::TargetNotInTeam),
+            };
+        };
+
+        Ok(match write {
+            MemberWrite::SetRole(role) => Membership::Active(role),
+            MemberWrite::Exclude => Membership::Excluded,
+            MemberWrite::ClearRoleOverride if !self.is_excluded() => Membership::Active(team_role),
+            MemberWrite::LiftExclusion if self.is_excluded() => Membership::Active(team_role),
+            MemberWrite::ClearRoleOverride | MemberWrite::LiftExclusion => before,
+            MemberWrite::RemoveGuest => return Err(WorkspaceError::TargetAlreadyInTeam),
+        })
+    }
+}
+
+/// Reads one person's team role and row for a member write, locked: the team
+/// row shared, so a role change or a departure on the team waits for this
+/// write rather than happening under it, and their row for update.
+async fn locked_member<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<MemberState, WorkspaceError> {
+    let team_role = team_members::Entity::find_by_id((team_id, user_id))
+        .lock_shared()
+        .one(conn)
+        .await?
+        .map(|member| TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer));
+
+    let row = workspace_members::Entity::find_by_id((workspace_id, user_id))
+        .lock_exclusive()
+        .one(conn)
+        .await?;
+
+    Ok(MemberState { team_role, row })
+}
+
+/// Whether this access is below Admin. No access at all counts as below.
+fn below_admin(membership: Membership) -> bool {
+    match membership {
+        Membership::None | Membership::Excluded => true,
+        Membership::Active(role) => role.level() < TeamRole::Admin.level(),
+        Membership::Owner => false,
+    }
+}
+
+/// Applies `write` to `target_id` on a team workspace, for `actor_id`, with
+/// the rules the member routes enforce.
+///
+/// The Captain may act on anyone but themselves, and alone may give Admin.
+/// An Admin may act only when the target's access is below Admin both
+/// before and after the change, so they can neither reach an Admin nor make
+/// one, nor give back an Admin team role by lifting what kept it down. Nobody
+/// acts on the Captain or on themselves. Anyone else is refused.
+///
+/// Refusals in this order: a solo workspace, an archived one for a write that
+/// can grant or change access, a target who is neither on the team nor a
+/// guest (without saying whether the account exists), the target being the
+/// caller or the Captain, a write that does not apply to that kind of
+/// target, the caller's rank, and a guest's ceiling.
+///
+/// Everything is read and written in one transaction. The workspace row is
+/// locked first, so member writes on one workspace run one at a time and an
+/// archive landing meanwhile is seen; the caller's and the target's rows
+/// next, so neither role is read stale (see `locked_member`).
+pub async fn write_member(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    actor_id: Uuid,
+    target_id: Uuid,
+    write: MemberWrite,
+) -> Result<(), WorkspaceError> {
+    let txn = db.begin().await?;
+
+    // NO KEY UPDATE rather than UPDATE: rows that only reference the
+    // workspace, a favourite being added, are not held up by it.
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .lock(LockType::NoKeyUpdate)
+        .one(&txn)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    let team_id = workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)?;
+    if !write.only_takes_access_away() {
+        ensure_writable(&workspace)?;
+    }
+
+    let target = locked_member(&txn, workspace_id, team_id, target_id).await?;
+    if target.team_role.is_none() && !target.is_guest() {
+        return Err(WorkspaceError::MemberNotFound);
+    }
+    if target_id == actor_id {
+        return Err(WorkspaceError::TargetIsSelf);
+    }
+    if target.team_role == Some(TeamRole::Captain) {
+        return Err(WorkspaceError::TargetIsCaptain);
+    }
+
+    locked_member(&txn, workspace_id, team_id, actor_id).await?;
+    let actor = permissions_service::effective_role(&txn, actor_id, &workspace).await?;
+    let before = permissions_service::effective_role(&txn, target_id, &workspace).await?;
+    let after = target.after(write, before)?;
+
+    match actor {
+        Membership::Active(TeamRole::Captain) => {}
+        Membership::Active(TeamRole::Admin) if below_admin(before) && below_admin(after) => {}
+        _ => return Err(WorkspaceError::InsufficientRole),
+    }
+
+    match write {
+        MemberWrite::SetRole(role) => {
+            set_member_override(&txn, workspace_id, target_id, role, target.is_guest()).await?
+        }
+        MemberWrite::Exclude => exclude_member(&txn, workspace_id, target_id).await?,
+        // Nothing to undo when the row holds the other kind, or nothing.
+        MemberWrite::ClearRoleOverride if target.row.is_none() || target.is_excluded() => {}
+        MemberWrite::LiftExclusion if !target.is_excluded() => {}
+        MemberWrite::RemoveGuest => remove_guest(&txn, workspace_id, target_id).await?,
+        MemberWrite::ClearRoleOverride | MemberWrite::LiftExclusion => {
+            remove_member_override(&txn, workspace_id, target_id).await?
+        }
+    }
+
+    txn.commit().await?;
     Ok(())
 }
 

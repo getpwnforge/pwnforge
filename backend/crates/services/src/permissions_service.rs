@@ -3,7 +3,7 @@ use domain::dto::team::TeamRole;
 use domain::dto::workspace::Membership;
 use domain::entities::{team_members, workspace_members, workspaces};
 
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -22,8 +22,11 @@ pub enum PermissionsError {
 
 /// Resolves what `user_id` can do on `workspace`, folding together solo
 /// ownership, team inheritance, and workspace-level overrides.
-pub async fn effective_role(
-    db: &DatabaseConnection,
+///
+/// Generic over the connection so a write can resolve it inside its own
+/// transaction, on rows it has locked.
+pub async fn effective_role<C: ConnectionTrait>(
+    db: &C,
     user_id: Uuid,
     workspace: &workspaces::Model,
 ) -> Result<Membership, PermissionsError> {
