@@ -50,6 +50,9 @@ pub enum WorkspaceError {
     #[error("a solo workspace has no members to override")]
     SoloWorkspace,
 
+    #[error("a guest's role is at most member")]
+    GuestRoleAboveMember,
+
     #[error("the workspace is archived and read-only")]
     Archived,
 
@@ -195,6 +198,10 @@ async fn admit(
 /// Refuses any change to an archived workspace's content. Archiving makes a
 /// workspace read-only; unarchiving, deleting and favouriting stay possible,
 /// so this is called by the writes it guards rather than by the extractor.
+///
+/// Read-only protects the content, not who reaches it: a write that only
+/// takes access away (an exclusion, a guest's removal) stays possible, while
+/// one that can grant or change access is refused like any other change.
 pub fn ensure_writable(workspace: &workspaces::Model) -> Result<(), WorkspaceError> {
     if workspace.archived {
         return Err(WorkspaceError::Archived);
@@ -700,20 +707,29 @@ pub async fn list_effective_members(
 /// Exclusion is not expressible here and lives in `exclude_member`: it is not
 /// a `TeamRole`, and a role parameter that sometimes means "no role at all"
 /// is the kind that gets passed `Captain` by mistake.
-pub async fn set_member_override(
-    db: &DatabaseConnection,
+///
+/// A guest's role is at most Member: Admin is a team role to manage the
+/// workspace, and a guest has no team behind them. Refused on an archived
+/// workspace: it grants or changes access.
+pub async fn set_member_override<C: ConnectionTrait>(
+    db: &C,
     workspace_id: Uuid,
     target_user_id: Uuid,
     role: TeamRole,
     is_guest: bool,
 ) -> Result<(), WorkspaceError> {
-    let team_id = require_team_workspace(db, workspace_id).await?;
+    let (workspace, team_id) = require_team_workspace(db, workspace_id).await?;
+    ensure_writable(&workspace)?;
     let in_team = is_team_member(db, team_id, target_user_id).await?;
 
     match (is_guest, in_team) {
         (false, false) => return Err(WorkspaceError::TargetNotInTeam),
         (true, true) => return Err(WorkspaceError::TargetAlreadyInTeam),
         _ => {}
+    }
+
+    if is_guest && role.level() > TeamRole::Member.level() {
+        return Err(WorkspaceError::GuestRoleAboveMember);
     }
 
     upsert_override(db, workspace_id, target_user_id, role.as_str(), is_guest).await
@@ -724,14 +740,15 @@ pub async fn set_member_override(
 ///
 /// Its own function rather than a value of `set_member_override`'s `role`,
 /// and only for team members: an exclusion subtracts from inherited access,
-/// so for someone with none it would name nothing. To drop a guest, delete
-/// their row instead.
-pub async fn exclude_member(
-    db: &DatabaseConnection,
+/// so for someone with none it would name nothing. To drop a guest, see
+/// `remove_guest`. Allowed on an archived workspace: it only takes access
+/// away (see `ensure_writable`).
+pub async fn exclude_member<C: ConnectionTrait>(
+    db: &C,
     workspace_id: Uuid,
     target_user_id: Uuid,
 ) -> Result<(), WorkspaceError> {
-    let team_id = require_team_workspace(db, workspace_id).await?;
+    let (_, team_id) = require_team_workspace(db, workspace_id).await?;
 
     if !is_team_member(db, team_id, target_user_id).await? {
         return Err(WorkspaceError::TargetNotInTeam);
@@ -747,26 +764,30 @@ pub async fn exclude_member(
     .await
 }
 
-/// The workspace's team, or an error naming why it has none.
+/// The workspace and its team, or an error naming why it has none. Whether
+/// an archived workspace refuses the write is each caller's to decide, since
+/// it depends on what the write does to access (see `ensure_writable`).
 ///
 /// A `workspace_members` row on a solo workspace is inert: both
 /// `permissions_service::effective_role` and `list_effective_members` answer
 /// from `owner_id` and never look at the table. Writing one would be a
 /// silent no-op, so it is refused rather than accepted and ignored.
-async fn require_team_workspace(
-    db: &DatabaseConnection,
+async fn require_team_workspace<C: ConnectionTrait>(
+    db: &C,
     workspace_id: Uuid,
-) -> Result<Uuid, WorkspaceError> {
+) -> Result<(workspaces::Model, Uuid), WorkspaceError> {
     let workspace = workspaces::Entity::find_by_id(workspace_id)
         .one(db)
         .await?
         .ok_or(WorkspaceError::WorkspaceNotFound)?;
 
-    workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)
+    let team_id = workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)?;
+
+    Ok((workspace, team_id))
 }
 
-async fn is_team_member(
-    db: &DatabaseConnection,
+async fn is_team_member<C: ConnectionTrait>(
+    db: &C,
     team_id: Uuid,
     user_id: Uuid,
 ) -> Result<bool, WorkspaceError> {
@@ -783,8 +804,8 @@ async fn is_team_member(
 /// in both branches: the database fills it on insert, and an update must not
 /// reset it, since changing what someone may do here is not them arriving
 /// again.
-async fn upsert_override(
-    db: &DatabaseConnection,
+async fn upsert_override<C: ConnectionTrait>(
+    db: &C,
     workspace_id: Uuid,
     user_id: Uuid,
     role: &str,
@@ -828,13 +849,39 @@ async fn upsert_override(
 ///   whole of their access, so this revokes it.
 ///
 /// Absent row is success, not `WorkspaceNotFound`: the caller asked for the
-/// override to be gone and it is. Same shape as `remove_favorite`.
-pub async fn remove_member_override(
-    db: &DatabaseConnection,
+/// override to be gone and it is. Same shape as `remove_favorite`. Refused
+/// on a solo workspace, and on an archived one since it can grant access; a
+/// guest is removed from an archived workspace through `remove_guest`.
+pub async fn remove_member_override<C: ConnectionTrait>(
+    db: &C,
     workspace_id: Uuid,
     target_user_id: Uuid,
 ) -> Result<(), WorkspaceError> {
+    let (workspace, _) = require_team_workspace(db, workspace_id).await?;
+    ensure_writable(&workspace)?;
+
     workspace_members::Entity::delete_by_id((workspace_id, target_user_id))
+        .exec(db)
+        .await?;
+
+    Ok(())
+}
+
+/// Takes a guest's access to the workspace away: deletes their row, and only
+/// a guest's. Allowed on an archived workspace, since it only takes access
+/// away (see `ensure_writable`); refused on a solo one, which has no guests.
+/// No guest row is success, as in `remove_member_override`.
+pub async fn remove_guest<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    guest_user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    require_team_workspace(db, workspace_id).await?;
+
+    workspace_members::Entity::delete_many()
+        .filter(workspace_members::Column::WorkspaceId.eq(workspace_id))
+        .filter(workspace_members::Column::UserId.eq(guest_user_id))
+        .filter(workspace_members::Column::IsGuest.eq(true))
         .exec(db)
         .await?;
 

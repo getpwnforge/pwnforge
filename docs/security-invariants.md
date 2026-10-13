@@ -49,8 +49,10 @@ later its attachments) resolves access through the same function in
 `workspace_service`, by slug or by id. No route re-derives the rule locally.
 
 A second copy drifts without anyone noticing: a rule added to one path, such as
-"an archived workspace is read-only", is missing from the other, which quietly
-becomes a side door around it.
+"an archived workspace's content is read-only", is missing from the other, which
+quietly becomes a side door around it. (Read-only covers the content, not who
+reaches it: excluding a member or removing a guest stays possible on an archived
+workspace, while a write that can grant or change access is refused.)
 
 ## Rate limits fail open only where a secret sits underneath
 

@@ -603,6 +603,112 @@ async fn an_override_is_refused_on_a_solo_workspace() {
     );
 }
 
+/// On an archived workspace, the service itself refuses the writes that can
+/// grant or change access, whoever calls it, and writes nothing; the ones
+/// that only take access away go through.
+#[tokio::test]
+async fn member_writes_refuse_an_archived_workspace() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+    let guest_id = create_user(&db).await;
+    workspace_service::set_member_override(&db, f.workspace.id, guest_id, TeamRole::Member, true)
+        .await
+        .expect("the guest must be admitted");
+    workspace_service::archive_workspace(&db, f.workspace.id)
+        .await
+        .expect("the workspace must archive");
+
+    let outcomes = [
+        workspace_service::set_member_override(
+            &db,
+            f.workspace.id,
+            f.member_id,
+            TeamRole::Viewer,
+            false,
+        )
+        .await,
+        workspace_service::set_member_override(
+            &db,
+            f.workspace.id,
+            guest_id,
+            TeamRole::Viewer,
+            true,
+        )
+        .await,
+        workspace_service::remove_member_override(&db, f.workspace.id, guest_id).await,
+    ];
+    for outcome in outcomes {
+        assert!(
+            matches!(outcome, Err(WorkspaceError::Archived)),
+            "expected Archived, got {outcome:?}"
+        );
+    }
+    assert!(
+        override_row(&db, f.workspace.id, f.member_id)
+            .await
+            .is_none()
+    );
+    let guest = override_row(&db, f.workspace.id, guest_id)
+        .await
+        .expect("the guest must still be admitted");
+    assert_eq!(guest.role.as_deref(), Some("member"));
+
+    workspace_service::exclude_member(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("an exclusion only takes access away");
+    workspace_service::remove_guest(&db, f.workspace.id, guest_id)
+        .await
+        .expect("so does removing a guest");
+    let excluded = override_row(&db, f.workspace.id, f.member_id)
+        .await
+        .expect("the exclusion must be written");
+    assert_eq!(
+        excluded.role.as_deref(),
+        Some(Membership::Excluded.as_str())
+    );
+    assert!(override_row(&db, f.workspace.id, guest_id).await.is_none());
+}
+
+/// A guest's role is at most Member, in the service itself.
+#[tokio::test]
+async fn a_guest_cannot_be_admitted_above_member() {
+    let db = connect().await;
+    let f = fixture(&db).await;
+    let guest_id = create_user(&db).await;
+
+    let refused = workspace_service::set_member_override(
+        &db,
+        f.workspace.id,
+        guest_id,
+        TeamRole::Admin,
+        true,
+    )
+    .await;
+
+    assert!(
+        matches!(refused, Err(WorkspaceError::GuestRoleAboveMember)),
+        "expected GuestRoleAboveMember, got {refused:?}"
+    );
+    assert!(override_row(&db, f.workspace.id, guest_id).await.is_none());
+}
+
+/// Removing a row on a solo workspace is refused like writing one: there is
+/// no member list there to change.
+#[tokio::test]
+async fn removing_an_override_is_refused_on_a_solo_workspace() {
+    let db = connect().await;
+    let owner_id = create_user(&db).await;
+    let other_id = create_user(&db).await;
+    let workspace = create_workspace(&db, None, Some(owner_id)).await;
+
+    let refused = workspace_service::remove_member_override(&db, workspace.id, other_id).await;
+
+    assert!(
+        matches!(refused, Err(WorkspaceError::SoloWorkspace)),
+        "expected SoloWorkspace, got {refused:?}"
+    );
+}
+
 /// An unknown workspace is not-found, not a row written against nothing.
 #[tokio::test]
 async fn an_override_on_an_unknown_workspace_is_not_found() {

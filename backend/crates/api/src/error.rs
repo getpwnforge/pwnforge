@@ -665,6 +665,11 @@ fn workspace_response(err: WorkspaceError) -> Response {
             Json(json!({ "error": "solo_workspace" })),
         )
             .into_response(),
+        WorkspaceError::GuestRoleAboveMember => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "guest_role_above_member" })),
+        )
+            .into_response(),
         // 409 rather than 403: the caller holds the role, it is the state of
         // the workspace that refuses the write, and unarchiving lifts it.
         WorkspaceError::Archived => (
