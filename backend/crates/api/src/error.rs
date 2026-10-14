@@ -707,6 +707,13 @@ fn workspace_response(err: WorkspaceError) -> Response {
             Json(json!({ "error": "workspace_archived" })),
         )
             .into_response(),
+        // The code the team routes give a Captain trying to leave: the same
+        // way out, transferring the team first.
+        WorkspaceError::CaptainMustTransfer => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "captain_must_transfer" })),
+        )
+            .into_response(),
         WorkspaceError::InvalidDateRange => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "error": "ends_before_start" })),

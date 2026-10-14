@@ -96,6 +96,7 @@ impl Modify for SecurityAddon {
         crate::routes::workspace_members::exclude,
         crate::routes::workspace_members::lift_exclusion,
         crate::routes::workspace_members::remove_guest,
+        crate::routes::workspace_members::leave,
         crate::routes::workspace_invitations::create_invitation,
         crate::routes::workspace_invitations::list_invitations,
         crate::routes::workspace_invitations::cancel_invitation,

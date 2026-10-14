@@ -35,6 +35,7 @@ pub fn router() -> Router<AppState> {
             post(exclude).delete(lift_exclusion),
         )
         .route("/workspaces/{slug}/guests/{user_id}", delete(remove_guest))
+        .route("/workspaces/{slug}/leave", post(leave))
 }
 
 /// The `{user_id}` segment, read without assuming it is the route's only
@@ -221,6 +222,27 @@ async fn remove_guest(
     target: Target,
 ) -> Result<StatusCode, AppError> {
     write(&state, &member, target, MemberWrite::RemoveGuest).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/workspaces/{slug}/leave",
+    tag = "Workspaces",
+    params(("slug" = String, Path, description = "Workspace slug")),
+    security(("access_token" = [])),
+    responses(
+        (status = 204, description = "The caller no longer has access: a guest's place is removed, a team member is excluded, their team membership kept, until the Captain or an Admin lifts it. The one member write made on oneself, allowed on an archived workspace"),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 404, description = "Workspace not found, or no access to it", body = SimpleErrorResponse),
+        (status = 409, description = "workspace_is_solo, or captain_must_transfer: the Captain holds every workspace of the team and cannot leave one", body = SimpleErrorResponse),
+    )
+)]
+async fn leave(
+    State(state): State<AppState>,
+    member: WorkspaceMember<role::Viewer>,
+) -> Result<StatusCode, AppError> {
+    workspace_service::leave_workspace(&state.db, member.workspace.id, member.user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
@@ -856,5 +878,86 @@ mod tests {
         let (status, body) = send(&app, "DELETE", &uri, f.admin).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "workspace_archived");
+    }
+
+    async fn leave(app: &axum::Router, f: &Fixture, caller: Uuid) -> (StatusCode, Value) {
+        send(
+            app,
+            "POST",
+            &format!("/api/v1/workspaces/{}/leave", f.workspace.slug),
+            caller,
+        )
+        .await
+    }
+
+    /// A guest who leaves is gone; a team member who leaves is excluded,
+    /// their team membership kept, and only the Captain or an Admin brings
+    /// them back. The Captain cannot leave.
+    #[tokio::test]
+    async fn leaving_takes_the_caller_out_and_the_captain_cannot() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+
+        let (status, _) = leave(&app, &f, f.guest).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(listed(&app, &f, f.guest).await, None);
+        assert_eq!(leave(&app, &f, f.guest).await.0, StatusCode::NOT_FOUND);
+
+        let (status, _) = leave(&app, &f, f.admin).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            listed(&app, &f, f.admin).await,
+            None,
+            "excluded, so not listed"
+        );
+        let lift = member_uri(&f, f.admin, "/exclusion");
+        assert_eq!(
+            send(&app, "DELETE", &lift, f.admin).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            send(&app, "DELETE", &lift, f.other_admin).await.0,
+            StatusCode::FORBIDDEN,
+            "an Admin cannot give back an Admin's access"
+        );
+        assert_eq!(
+            send(&app, "DELETE", &lift, f.captain).await.0,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(listed(&app, &f, f.admin).await, role("admin", false));
+
+        let (status, body) = leave(&app, &f, f.captain).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "captain_must_transfer");
+        assert_eq!(listed(&app, &f, f.captain).await, role("captain", false));
+    }
+
+    /// Leaving only takes access away, so an archived workspace allows it. A
+    /// solo workspace has nobody to leave it.
+    #[tokio::test]
+    async fn leaving_is_allowed_on_an_archived_workspace_and_not_on_a_solo_one() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        workspace_service::archive_workspace(&db, f.workspace.id)
+            .await
+            .expect("the workspace archives");
+
+        assert_eq!(leave(&app, &f, f.member).await.0, StatusCode::NO_CONTENT);
+        assert_eq!(leave(&app, &f, f.guest).await.0, StatusCode::NO_CONTENT);
+        assert_eq!(listed(&app, &f, f.member).await, None);
+
+        let owner = create_user(&db).await;
+        let solo = create_solo_workspace(&db, owner, "Solo").await;
+        let (status, body) = send(
+            &app,
+            "POST",
+            &format!("/api/v1/workspaces/{}/leave", solo.slug),
+            owner,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "workspace_is_solo");
     }
 }

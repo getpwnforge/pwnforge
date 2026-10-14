@@ -73,6 +73,11 @@ pub enum WorkspaceError {
     #[error("the workspace is archived and read-only")]
     Archived,
 
+    /// The Captain leaving a team workspace: they hold every workspace of
+    /// the team, so the way out is transferring the team first.
+    #[error("the captain cannot leave a team workspace")]
+    CaptainMustTransfer,
+
     #[error("ends_at must be after starts_at")]
     InvalidDateRange,
 
@@ -1100,6 +1105,40 @@ pub async fn write_member(
         MemberWrite::ClearRoleOverride | MemberWrite::LiftExclusion => {
             remove_member_override(&txn, workspace_id, target_id).await?
         }
+    }
+
+    txn.commit().await?;
+    Ok(())
+}
+
+/// The caller giving up their own access to a team workspace: a guest's row
+/// is deleted, a team member excludes themselves, their team membership
+/// kept. The one member write made on oneself, and allowed on an archived
+/// workspace, since it only takes access away.
+///
+/// A self-exclusion is lifted like any other, by the Captain or an Admin
+/// (see `write_member`): leaving is not undone by the one who left. The
+/// Captain cannot leave, since every workspace of the team is theirs.
+pub async fn leave_workspace(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let txn = db.begin().await?;
+
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .lock(LockType::NoKeyUpdate)
+        .one(&txn)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+    let team_id = workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)?;
+
+    let me = locked_member(&txn, workspace_id, team_id, user_id).await?;
+    match me.team_role {
+        Some(TeamRole::Captain) => return Err(WorkspaceError::CaptainMustTransfer),
+        Some(_) => exclude_member(&txn, workspace_id, user_id).await?,
+        None if me.is_guest() => remove_guest(&txn, workspace_id, user_id).await?,
+        None => return Err(WorkspaceError::WorkspaceNotFound),
     }
 
     txn.commit().await?;
