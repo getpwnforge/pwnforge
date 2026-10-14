@@ -1,18 +1,21 @@
 // backend/crates/services/src/team_service.rs
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
-use sea_orm::sea_query::Expr;
+use chrono::{DateTime, Duration, Utc};
+use redis::aio::ConnectionManager;
+use sea_orm::sea_query::{Expr, Query};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait,
+    ExprTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use uuid::Uuid;
 
+use domain::dto::invitation::{INVITATION_DEFAULT_DAYS, TEAM_INVITATION_MAX_DAYS};
 use domain::dto::team::{
-    CreateInvitationRequest, CreateTeamRequest, TeamInvitationResponse, TeamMemberResponse,
-    TeamPatch, TeamResponse, TeamRole,
+    CreateInvitationRequest, CreateTeamRequest, TeamInvitationPreview, TeamInvitationResponse,
+    TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
 };
 use domain::entities::{
     team_invitations, team_members, teams, user_emails, users, workspace_members, workspaces,
@@ -20,8 +23,11 @@ use domain::entities::{
 
 use crate::audit_service::{self, AuditContext, AuditError};
 use crate::config::Config;
+use crate::email_service::InvitationKind;
+use crate::instance_service::InstanceError;
+use crate::invitation_service::{self, CreatedInvitation, InvitationMail, MailOutcome};
 use crate::storage_service::{AvatarKind, ObjectStore, ObjectsToPurge};
-use crate::{auth_service, email_service, instance_service, slug_service, token_service};
+use crate::{auth_service, slug_service, token_service};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TeamError {
@@ -61,6 +67,11 @@ pub enum TeamError {
 
     #[error("invitation has expired")]
     InvitationExpired,
+
+    /// The author asked for an expiry further out than
+    /// `TEAM_INVITATION_MAX_DAYS`.
+    #[error("invitation expiry is too far in the future")]
+    InvitationExpiryTooFar,
 
     #[error("invitation has reached its maximum number of uses")]
     InvitationMaxUsesReached,
@@ -362,6 +373,7 @@ pub async fn list_team_members(
                 avatar_version: user.avatar_version,
                 role: TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer),
                 joined_at: member.joined_at.into(),
+                invited_by: member.invited_by,
             })
         })
         .collect())
@@ -391,11 +403,13 @@ pub async fn get_team_member(
         avatar_version: user.avatar_version,
         role: TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer),
         joined_at: member.joined_at.into(),
+        invited_by: member.invited_by,
     })
 }
 
 /// Inserts a `team_members` row. Used both by direct addition and by
-/// invitation acceptance (token or id).
+/// invitation acceptance (token or id), which records the invitation's
+/// author as `invited_by`.
 ///
 /// Never as Captain. A team gets its Captain when it is created and changes
 /// it by transfer; joining as one would hand the team to a second person
@@ -405,6 +419,7 @@ pub async fn add_member<C: ConnectionTrait>(
     team_id: Uuid,
     user_id: Uuid,
     role: TeamRole,
+    invited_by: Option<Uuid>,
 ) -> Result<team_members::Model, TeamError> {
     if role == TeamRole::Captain {
         return Err(TeamError::CaptainMustTransfer);
@@ -422,6 +437,7 @@ pub async fn add_member<C: ConnectionTrait>(
         team_id: Set(team_id),
         user_id: Set(user_id),
         role: Set(role.as_str().to_string()),
+        invited_by: Set(invited_by),
         ..Default::default()
     }
     .insert(db)
@@ -878,25 +894,144 @@ pub(crate) async fn captained_teams<C: ConnectionTrait>(
 
 /// Matches invitations that are still usable.
 ///
-/// A NULL `expires_at` means the invitation never expires. Written once
-/// because every read of this table needs it: an expired row must neither be
-/// offered to the invitee, nor block a replacement being issued, nor be
-/// acceptable. Leaving it out of the dedupe checks meant an expired invitation
-/// locked a person out of ever being re-invited to that team, since the unique
-/// indexes still counted the dead row.
+/// Written once because every read of this table needs it: an expired row
+/// must neither be offered to the invitee, nor block a replacement being
+/// issued, nor be acceptable. Leaving it out of the dedupe checks meant an
+/// expired invitation locked a person out of ever being re-invited to that
+/// team, since the unique indexes still counted the dead row. Every row has
+/// an expiry since `m20261014_120000_team_invitations_expire`.
 fn not_expired() -> Expr {
-    team_invitations::Column::ExpiresAt
-        .is_null()
-        .or(team_invitations::Column::ExpiresAt.gt(chrono::Utc::now()))
+    team_invitations::Column::ExpiresAt.gt(chrono::Utc::now())
+}
+
+/// When a new team invitation expires: the date its author asked for, or
+/// seven days from `now` when they did not say. Never more than thirty days
+/// out, so no link stays redeemable indefinitely.
+fn invitation_expiry(
+    requested: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<DateTime<Utc>, TeamError> {
+    let expires_at = requested.unwrap_or(now + Duration::days(INVITATION_DEFAULT_DAYS));
+    if expires_at > now + Duration::days(TEAM_INVITATION_MAX_DAYS) {
+        return Err(TeamError::InvitationExpiryTooFar);
+    }
+    Ok(expires_at)
+}
+
+/// Whether a member of the team has `email` verified: inviting that address
+/// would invite someone already there.
+async fn member_holds_address<C: ConnectionTrait>(
+    conn: &C,
+    team_id: Uuid,
+    email: &str,
+) -> Result<bool, TeamError> {
+    let members = Query::select()
+        .column((team_members::Entity, team_members::Column::UserId))
+        .from(team_members::Entity)
+        .and_where(Expr::col((team_members::Entity, team_members::Column::TeamId)).eq(team_id))
+        .to_owned();
+
+    Ok(user_emails::Entity::find()
+        .filter(user_emails::Column::Email.eq(email))
+        .filter(user_emails::Column::VerifiedAt.is_not_null())
+        .filter(user_emails::Column::UserId.in_subquery(members))
+        .one(conn)
+        .await?
+        .is_some())
+}
+
+/// Names the invitee of a new invitation and refuses the ones that cannot be
+/// issued. Returns the account named by username, if any, and the address,
+/// normalized, if any; both `None` is a generic link.
+///
+/// A username names an account, and one that matches nobody is refused
+/// rather than quietly downgraded to a generic link: the caller asked for a
+/// specific person, and silently minting a token anyone could redeem is not
+/// the same invitation.
+///
+/// An address names nobody. It is not resolved to an account here, so the
+/// answer is the same whether one holds it or not; the invitation reaches
+/// whoever has it verified, at the time they read it (see
+/// `invitation_service::addressed_to`). The DTO guarantees the two are never
+/// both set (see `invitee_is_named_once`).
+///
+/// Inviting someone already on the team is a mistake to reject up front
+/// rather than let them discover it only at acceptance (see `add_member`,
+/// still kept as the last line of defense for the race window between these
+/// checks and the insert). By address, that is a member who has it verified:
+/// telling the author so reveals nothing they cannot read off the roster.
+async fn resolve_invitee(
+    db: &DatabaseConnection,
+    team_id: Uuid,
+    payload: &CreateInvitationRequest,
+) -> Result<(Option<Uuid>, Option<String>), TeamError> {
+    let invited_email = payload
+        .invited_email
+        .as_deref()
+        .map(auth_service::normalize_email);
+
+    let invited_user_id = match &payload.username {
+        Some(username) => Some(
+            auth_service::find_user_by_username(db, username)
+                .await?
+                .ok_or(TeamError::InvitedUserNotFound)?,
+        ),
+        None => None,
+    };
+
+    match (invited_user_id, &invited_email) {
+        (Some(invited_user_id), _) => {
+            if team_members::Entity::find_by_id((team_id, invited_user_id))
+                .one(db)
+                .await?
+                .is_some()
+            {
+                return Err(TeamError::AlreadyMember);
+            }
+
+            let already_pending = team_invitations::Entity::find()
+                .filter(team_invitations::Column::TeamId.eq(team_id))
+                .filter(team_invitations::Column::InvitedUserId.eq(invited_user_id))
+                .filter(not_expired())
+                .one(db)
+                .await?
+                .is_some();
+            if already_pending {
+                return Err(TeamError::AlreadyInvited);
+            }
+        }
+        (None, Some(email)) => {
+            if member_holds_address(db, team_id, email).await? {
+                return Err(TeamError::AlreadyMember);
+            }
+
+            // Same constraint as idx_team_invitations_unique_per_email.
+            let already_pending = team_invitations::Entity::find()
+                .filter(team_invitations::Column::TeamId.eq(team_id))
+                .filter(team_invitations::Column::InvitedUserId.is_null())
+                .filter(team_invitations::Column::InvitedEmail.eq(email.clone()))
+                .filter(not_expired())
+                .one(db)
+                .await?
+                .is_some();
+            if already_pending {
+                return Err(TeamError::AlreadyInvited);
+            }
+        }
+        (None, None) => {}
+    }
+
+    Ok((invited_user_id, invited_email))
 }
 
 pub async fn create_invitation(
     db: &DatabaseConnection,
+    redis: &mut ConnectionManager,
     config: &Config,
     team_id: Uuid,
     creator_id: Uuid,
     payload: CreateInvitationRequest,
-) -> Result<TeamInvitationResponse, TeamError> {
+) -> Result<CreatedInvitation<TeamInvitationResponse>, TeamError> {
     // Joining never makes a Captain (see `add_member`). Refused here, where
     // the Captain asking can be told to transfer, rather than at acceptance,
     // where the invitee would be the one to find out.
@@ -904,72 +1039,13 @@ pub async fn create_invitation(
         return Err(TeamError::CaptainMustTransfer);
     }
 
-    let invited_email = payload
-        .invited_email
-        .as_deref()
-        .map(auth_service::normalize_email);
+    let expires_at = invitation_expiry(payload.expires_at, Utc::now())?;
+    let (invited_user_id, invited_email) = resolve_invitee(db, team_id, &payload).await?;
 
-    // Both ways of naming an invitee collapse to an account id here, so the
-    // rest of this function works on one identifier. The DTO guarantees they
-    // are never both set (see `invitee_is_named_once`), which is what keeps
-    // the row's two targeting columns from ever disagreeing.
-    //
-    // A username that matches nobody is refused rather than quietly downgraded
-    // to a generic link: the caller asked for a specific person, and silently
-    // minting a token anyone could redeem is not the same invitation.
-    let invited_user_id = match (&payload.username, &invited_email) {
-        (Some(username), _) => Some(
-            auth_service::find_user_by_username(db, username)
-                .await?
-                .ok_or(TeamError::InvitedUserNotFound)?,
-        ),
-        (None, Some(email)) => auth_service::find_verified_user_by_email(db, email).await?,
-        (None, None) => None,
-    };
-
-    if let Some(invited_user_id) = invited_user_id {
-        // Resolved either from a username or from
-        // invited_email matching an existing account: either way, inviting
-        // someone already on the team is a mistake to reject up front rather
-        // than let them discover it only at acceptance (see add_member,
-        // still kept as the last line of defense for the race window
-        // between this check and the insert below).
-        let already_member = team_members::Entity::find_by_id((team_id, invited_user_id))
-            .one(db)
-            .await?
-            .is_some();
-
-        if already_member {
-            return Err(TeamError::AlreadyMember);
-        }
-
-        let already_pending = team_invitations::Entity::find()
-            .filter(team_invitations::Column::TeamId.eq(team_id))
-            .filter(team_invitations::Column::InvitedUserId.eq(invited_user_id))
-            .filter(not_expired())
-            .one(db)
-            .await?
-            .is_some();
-
-        if already_pending {
-            return Err(TeamError::AlreadyInvited);
-        }
-    } else if let Some(email) = &invited_email {
-        // No matching account yet: dedupe on the email itself instead, same
-        // constraint as idx_team_invitations_unique_per_email.
-        let already_pending = team_invitations::Entity::find()
-            .filter(team_invitations::Column::TeamId.eq(team_id))
-            .filter(team_invitations::Column::InvitedUserId.is_null())
-            .filter(team_invitations::Column::InvitedEmail.eq(email.clone()))
-            .filter(not_expired())
-            .one(db)
-            .await?
-            .is_some();
-
-        if already_pending {
-            return Err(TeamError::AlreadyInvited);
-        }
-    }
+    let team = teams::Entity::find_by_id(team_id)
+        .one(db)
+        .await?
+        .ok_or(TeamError::TeamNotFound)?;
 
     let token = token_service::generate_opaque_token();
 
@@ -986,7 +1062,7 @@ pub async fn create_invitation(
         default_role: Set(payload.default_role.as_str().to_string()),
         invited_user_id: Set(invited_user_id),
         invited_email: Set(invited_email.clone()),
-        expires_at: Set(payload.expires_at.map(Into::into)),
+        expires_at: Set(expires_at.into()),
         max_uses: Set(max_uses),
         token: Set(token.hash),
         ..Default::default()
@@ -994,158 +1070,148 @@ pub async fn create_invitation(
     .insert(db)
     .await?;
 
-    // Best effort: a mail failure must not undo a completed invitation.
-    if let Err(err) = send_invitation_email(
-        db,
-        config,
-        &invitation,
-        invited_user_id,
-        invited_email.as_deref(),
-    )
-    .await
-    {
-        tracing::error!(error = ?err, invitation_id = %invitation.id, "failed to send team invitation email");
-    }
+    // Where to write is the account's business when it is named, not the
+    // caller's: an address taken from the request would let an Admin send
+    // the invitation to any mailbox they liked, over an invitation that names
+    // someone else entirely. The mail is the same either way, and never
+    // undoes the invitation (see `invitation_service::send_mail`).
+    let recipient = match (invited_user_id, &invited_email) {
+        (Some(user_id), _) => Some(invitation_service::account_recipient(db, user_id).await),
+        (None, Some(email)) => Some(
+            invitation_service::address_recipient(db, email)
+                .await
+                .map(Some)
+                .map_err(|InstanceError::Db(err)| err),
+        ),
+        (None, None) => None,
+    };
+    let mail = match recipient {
+        None => None,
+        Some(Ok(None)) => Some(MailOutcome::NoAddress),
+        Some(Ok(Some(recipient))) => Some(
+            invitation_service::send_mail(
+                redis,
+                config,
+                &recipient,
+                InvitationMail {
+                    kind: InvitationKind::Team,
+                    name: &team.name,
+                    token: &token.secret,
+                    expires_at,
+                },
+            )
+            .await,
+        ),
+        Some(Err(error)) => {
+            tracing::error!(?error, invitation_id = %invitation.id, "could not address the team invitation email");
+            Some(MailOutcome::Failed)
+        }
+    };
 
-    Ok(TeamInvitationResponse {
-        id: invitation.id,
-        token: Some(token.secret),
-        default_role: payload.default_role,
-        invited_user_id,
-        invited_email,
-        expires_at: payload.expires_at,
-        max_uses,
-        uses: 0,
-        created_at: invitation.created_at.into(),
+    let authors = invitation_service::usernames(db, [creator_id]).await?;
+
+    Ok(CreatedInvitation {
+        invitation: TeamInvitationResponse {
+            id: invitation.id,
+            token: Some(token.secret),
+            team_id,
+            team_name: team.name,
+            default_role: payload.default_role,
+            invited_user_id,
+            invited_email,
+            invited_by: Some(creator_id),
+            invited_by_username: authors.get(&creator_id).cloned(),
+            expires_at,
+            max_uses,
+            uses: 0,
+            created_at: invitation.created_at.into(),
+        },
+        mail,
     })
 }
 
-/// Picks the right of the two invitation emails: an already-existing,
-/// verified account gets told it was added; anyone else gets a link to sign
-/// up (the account-less case, no user locale to translate into yet, so the
-/// instance's default is used).
-async fn send_invitation_email(
-    db: &DatabaseConnection,
-    config: &Config,
-    invitation: &team_invitations::Model,
-    invited_user_id: Option<Uuid>,
-    invited_email: Option<&str>,
-) -> anyhow::Result<()> {
-    let team = teams::Entity::find_by_id(invitation.team_id)
-        .one(db)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("team not found while sending invitation email"))?;
-
-    match (invited_user_id, invited_email) {
-        // Pinned to an account. Where to write is the account's business, not
-        // the caller's: an address taken from the request would let an Admin
-        // send "you were added to <team>" to any mailbox they liked, over an
-        // invitation that names someone else entirely.
-        (Some(user_id), _) => {
-            let user = users::Entity::find_by_id(user_id)
-                .one(db)
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("invited user not found while sending invitation email")
-                })?;
-
-            // No verified primary address is not an error: the invitation is
-            // valid and already visible in-app, there is simply nowhere to
-            // write to yet.
-            let Some(primary) = auth_service::primary_email(db, user_id).await? else {
-                tracing::info!(
-                    invitation_id = %invitation.id,
-                    "invited account has no primary address, skipping invitation email"
-                );
-                return Ok(());
-            };
-
-            if primary.verified_at.is_none() {
-                tracing::info!(
-                    invitation_id = %invitation.id,
-                    "invited account's primary address is unverified, skipping invitation email"
-                );
-                return Ok(());
-            }
-
-            email_service::send_team_invitation_added(
-                config,
-                &primary.email,
-                &user.locale,
-                &team.name,
-            )
-            .await?;
-        }
-        // No account behind the address yet: invite them to create one. No
-        // user locale to translate into, so the instance default is used.
-        (None, Some(email)) => {
-            let settings = instance_service::settings(db).await?;
-            email_service::send_team_invitation_signup(
-                config,
-                email,
-                &settings.default_locale,
-                &team.name,
-            )
-            .await?;
-        }
-        // A generic link. Nobody in particular to tell about it.
-        (None, None) => {}
+/// The listing shape of a row: never its token, which only the creation
+/// response carries.
+fn invitation_response(
+    invitation: team_invitations::Model,
+    team_name: String,
+    usernames: &HashMap<Uuid, String>,
+) -> TeamInvitationResponse {
+    TeamInvitationResponse {
+        id: invitation.id,
+        token: None,
+        team_id: invitation.team_id,
+        team_name,
+        default_role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
+        invited_user_id: invitation.invited_user_id,
+        invited_email: invitation.invited_email,
+        invited_by: invitation.created_by,
+        invited_by_username: invitation
+            .created_by
+            .and_then(|id| usernames.get(&id).cloned()),
+        expires_at: invitation.expires_at.into(),
+        max_uses: invitation.max_uses,
+        uses: invitation.uses,
+        created_at: invitation.created_at.into(),
     }
-
-    Ok(())
 }
 
-/// Active generic links for the team (invited_user_id IS NULL), not expired.
+/// The team's active invitations that name no account: generic links and
+/// invitations by address, not expired, with their author.
 pub async fn list_active_invitations(
     db: &DatabaseConnection,
     team_id: Uuid,
 ) -> Result<Vec<TeamInvitationResponse>, TeamError> {
+    let team = teams::Entity::find_by_id(team_id)
+        .one(db)
+        .await?
+        .ok_or(TeamError::TeamNotFound)?;
+
     let invitations = team_invitations::Entity::find()
         .filter(team_invitations::Column::TeamId.eq(team_id))
         .filter(team_invitations::Column::InvitedUserId.is_null())
         .filter(not_expired())
+        .order_by_asc(team_invitations::Column::CreatedAt)
         .all(db)
         .await?;
 
+    let usernames =
+        invitation_service::usernames(db, invitations.iter().filter_map(|row| row.created_by))
+            .await?;
+
     Ok(invitations
         .into_iter()
-        .map(|invitation| TeamInvitationResponse {
-            id: invitation.id,
-            token: None, // never returned in this listing
-            default_role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
-            invited_user_id: invitation.invited_user_id,
-            invited_email: invitation.invited_email,
-            expires_at: invitation.expires_at.map(Into::into),
-            max_uses: invitation.max_uses,
-            uses: invitation.uses,
-            created_at: invitation.created_at.into(),
-        })
+        .map(|invitation| invitation_response(invitation, team.name.clone(), &usernames))
         .collect())
 }
 
-/// Pending targeted invitations for this user, across all teams.
+/// Pending targeted invitations for this user, across all teams: those that
+/// name the account, and those sent to an address it has verified, matched
+/// now rather than when they were sent.
 pub async fn list_pending_invitations_for_user(
     db: &DatabaseConnection,
     user_id: Uuid,
 ) -> Result<Vec<TeamInvitationResponse>, TeamError> {
     let invitations = team_invitations::Entity::find()
-        .filter(team_invitations::Column::InvitedUserId.eq(user_id))
+        .filter(invitation_service::addressed_to(
+            team_invitations::Column::InvitedUserId,
+            team_invitations::Column::InvitedEmail,
+            user_id,
+        ))
         .filter(not_expired())
+        .order_by_asc(team_invitations::Column::CreatedAt)
+        .find_also_related(teams::Entity)
         .all(db)
         .await?;
 
+    let usernames =
+        invitation_service::usernames(db, invitations.iter().filter_map(|(row, _)| row.created_by))
+            .await?;
+
     Ok(invitations
         .into_iter()
-        .map(|invitation| TeamInvitationResponse {
-            id: invitation.id,
-            token: None, // never returned in this listing
-            default_role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
-            invited_user_id: invitation.invited_user_id,
-            invited_email: invitation.invited_email,
-            expires_at: invitation.expires_at.map(Into::into),
-            max_uses: invitation.max_uses,
-            uses: invitation.uses,
-            created_at: invitation.created_at.into(),
+        .filter_map(|(invitation, team)| {
+            team.map(|team| invitation_response(invitation, team.name, &usernames))
         })
         .collect())
 }
@@ -1170,56 +1236,57 @@ pub async fn revoke_invitation(
     Ok(())
 }
 
-/// Acceptance via a generic link (token in the URL, `POST /teams/join/:token`).
-pub async fn accept_invitation_by_token(
-    db: &DatabaseConnection,
-    token: &str,
+/// Whether `user_id` may answer this invitation. A generic link is for
+/// whoever holds it; an addressed one, for the account it names or for an
+/// account with its address verified. The account id wins when both are
+/// set: it is the stronger statement of the two, and consulting only the
+/// address is what once let a third party redeem a link issued in someone
+/// else's name.
+async fn check_invitee<C: ConnectionTrait>(
+    conn: &C,
+    invitation: &team_invitations::Model,
     user_id: Uuid,
-) -> Result<TeamResponse, TeamError> {
-    let token_hash = token_service::hash_opaque_token(token);
-
-    let invitation = team_invitations::Entity::find()
-        .filter(team_invitations::Column::Token.eq(token_hash))
-        .one(db)
-        .await?
-        .ok_or(TeamError::InvitationNotFound)?;
-
-    if let Some(expires_at) = invitation.expires_at
-        && expires_at < chrono::Utc::now()
-    {
-        return Err(TeamError::InvitationExpired);
-    }
-
-    // An addressed link must not be usable by whoever else it ends up with
-    // (forwarded, leaked, shared inbox). Which check applies depends on how
-    // the invitation named its invitee, and the account id wins when both are
-    // set: it is the stronger statement of the two, and consulting only the
-    // address here is what once let a third party redeem a link issued in
-    // someone else's name.
+) -> Result<(), TeamError> {
     match (&invitation.invited_user_id, &invitation.invited_email) {
-        (Some(invited_user_id), _) => {
-            if *invited_user_id != user_id {
-                return Err(TeamError::InvitationNotForUser);
-            }
+        (Some(invited_user_id), _) if *invited_user_id != user_id => {
+            Err(TeamError::InvitationNotForUser)
         }
+        (Some(_), _) | (None, None) => Ok(()),
         (None, Some(invited_email)) => {
             let matches = user_emails::Entity::find()
                 .filter(user_emails::Column::UserId.eq(user_id))
                 .filter(user_emails::Column::Email.eq(invited_email.clone()))
                 .filter(user_emails::Column::VerifiedAt.is_not_null())
-                .one(db)
+                .one(conn)
                 .await?
                 .is_some();
 
-            if !matches {
-                return Err(TeamError::InvitationEmailMismatch);
+            if matches {
+                Ok(())
+            } else {
+                Err(TeamError::InvitationEmailMismatch)
             }
         }
-        // A generic link: the token is the only credential it carries.
-        (None, None) => {}
     }
+}
 
-    let txn = db.begin().await?;
+/// Uses the invitation up, inside the acceptance's transaction. An addressed
+/// one is deleted: whichever of two concurrent acceptances deletes it first
+/// joins, the other finds nothing. A generic link reserves one of its uses,
+/// under the same guarantee from the conditional update.
+async fn consume<C: ConnectionTrait>(
+    conn: &C,
+    invitation: &team_invitations::Model,
+) -> Result<(), TeamError> {
+    if invitation.invited_user_id.is_some() || invitation.invited_email.is_some() {
+        let deleted = team_invitations::Entity::delete_by_id(invitation.id)
+            .exec(conn)
+            .await?;
+        if deleted.rows_affected == 0 {
+            return Err(TeamError::InvitationNotFound);
+        }
+        return Ok(());
+    }
 
     let reserved = team_invitations::Entity::update_many()
         .col_expr(
@@ -1233,16 +1300,36 @@ pub async fn accept_invitation_by_token(
                 .or(Expr::col(team_invitations::Column::Uses)
                     .lt(Expr::col(team_invitations::Column::MaxUses))),
         )
-        .exec(&txn)
+        .exec(conn)
         .await?;
 
     if reserved.rows_affected == 0 {
-        txn.rollback().await?;
         return Err(TeamError::InvitationMaxUsesReached);
     }
 
+    Ok(())
+}
+
+/// Joins `user_id` to the invitation's team, recording its author, in one
+/// transaction with the invitation being used up.
+async fn join_by(
+    db: &DatabaseConnection,
+    invitation: &team_invitations::Model,
+    user_id: Uuid,
+) -> Result<TeamResponse, TeamError> {
+    let txn = db.begin().await?;
+
+    consume(&txn, invitation).await?;
+
     let role = TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer);
-    add_member(&txn, invitation.team_id, user_id, role).await?;
+    add_member(
+        &txn,
+        invitation.team_id,
+        user_id,
+        role,
+        invitation.created_by,
+    )
+    .await?;
 
     let team = teams::Entity::find_by_id(invitation.team_id)
         .one(&txn)
@@ -1254,45 +1341,45 @@ pub async fn accept_invitation_by_token(
     Ok(TeamResponse::from_model(team, role))
 }
 
-/// Acceptance via notification (targeted invitation).
+/// Acceptance by token (`POST /teams/join`): a generic link, or the link of
+/// an addressed invitation followed by the account it is for.
+pub async fn accept_invitation_by_token(
+    db: &DatabaseConnection,
+    token: &str,
+    user_id: Uuid,
+) -> Result<TeamResponse, TeamError> {
+    let token_hash = token_service::hash_opaque_token(token);
+
+    let invitation = team_invitations::Entity::find()
+        .filter(team_invitations::Column::Token.eq(token_hash))
+        .one(db)
+        .await?
+        .ok_or(TeamError::InvitationNotFound)?;
+
+    if invitation.expires_at < chrono::Utc::now() {
+        return Err(TeamError::InvitationExpired);
+    }
+
+    // An addressed link must not be usable by whoever else it ends up with
+    // (forwarded, leaked, shared inbox).
+    check_invitee(db, &invitation, user_id).await?;
+
+    join_by(db, &invitation, user_id).await
+}
+
+/// Acceptance from the invitee's pending list.
 pub async fn accept_invitation_by_id(
     db: &DatabaseConnection,
     invitation_id: Uuid,
     user_id: Uuid,
 ) -> Result<TeamResponse, TeamError> {
-    let invitation = team_invitations::Entity::find_by_id(invitation_id)
-        .one(db)
-        .await?
-        .ok_or(TeamError::InvitationNotFound)?;
+    let invitation = addressed_invitation(db, invitation_id, user_id).await?;
 
-    if invitation.invited_user_id != Some(user_id) {
-        return Err(TeamError::InvitationNotForUser);
-    }
-
-    if let Some(expires_at) = invitation.expires_at
-        && expires_at < chrono::Utc::now()
-    {
+    if invitation.expires_at < chrono::Utc::now() {
         return Err(TeamError::InvitationExpired);
     }
 
-    let txn = db.begin().await?;
-
-    let role = TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer);
-    add_member(&txn, invitation.team_id, user_id, role).await?;
-
-    // Delete the invitation
-    team_invitations::Entity::delete_by_id(invitation_id)
-        .exec(&txn)
-        .await?;
-
-    let team = teams::Entity::find_by_id(invitation.team_id)
-        .one(&txn)
-        .await?
-        .ok_or(TeamError::TeamNotFound)?;
-
-    txn.commit().await?;
-
-    Ok(TeamResponse::from_model(team, role))
+    join_by(db, &invitation, user_id).await
 }
 
 pub async fn reject_invitation_by_id(
@@ -1300,70 +1387,88 @@ pub async fn reject_invitation_by_id(
     invitation_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), TeamError> {
-    let invitation = team_invitations::Entity::find_by_id(invitation_id)
-        .one(db)
-        .await?
-        .ok_or(TeamError::InvitationNotFound)?;
+    let invitation = addressed_invitation(db, invitation_id, user_id).await?;
 
-    if invitation.invited_user_id != Some(user_id) {
-        return Err(TeamError::InvitationNotForUser);
-    }
-
-    team_invitations::Entity::delete_by_id(invitation_id)
+    team_invitations::Entity::delete_by_id(invitation.id)
         .exec(db)
         .await?;
 
     Ok(())
 }
 
-/// Joins `user_id` to every team with a pending email invitation for `email`,
-/// then removes those invitations. Meant to run inside the same transaction
-/// as marking that address verified (see `auth_service::verify_email`): an
-/// address that is not actually verified yet must not be able to join a team
-/// by it.
-pub async fn accept_pending_email_invitations(
-    txn: &DatabaseTransaction,
-    email: &str,
+/// An invitation reached by id is answerable only by its invitee; a generic
+/// link, which names nobody, is not reached this way at all.
+async fn addressed_invitation(
+    db: &DatabaseConnection,
+    invitation_id: Uuid,
     user_id: Uuid,
-) -> Result<(), TeamError> {
-    // Only rows that name nobody but this address. An invitation pinned to an
-    // account is that account's to accept, through the invitation list.
-    //
-    // `ck_team_invitations_single_target` now makes a row carrying both an
-    // account and an address impossible, which makes the `is_null` filter
-    // redundant on paper: any row with an address has no account on it, and
-    // `InvitedEmail.eq` already skips the NULL ones. Kept as the second lock
-    // rather than removed: it costs nothing, and it is what still holds if
-    // the constraint is ever dropped or data arrives around it.
-    let invitations = team_invitations::Entity::find()
-        .filter(team_invitations::Column::InvitedEmail.eq(email))
-        .filter(team_invitations::Column::InvitedUserId.is_null())
-        .filter(not_expired())
-        .all(txn)
-        .await?;
+) -> Result<team_invitations::Model, TeamError> {
+    let invitation = team_invitations::Entity::find_by_id(invitation_id)
+        .one(db)
+        .await?
+        .ok_or(TeamError::InvitationNotFound)?;
 
-    for invitation in invitations {
-        let role = TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer);
-
-        // Already a member through another route in the meantime: drop the
-        // now-redundant invitation rather than fail the whole verification.
-        match add_member(txn, invitation.team_id, user_id, role).await {
-            Ok(_) | Err(TeamError::AlreadyMember) => {}
-            Err(err) => return Err(err),
-        }
-
-        team_invitations::Entity::delete_by_id(invitation.id)
-            .exec(txn)
-            .await?;
+    if invitation.invited_user_id.is_none() && invitation.invited_email.is_none() {
+        return Err(TeamError::InvitationNotForUser);
     }
+    check_invitee(db, &invitation, user_id).await?;
 
-    Ok(())
+    Ok(invitation)
+}
+
+/// What the invitee sees behind a link before answering: the team's name,
+/// the author's username, the role and the expiry.
+///
+/// Only to the account the invitation is for (anyone, for a generic link).
+/// An unknown token, an expired or used-up invitation and someone else's all
+/// get the same `InvitationNotFound`, so the preview tells nobody else
+/// anything, not even that the token exists.
+pub async fn preview_invitation(
+    db: &DatabaseConnection,
+    token: &str,
+    user_id: Uuid,
+) -> Result<TeamInvitationPreview, TeamError> {
+    let token_hash = token_service::hash_opaque_token(token);
+
+    let (invitation, team) = team_invitations::Entity::find()
+        .filter(team_invitations::Column::Token.eq(token_hash))
+        .filter(not_expired())
+        .filter(
+            team_invitations::Column::MaxUses
+                .is_null()
+                .or(Expr::col(team_invitations::Column::Uses)
+                    .lt(Expr::col(team_invitations::Column::MaxUses))),
+        )
+        .find_also_related(teams::Entity)
+        .one(db)
+        .await?
+        .ok_or(TeamError::InvitationNotFound)?;
+    let team = team.ok_or(TeamError::InvitationNotFound)?;
+
+    check_invitee(db, &invitation, user_id)
+        .await
+        .map_err(|error| match error {
+            TeamError::InvitationNotForUser | TeamError::InvitationEmailMismatch => {
+                TeamError::InvitationNotFound
+            }
+            other => other,
+        })?;
+
+    let authors = invitation_service::usernames(db, invitation.created_by).await?;
+
+    Ok(TeamInvitationPreview {
+        team_name: team.name,
+        invited_by_username: invitation
+            .created_by
+            .and_then(|id| authors.get(&id).cloned()),
+        role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
+        expires_at: invitation.expires_at.into(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, EmailBackend, SmtpTls, StorageConfig};
     use domain::dto::team::CreateInvitationRequest;
     use domain::types::AccentColor;
     use sea_orm::{DatabaseBackend, MockDatabase, Value};
@@ -1373,48 +1478,6 @@ mod tests {
     /// `COUNT(*) AS num_items` and pulls that one column out as an i64.
     fn count_row(n: i64) -> BTreeMap<String, Value> {
         BTreeMap::from([("num_items".to_owned(), Value::BigInt(Some(n)))])
-    }
-
-    /// Never read on the paths under test here: every test below returns
-    /// before `create_invitation` reaches the point where it would send mail.
-    fn unused_config() -> Config {
-        Config {
-            port: 3000,
-            public_url: String::new(),
-            cors_origin: String::new(),
-            setup_token: None,
-            database_url: String::new(),
-            database_max_connections: 1,
-            redis_url: String::new(),
-            jwt_secret: String::new(),
-            encryption_key: String::new(),
-            turnstile_site_key: None,
-            turnstile_secret_key: None,
-            cookie_secure: false,
-            trusted_proxy_count: 0,
-            block_disposable_emails: false,
-            check_pwned_passwords: false,
-            email_backend: EmailBackend::Console,
-            email_from: String::new(),
-            support_email: None,
-            smtp_host: String::new(),
-            smtp_port: 0,
-            smtp_username: String::new(),
-            smtp_password: String::new(),
-            smtp_tls: SmtpTls::None,
-            resend_api_key: String::new(),
-            storage: StorageConfig {
-                endpoint: None,
-                region: "us-east-1".to_owned(),
-                access_key_id: String::new(),
-                secret_access_key: String::new(),
-                force_path_style: true,
-                bucket_attachments: String::new(),
-                bucket_avatars: String::new(),
-                key_prefix: None,
-                public_base_url: None,
-            },
-        }
     }
 
     fn verified_email_row(user_id: Uuid) -> user_emails::Model {
@@ -1465,6 +1528,7 @@ mod tests {
             user_id,
             role: TeamRole::Member.as_str().to_owned(),
             joined_at: chrono::Utc::now().into(),
+            invited_by: None,
         }
     }
 
@@ -1478,7 +1542,7 @@ mod tests {
             invited_email: None,
             created_by: None,
             created_at: chrono::Utc::now().into(),
-            expires_at: None,
+            expires_at: (chrono::Utc::now() + Duration::days(1)).into(),
             max_uses: Some(1),
             uses: 0,
         }
@@ -1494,12 +1558,32 @@ mod tests {
         }
     }
 
+    /// The expiry an author leaves out is seven days; thirty is the most
+    /// they may ask for, to the second.
+    #[test]
+    fn invitation_expiry_defaults_to_seven_days_and_caps_at_thirty() {
+        let now = Utc::now();
+
+        assert_eq!(
+            invitation_expiry(None, now).ok(),
+            Some(now + Duration::days(7))
+        );
+        assert_eq!(
+            invitation_expiry(Some(now + Duration::days(30)), now).ok(),
+            Some(now + Duration::days(30))
+        );
+        assert!(matches!(
+            invitation_expiry(Some(now + Duration::days(30) + Duration::seconds(1)), now),
+            Err(TeamError::InvitationExpiryTooFar)
+        ));
+    }
+
     #[tokio::test]
-    async fn create_invitation_rejects_a_second_pending_invite_to_the_same_unregistered_email() {
+    async fn create_invitation_rejects_a_second_pending_invite_to_the_same_email() {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            // 1: email resolution finds no verified account.
+            // 1: no member of the team has the address verified.
             .append_query_results([Vec::<user_emails::Model>::new()])
-            // 2: a pending invitation for that email already exists.
+            // 2: a pending invitation for that address already exists.
             .append_query_results([vec![pending_invitation_row()]])
             .into_connection();
 
@@ -1508,45 +1592,7 @@ mod tests {
             ..base_invitation_payload()
         };
 
-        let result = create_invitation(
-            &db,
-            &unused_config(),
-            Uuid::now_v7(),
-            Uuid::now_v7(),
-            payload,
-        )
-        .await;
-
-        assert!(matches!(result, Err(TeamError::AlreadyInvited)));
-    }
-
-    #[tokio::test]
-    async fn create_invitation_resolves_invited_email_to_an_existing_verified_account() {
-        let existing_user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            // 1: email resolution matches an existing verified account.
-            .append_query_results([vec![verified_email_row(existing_user_id)]])
-            // 2: that account is not already a member of the team.
-            .append_query_results([Vec::<team_members::Model>::new()])
-            // 3: that account already has a pending invitation to this team,
-            // proving the invitation was pinned to the resolved account (this
-            // dedupe branch only runs once an account id is known).
-            .append_query_results([vec![pending_invitation_row()]])
-            .into_connection();
-
-        let payload = CreateInvitationRequest {
-            invited_email: Some("existing@example.test".to_owned()),
-            ..base_invitation_payload()
-        };
-
-        let result = create_invitation(
-            &db,
-            &unused_config(),
-            Uuid::now_v7(),
-            Uuid::now_v7(),
-            payload,
-        )
-        .await;
+        let result = resolve_invitee(&db, Uuid::now_v7(), &payload).await;
 
         assert!(matches!(result, Err(TeamError::AlreadyInvited)));
     }
@@ -1568,22 +1614,18 @@ mod tests {
             ..base_invitation_payload()
         };
 
-        let result =
-            create_invitation(&db, &unused_config(), team_id, Uuid::now_v7(), payload).await;
+        let result = resolve_invitee(&db, team_id, &payload).await;
 
         assert!(matches!(result, Err(TeamError::AlreadyMember)));
     }
 
+    /// Negative: an address a member of the team has verified is refused as
+    /// `already_member`, which is all the lookup of its holder is for.
     #[tokio::test]
     async fn create_invitation_rejects_inviting_by_email_someone_already_a_member() {
-        let team_id = Uuid::now_v7();
-        let existing_user_id = Uuid::now_v7();
-
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            // 1: email resolution matches an existing verified account.
-            .append_query_results([vec![verified_email_row(existing_user_id)]])
-            // 2: that account is already a member of the team.
-            .append_query_results([vec![team_member_row(team_id, existing_user_id)]])
+            // 1: a member of the team has the address verified.
+            .append_query_results([vec![verified_email_row(Uuid::now_v7())]])
             .into_connection();
 
         let payload = CreateInvitationRequest {
@@ -1591,8 +1633,7 @@ mod tests {
             ..base_invitation_payload()
         };
 
-        let result =
-            create_invitation(&db, &unused_config(), team_id, Uuid::now_v7(), payload).await;
+        let result = resolve_invitee(&db, Uuid::now_v7(), &payload).await;
 
         assert!(matches!(result, Err(TeamError::AlreadyMember)));
     }
@@ -1613,14 +1654,7 @@ mod tests {
             ..base_invitation_payload()
         };
 
-        let result = create_invitation(
-            &db,
-            &unused_config(),
-            Uuid::now_v7(),
-            Uuid::now_v7(),
-            payload,
-        )
-        .await;
+        let result = resolve_invitee(&db, Uuid::now_v7(), &payload).await;
 
         assert!(matches!(result, Err(TeamError::InvitedUserNotFound)));
     }
@@ -1698,20 +1732,6 @@ mod tests {
             ),
             "the named account must clear the identity check"
         );
-    }
-
-    #[tokio::test]
-    async fn accept_pending_email_invitations_is_a_no_op_without_matching_invitations() {
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([Vec::<team_invitations::Model>::new()])
-            .into_connection();
-
-        let txn = db.begin().await.expect("mock transaction must open");
-
-        let result =
-            accept_pending_email_invitations(&txn, "nobody@example.test", Uuid::now_v7()).await;
-
-        assert!(result.is_ok());
     }
 
     fn create_payload() -> CreateTeamRequest {

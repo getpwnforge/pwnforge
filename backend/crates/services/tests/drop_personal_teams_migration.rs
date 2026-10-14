@@ -9,10 +9,7 @@
 //! `DATABASE_URL`; locally the dev compose exposes one.
 
 use chrono::{Duration, Utc};
-use domain::entities::{
-    team_members, teams, users, workspace_favorites, workspace_invitations, workspace_members,
-    workspaces,
-};
+use domain::entities::{teams, users, workspace_favorites, workspace_invitations, workspaces};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
@@ -76,14 +73,14 @@ async fn insert_team(db: &DatabaseConnection, personal: bool, created_by: Option
     id
 }
 
+/// Membership rows and overrides are written and counted with statements
+/// too: the entities read back `invited_by`, a column this schema predates.
 async fn add_team_member(db: &DatabaseConnection, team_id: Uuid, user_id: Uuid, role: &str) {
-    team_members::ActiveModel {
-        team_id: Set(team_id),
-        user_id: Set(user_id),
-        role: Set(role.to_owned()),
-        ..Default::default()
-    }
-    .insert(db)
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, $3)",
+        [team_id.into(), user_id.into(), role.into()],
+    ))
     .await
     .expect("the fixture membership must insert");
 }
@@ -112,14 +109,12 @@ async fn team_workspace(
     .expect("the fixture workspace must insert")
     .id;
 
-    workspace_members::ActiveModel {
-        workspace_id: Set(id),
-        user_id: Set(member),
-        role: Set(Some("viewer".to_owned())),
-        is_guest: Set(false),
-        ..Default::default()
-    }
-    .insert(db)
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_members (workspace_id, user_id, role, is_guest) \
+         VALUES ($1, $2, 'viewer', false)",
+        [id.into(), member.into()],
+    ))
     .await
     .expect("the fixture override must insert");
 
@@ -164,20 +159,33 @@ async fn team_exists(db: &DatabaseConnection, id: Uuid) -> bool {
         .is_some()
 }
 
+async fn count_on(db: &DatabaseConnection, sql: &str, workspace_id: Uuid) -> usize {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        [workspace_id.into()],
+    ))
+    .await
+    .expect("the lookup must succeed")
+    .and_then(|row| row.try_get::<i64>("", "n").ok())
+    .expect("a count returns a row") as usize
+}
+
 async fn rows_on(db: &DatabaseConnection, workspace_id: Uuid) -> (usize, usize) {
-    let members = workspace_members::Entity::find()
-        .filter(workspace_members::Column::WorkspaceId.eq(workspace_id))
-        .all(db)
-        .await
-        .expect("the lookup must succeed")
-        .len();
-    let invitations = workspace_invitations::Entity::find()
-        .filter(workspace_invitations::Column::WorkspaceId.eq(workspace_id))
-        .all(db)
-        .await
-        .expect("the lookup must succeed")
-        .len();
-    (members, invitations)
+    (
+        count_on(
+            db,
+            "SELECT count(*) AS n FROM workspace_members WHERE workspace_id = $1",
+            workspace_id,
+        )
+        .await,
+        workspace_invitations::Entity::find()
+            .filter(workspace_invitations::Column::WorkspaceId.eq(workspace_id))
+            .all(db)
+            .await
+            .expect("the lookup must succeed")
+            .len(),
+    )
 }
 
 async fn favourited(db: &DatabaseConnection, workspace_id: Uuid, user_id: Uuid) -> bool {

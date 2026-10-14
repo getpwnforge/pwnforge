@@ -103,47 +103,43 @@ email.email_verification.expiry:
   en: "This link expires in 24 hours."
   fr: "Ce lien expire dans 24 heures."
 
-# --- Team invitations ---
+# --- Invitations (teams and workspaces) ---
 
-email.team_invitation_added.subject:
-  en: "You've been added to a team invitation"
-  fr: "Vous avez été ajouté à une invitation d'équipe"
-
-email.team_invitation_added.title:
-  en: "You've been added to a team invitation"
-  fr: "Vous avez été ajouté à une invitation d'équipe"
-
-email.team_invitation_added.preheader:
-  en: "Someone invited you to join a team on PwnForge."
-  fr: "Quelqu'un vous a invité à rejoindre une équipe sur PwnForge."
-
-email.team_invitation_added.body:
-  en: "%{team_name} invited you to join their team. You can accept or decline from your pending invitations."
-  fr: "%{team_name} vous a invité à rejoindre son équipe. Vous pouvez accepter ou refuser depuis vos invitations en attente."
-
-email.team_invitation_added.cta:
-  en: "View my invitations"
-  fr: "Voir mes invitations"
-
-email.team_invitation_signup.subject:
+email.invitation.subject_team:
   en: "You're invited to join a team on PwnForge"
   fr: "Vous êtes invité à rejoindre une équipe sur PwnForge"
 
-email.team_invitation_signup.title:
-  en: "You're invited to join a team on PwnForge"
-  fr: "Vous êtes invité à rejoindre une équipe sur PwnForge"
+email.invitation.subject_workspace:
+  en: "You're invited to join a workspace on PwnForge"
+  fr: "Vous êtes invité à rejoindre un workspace sur PwnForge"
 
-email.team_invitation_signup.preheader:
-  en: "Create an account to join %{team_name}."
-  fr: "Créez un compte pour rejoindre %{team_name}."
+email.invitation.preheader_team:
+  en: "An invitation to join the team %{name}."
+  fr: "Une invitation à rejoindre l'équipe %{name}."
 
-email.team_invitation_signup.body:
-  en: "%{team_name} invited you to join their team on PwnForge. Create an account with this email address to accept."
-  fr: "%{team_name} vous a invité à rejoindre son équipe sur PwnForge. Créez un compte avec cette adresse email pour accepter."
+email.invitation.preheader_workspace:
+  en: "An invitation to join the workspace %{name}."
+  fr: "Une invitation à rejoindre le workspace %{name}."
 
-email.team_invitation_signup.cta:
-  en: "Create my account"
-  fr: "Créer mon compte"
+email.invitation.body_team:
+  en: "You have been invited to join the team %{name} on PwnForge. To answer, sign in and open the invitation. No account yet? Create one with this email address, then open the invitation again."
+  fr: "Vous avez été invité à rejoindre l'équipe %{name} sur PwnForge. Pour répondre, connectez-vous et ouvrez l'invitation. Pas encore de compte ? Créez-en un avec cette adresse email, puis ouvrez de nouveau l'invitation."
+
+email.invitation.body_workspace:
+  en: "You have been invited to join the workspace %{name} on PwnForge as a guest. To answer, sign in and open the invitation. No account yet? Create one with this email address, then open the invitation again."
+  fr: "Vous avez été invité à rejoindre le workspace %{name} sur PwnForge en tant qu'invité. Pour répondre, connectez-vous et ouvrez l'invitation. Pas encore de compte ? Créez-en un avec cette adresse email, puis ouvrez de nouveau l'invitation."
+
+email.invitation.cta:
+  en: "Open the invitation"
+  fr: "Ouvrir l'invitation"
+
+email.invitation.expiry:
+  en: "This invitation expires on %{date} (UTC)."
+  fr: "Cette invitation expire le %{date} (UTC)."
+
+email.invitation.ignore_notice:
+  en: "If you were not expecting it, you can ignore this email: the invitation expires on its own."
+  fr: "Si vous ne l'attendiez pas, ignorez ce message : l'invitation expire d'elle-même."
 
 # --- Security alerts ---
 #

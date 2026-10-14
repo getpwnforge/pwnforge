@@ -2,7 +2,7 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{delete, get, patch, post},
 };
@@ -10,13 +10,18 @@ use uuid::Uuid;
 use validator::Validate;
 
 use crate::middleware::{auth::AuthUser, json::JsonBody};
+use crate::routes::enforce_invitation_limit;
 use crate::{error::AppError, state::AppState};
-use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorResponse};
+use domain::dto::error_responses::{
+    RateLimitedErrorResponse, SimpleErrorResponse, UnprocessableErrorResponse,
+};
+use domain::dto::invitation::{InvitationTokenRequest, InvitedByFilter};
 use domain::dto::team::{
     ChangeMemberRoleRequest, CreateInvitationRequest, CreateTeamRequest, JoinTeamRequest,
-    TeamInvitationResponse, TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
-    TransferCaptaincyRequest,
+    TeamInvitationPreview, TeamInvitationResponse, TeamMemberResponse, TeamPatch, TeamResponse,
+    TeamRole, TransferCaptaincyRequest,
 };
+use services::rate_limit_service;
 use services::team_service::{self, TeamError, TransferBy};
 
 pub fn router() -> Router<AppState> {
@@ -39,6 +44,7 @@ pub fn router() -> Router<AppState> {
         .route("/teams/{slug}/invitations/{id}", delete(revoke_invitation))
         .route("/teams/join", post(accept_invitation_by_token))
         .route("/teams/invitations/pending", get(list_pending_invitations))
+        .route("/teams/invitations/preview", post(preview_invitation))
         .route(
             "/teams/invitations/{id}/accept",
             post(accept_invitation_by_id),
@@ -170,19 +176,29 @@ async fn delete_team(
     get,
     path = "/api/v1/teams/{slug}/members",
     tag = "Teams",
+    params(
+        ("slug" = String, Path, description = "Team slug"),
+        ("invited_by" = Option<Uuid>, Query, description = "Only the members who joined by an invitation from this account"),
+    ),
     security(("access_token" = [])),
     responses(
-        (status = 200, description = "Team members", body = [TeamMemberResponse]),
+        (status = 200, description = "Team members, each with the author of the invitation they joined by (`invited_by`, null when none is recorded)", body = [TeamMemberResponse]),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed: invited_by is not a uuid", body = UnprocessableErrorResponse),
     )
 )]
 async fn list_members(
     State(state): State<AppState>,
     user: AuthUser,
     Path(slug): Path<String>,
+    Query(filter): Query<InvitedByFilter>,
 ) -> Result<Json<Vec<TeamMemberResponse>>, AppError> {
+    let invited_by = filter.parse()?;
     let (team, _my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
-    let members = team_service::list_team_members(&state.db, team.id).await?;
+    let mut members = team_service::list_team_members(&state.db, team.id).await?;
+    if let Some(author) = invited_by {
+        members.retain(|member| member.invited_by == Some(author));
+    }
     Ok(Json(members))
 }
 
@@ -298,22 +314,32 @@ async fn transfer_captaincy(
     get,
     path = "/api/v1/teams/{slug}/invitations",
     tag = "Teams",
+    params(
+        ("slug" = String, Path, description = "Team slug"),
+        ("invited_by" = Option<Uuid>, Query, description = "Only the invitations this account created"),
+    ),
     security(("access_token" = [])),
     responses(
-        (status = 200, description = "Active generic invitation links for the team", body = [TeamInvitationResponse]),
+        (status = 200, description = "The team's active invitations that name no account (generic links and invitations by address), with their author", body = [TeamInvitationResponse]),
         (status = 403, description = "Insufficient role", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed: invited_by is not a uuid", body = UnprocessableErrorResponse),
     )
 )]
 async fn list_invitations(
     State(state): State<AppState>,
     user: AuthUser,
     Path(slug): Path<String>,
+    Query(filter): Query<InvitedByFilter>,
 ) -> Result<Json<Vec<TeamInvitationResponse>>, AppError> {
+    let invited_by = filter.parse()?;
     let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
     team_service::require_role(my_role, TeamRole::Admin)?;
 
-    let invitations = team_service::list_active_invitations(&state.db, team.id).await?;
+    let mut invitations = team_service::list_active_invitations(&state.db, team.id).await?;
+    if let Some(author) = invited_by {
+        invitations.retain(|invitation| invitation.invited_by == Some(author));
+    }
     Ok(Json(invitations))
 }
 
@@ -324,13 +350,15 @@ async fn list_invitations(
     request_body = CreateInvitationRequest,
     security(("access_token" = [])),
     responses(
-        (status = 201, description = "Invitation created", body = TeamInvitationResponse),
+        (status = 201, description = "Invitation created. By address, the answer is the same whether an account holds it or not (`invited_user_id` is null), and the invitation mail goes out either way, at most three a day to one address across every team and workspace; past that the invitation is still created, without a mail", body = TeamInvitationResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 403, description = "Insufficient role, or a non-Captain tried to invite as Captain", body = SimpleErrorResponse),
-        (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
-        (status = 409, description = "already_invited or already_member, or captain_must_transfer: an invitation cannot grant Captain, the role moves only by transfer", body = SimpleErrorResponse),
+        (status = 404, description = "Team not found or not a member. invited_user_not_found: no account has this username", body = SimpleErrorResponse),
+        (status = 409, description = "already_invited, or already_member: the account, or a member holding the address verified, is on the team. captain_must_transfer: an invitation cannot grant Captain, the role moves only by transfer", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, or invitation_expiry_too_far: expires_at more than 30 days out (7 days when absent)", body = UnprocessableErrorResponse),
+        (status = 429, description = "rate_limited: by username 20 an hour per author and 50 per team, by address 10 and 30. Generic links are not limited", body = RateLimitedErrorResponse),
+        (status = 503, description = "service_unavailable: the rate limiter cannot be reached", body = SimpleErrorResponse),
     )
 )]
 async fn create_invitation(
@@ -351,10 +379,32 @@ async fn create_invitation(
         return Err(TeamError::InsufficientRole.into());
     }
 
-    let invitation =
-        team_service::create_invitation(&state.db, &state.config, team.id, user.id, payload)
-            .await?;
-    Ok((StatusCode::CREATED, Json(invitation)))
+    // After authorization, so nobody spends a team's budget without being an
+    // Admin of it; before the service, so a refused request creates nothing.
+    // Every attempt counts, refused ones included. A generic link mails
+    // nobody, so it is not limited.
+    let mut redis = state.redis.clone();
+    if payload.username.is_some() {
+        enforce_invitation_limit(
+            rate_limit_service::check_team_invitation_by_username(&mut redis, user.id, team.id)
+                .await,
+        )?;
+    } else if payload.invited_email.is_some() {
+        enforce_invitation_limit(
+            rate_limit_service::check_team_invitation_by_email(&mut redis, user.id, team.id).await,
+        )?;
+    }
+
+    let created = team_service::create_invitation(
+        &state.db,
+        &mut redis,
+        &state.config,
+        team.id,
+        user.id,
+        payload,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(created.invitation)))
 }
 
 #[utoipa::path(
@@ -415,7 +465,7 @@ async fn accept_invitation_by_token(
     tag = "Teams",
     security(("access_token" = [])),
     responses(
-        (status = 200, description = "Pending targeted invitations for the current user", body = [TeamInvitationResponse]),
+        (status = 200, description = "Pending invitations for the current user: those naming the account, and those sent to an address it has verified. None is ever accepted on its behalf", body = [TeamInvitationResponse]),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
     )
 )]
@@ -425,6 +475,32 @@ async fn list_pending_invitations(
 ) -> Result<Json<Vec<TeamInvitationResponse>>, AppError> {
     let invitations = team_service::list_pending_invitations_for_user(&state.db, user.id).await?;
     Ok(Json(invitations))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/teams/invitations/preview",
+    tag = "Teams",
+    request_body = InvitationTokenRequest,
+    security(("access_token" = [])),
+    responses(
+        (status = 200, description = "What the invitation behind a link offers: the team's name, the author, the role and the expiry", body = TeamInvitationPreview),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 404, description = "invitation_not_found: the same for an unknown token, an expired or used-up invitation, and one addressed to another account", body = SimpleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
+    )
+)]
+async fn preview_invitation(
+    State(state): State<AppState>,
+    user: AuthUser,
+    JsonBody(payload): JsonBody<InvitationTokenRequest>,
+) -> Result<Json<TeamInvitationPreview>, AppError> {
+    payload.validate()?;
+
+    let preview = team_service::preview_invitation(&state.db, &payload.token, user.id).await?;
+    Ok(Json(preview))
 }
 
 #[utoipa::path(
@@ -479,7 +555,7 @@ mod tests {
     use domain::dto::team::TeamRole;
     use domain::entities::{team_members, teams, users};
     use sea_orm::sea_query::Expr;
-    use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
     use serde_json::json;
     use services::storage_service::AvatarKind;
     use uuid::Uuid;
@@ -844,6 +920,411 @@ mod tests {
                 !avatar_stored(kind, id, version).await,
                 "the {kind:?} avatar of {id} must be purged"
             );
+        }
+    }
+
+    // ---- Invitations ----------------------------------------------------
+
+    fn fresh_address() -> String {
+        format!("{}@example.test", crate::test_support::unique("teaminv"))
+    }
+
+    async fn verified_address(db: &DatabaseConnection, user: Uuid) -> String {
+        let address = fresh_address();
+        domain::entities::user_emails::ActiveModel {
+            id: sea_orm::Set(Uuid::now_v7()),
+            user_id: sea_orm::Set(user),
+            email: sea_orm::Set(address.clone()),
+            is_primary: sea_orm::Set(true),
+            verified_at: sea_orm::Set(Some(chrono::Utc::now().into())),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .expect("the fixture address must insert");
+        address
+    }
+
+    async fn username_of(db: &DatabaseConnection, user: Uuid) -> String {
+        users::Entity::find_by_id(user)
+            .one(db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the user exists")
+            .username
+    }
+
+    async fn invite(
+        app: &axum::Router,
+        db: &DatabaseConnection,
+        team_id: Uuid,
+        caller: Uuid,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        request_as(
+            app,
+            "POST",
+            &format!("/api/v1/teams/{}/invitations", slug_of(db, team_id).await),
+            Some(caller),
+            Some(body),
+        )
+        .await
+    }
+
+    /// Without the fields that differ between any two invitations.
+    fn shape(mut body: serde_json::Value) -> serde_json::Value {
+        for field in ["id", "token", "created_at", "expires_at", "invited_email"] {
+            body.as_object_mut().expect("an object").remove(field);
+        }
+        body
+    }
+
+    /// The author is answered the same whether an account holds the address
+    /// or not, and the invitation names no account: it is not pinned to one
+    /// at creation any more.
+    #[tokio::test]
+    async fn an_invitation_by_address_is_answered_the_same_with_or_without_an_account() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        let holder = create_user(&db).await;
+        let held = verified_address(&db, holder).await;
+
+        let (held_status, held_body) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "invited_email": held }),
+        )
+        .await;
+        let (free_status, free_body) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "invited_email": fresh_address() }),
+        )
+        .await;
+
+        assert_eq!(held_status, StatusCode::CREATED);
+        assert_eq!(free_status, StatusCode::CREATED);
+        assert_eq!(held_body["invited_user_id"], serde_json::Value::Null);
+        assert_eq!(shape(held_body), shape(free_body));
+    }
+
+    /// The account holding the address verified finds the invitation in its
+    /// pending list, and is on the team only once it accepts.
+    #[tokio::test]
+    async fn an_invitation_by_address_waits_for_its_holder_to_accept() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        let holder = create_user(&db).await;
+        let address = verified_address(&db, holder).await;
+        let (_, invitation) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "viewer", "invited_email": address }),
+        )
+        .await;
+
+        let (_, pending) = request_as(
+            &app,
+            "GET",
+            "/api/v1/teams/invitations/pending",
+            Some(holder),
+            None,
+        )
+        .await;
+        let pending = pending.as_array().expect("a list");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["id"], invitation["id"]);
+        assert_eq!(pending[0]["invited_by"], json!(captain));
+        assert_eq!(
+            role_of(&db, team_id, holder).await,
+            None,
+            "not before accepting"
+        );
+
+        let (status, _) = request_as(
+            &app,
+            "POST",
+            &format!(
+                "/api/v1/teams/invitations/{}/accept",
+                invitation["id"].as_str().expect("an id")
+            ),
+            Some(holder),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            role_of(&db, team_id, holder).await.as_deref(),
+            Some("viewer")
+        );
+    }
+
+    /// An invitation lasts seven days unless its author says otherwise, and
+    /// at most thirty.
+    #[tokio::test]
+    async fn an_invitation_expires_in_seven_days_by_default_and_thirty_at_most() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        let now = chrono::Utc::now();
+
+        let (status, body) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let expires_at: chrono::DateTime<chrono::Utc> =
+            serde_json::from_value(body["expires_at"].clone()).expect("a date");
+        assert!(
+            (expires_at - (now + chrono::Duration::days(7)))
+                .num_seconds()
+                .abs()
+                < 60
+        );
+
+        let (status, _) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "expires_at": now + chrono::Duration::days(29) }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        let (status, body) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "expires_at": now + chrono::Duration::days(31) }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["error"], "invitation_expiry_too_far");
+    }
+
+    /// Negative: an address a member of the team has verified is
+    /// `already_member`.
+    #[tokio::test]
+    async fn inviting_the_address_of_a_member_is_already_member() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Member]).await;
+        let address = verified_address(&db, members[0]).await;
+
+        let (status, body) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "invited_email": address }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "already_member");
+    }
+
+    /// Accepting records the author on the membership; the member list
+    /// shows it and filters on it, and so does the invitation list.
+    #[tokio::test]
+    async fn the_author_is_recorded_and_listed() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Admin]).await;
+        let admin = members[0];
+        let slug = slug_of(&db, team_id).await;
+        let address = fresh_address();
+        let (_, by_admin) = invite(
+            &app,
+            &db,
+            team_id,
+            admin,
+            json!({ "default_role": "member", "invited_email": address }),
+        )
+        .await;
+        let invitee = create_user(&db).await;
+        let (status, joined) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "username": username_of(&db, invitee).await }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let (status, _) = request_as(
+            &app,
+            "POST",
+            &format!(
+                "/api/v1/teams/invitations/{}/accept",
+                joined["id"].as_str().expect("an id")
+            ),
+            Some(invitee),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_, roster) = request_as(
+            &app,
+            "GET",
+            &format!("/api/v1/teams/{slug}/members?invited_by={captain}"),
+            Some(admin),
+            None,
+        )
+        .await;
+        let roster = roster.as_array().expect("a list");
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster[0]["user_id"], json!(invitee));
+        assert_eq!(roster[0]["invited_by"], json!(captain));
+
+        let (_, listed) = request_as(
+            &app,
+            "GET",
+            &format!("/api/v1/teams/{slug}/invitations?invited_by={admin}"),
+            Some(captain),
+            None,
+        )
+        .await;
+        let listed = listed.as_array().expect("a list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], by_admin["id"]);
+        assert_eq!(
+            listed[0]["invited_by_username"],
+            json!(username_of(&db, admin).await)
+        );
+
+        let (status, body) = request_as(
+            &app,
+            "GET",
+            &format!("/api/v1/teams/{slug}/members?invited_by=nope"),
+            Some(admin),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["error"], "validation_failed");
+    }
+
+    /// The preview answers the invitee, and gives anyone else, or an unknown
+    /// token, the one same 404.
+    #[tokio::test]
+    async fn the_preview_answers_the_invitee_alone() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        let invitee = create_user(&db).await;
+        let (_, invitation) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "viewer", "username": username_of(&db, invitee).await }),
+        )
+        .await;
+        let token = invitation["token"].as_str().expect("a token").to_owned();
+        let preview = |user: Uuid, token: String| {
+            let app = app.clone();
+            async move {
+                request_as(
+                    &app,
+                    "POST",
+                    "/api/v1/teams/invitations/preview",
+                    Some(user),
+                    Some(json!({ "token": token })),
+                )
+                .await
+            }
+        };
+
+        let (status, body) = preview(invitee, token.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["team_name"], "Test Team");
+        assert_eq!(body["role"], "viewer");
+        assert_eq!(
+            body["invited_by_username"],
+            json!(username_of(&db, captain).await)
+        );
+
+        let stranger = preview(create_user(&db).await, token).await;
+        let unknown = preview(invitee, "no-such-token".to_owned()).await;
+        assert_eq!(stranger.0, StatusCode::NOT_FOUND);
+        assert_eq!(stranger, unknown);
+    }
+
+    /// 429 past each window, per author and per team, on both targeted
+    /// paths, and 503 when the limiter cannot answer.
+    #[tokio::test]
+    async fn targeted_invitations_are_rate_limited_per_author_and_per_team() {
+        use redis::AsyncCommands;
+
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        let client = redis::Client::open(crate::test_support::env_or(
+            "REDIS_URL",
+            "redis://127.0.0.1:6379",
+        ))
+        .expect("REDIS_URL must be valid");
+        let mut redis = redis::aio::ConnectionManager::new(client)
+            .await
+            .expect("a Redis instance must be reachable");
+
+        for (path, suffix, limit) in [
+            ("username", format!("author:{captain}"), 20),
+            ("username", format!("team:{team_id}"), 50),
+            ("email", format!("author:{captain}"), 10),
+            ("email", format!("team:{team_id}"), 30),
+        ] {
+            let key = format!("ratelimit:invite:team:{path}:{suffix}");
+            let body = if path == "username" {
+                json!({ "default_role": "member", "username": username_of(&db, create_user(&db).await).await })
+            } else {
+                json!({ "default_role": "member", "invited_email": fresh_address() })
+            };
+
+            let _: () = redis
+                .set_ex(&key, limit, 3600)
+                .await
+                .expect("SET must answer");
+            let (limited, answer) = invite(&app, &db, team_id, captain, body.clone()).await;
+            let _: () = redis
+                .set(&key, "not-a-counter")
+                .await
+                .expect("SET must answer");
+            let (unavailable, _) = invite(&app, &db, team_id, captain, body).await;
+            let _: () = redis.del(&key).await.expect("DEL must answer");
+
+            assert_eq!(limited, StatusCode::TOO_MANY_REQUESTS, "{key}: {answer}");
+            assert_eq!(unavailable, StatusCode::SERVICE_UNAVAILABLE, "{key}");
+        }
+        for path in ["username", "email"] {
+            for suffix in [format!("author:{captain}"), format!("team:{team_id}")] {
+                let _: () = redis
+                    .del(format!("ratelimit:invite:team:{path}:{suffix}"))
+                    .await
+                    .expect("DEL must answer");
+            }
         }
     }
 }

@@ -8,7 +8,7 @@
 //! provisions the instance and sets `DATABASE_URL`; locally the dev compose
 //! exposes one.
 
-use domain::entities::{team_invitations, team_members, teams, users};
+use domain::entities::{team_members, teams, users};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr,
@@ -62,37 +62,69 @@ async fn create_team(db: &DatabaseConnection) -> Uuid {
     .id
 }
 
+/// Written with a statement rather than through the entity, as the two
+/// below: the schema at this point predates `team_members.invited_by` and a
+/// required `team_invitations.expires_at`, which the entities read back.
 async fn insert_member(
     db: &DatabaseConnection,
     team_id: Uuid,
     user_id: Uuid,
     role: &str,
-) -> Result<team_members::Model, DbErr> {
-    team_members::ActiveModel {
-        team_id: Set(team_id),
-        user_id: Set(user_id),
-        role: Set(role.to_owned()),
-        ..Default::default()
-    }
-    .insert(db)
+) -> Result<(), DbErr> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, $3)",
+        [team_id.into(), user_id.into(), role.into()],
+    ))
     .await
+    .map(|_| ())
 }
 
 async fn insert_invitation(
     db: &DatabaseConnection,
     team_id: Uuid,
     role: &str,
-) -> Result<team_invitations::Model, DbErr> {
-    team_invitations::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        team_id: Set(team_id),
-        token: Set(format!("hash-{}", Uuid::now_v7().simple())),
-        default_role: Set(role.to_owned()),
-        max_uses: Set(Some(1)),
-        ..Default::default()
-    }
-    .insert(db)
+) -> Result<Uuid, DbErr> {
+    let id = Uuid::now_v7();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO team_invitations (id, team_id, token, default_role, max_uses) \
+         VALUES ($1, $2, $3, $4, 1)",
+        [
+            id.into(),
+            team_id.into(),
+            format!("hash-{}", Uuid::now_v7().simple()).into(),
+            role.into(),
+        ],
+    ))
+    .await?;
+    Ok(id)
+}
+
+async fn captains_of(db: &DatabaseConnection, team_id: Uuid) -> i64 {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT count(*) AS n FROM team_members WHERE team_id = $1 AND role = 'captain'",
+        [team_id.into()],
+    ))
     .await
+    .expect("the lookup must succeed")
+    .and_then(|row| row.try_get::<i64>("", "n").ok())
+    .expect("a count returns a row")
+}
+
+async fn default_role_of(db: &DatabaseConnection, invitation_id: Uuid) -> Option<String> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT default_role FROM team_invitations WHERE id = $1",
+        [invitation_id.into()],
+    ))
+    .await
+    .expect("the lookup must succeed")
+    .map(|row| {
+        row.try_get::<String>("", "default_role")
+            .expect("the role is text")
+    })
 }
 
 /// The definition Postgres holds for the invitation role check, as it would
@@ -261,13 +293,11 @@ async fn teams_with_two_captains_fail_the_migration() {
             "the migration must not be recorded as applied"
         );
         for team in duplicated {
-            let captains = team_members::Entity::find()
-                .filter(team_members::Column::TeamId.eq(team))
-                .filter(team_members::Column::Role.eq("captain"))
-                .all(&db)
-                .await
-                .expect("the lookup must succeed");
-            assert_eq!(captains.len(), 2, "the rows must be left as they were");
+            assert_eq!(
+                captains_of(&db, team).await,
+                2,
+                "the rows must be left as they were"
+            );
         }
 
         db.close().await.ok();
@@ -289,7 +319,7 @@ async fn invitations_granting_captain_fail_the_migration() {
             let invitation = insert_invitation(&db, team, "captain")
                 .await
                 .expect("the previous check accepts an invitation granting Captain");
-            granting.push(invitation.id);
+            granting.push(invitation);
         }
 
         let message = migration::Migrator::up(&db, Some(1))
@@ -319,13 +349,9 @@ async fn invitations_granting_captain_fail_the_migration() {
             "the migration must not be recorded as applied"
         );
         for invitation in granting {
-            let kept = team_invitations::Entity::find_by_id(invitation)
-                .one(&db)
-                .await
-                .expect("the lookup must succeed")
-                .expect("the invitation must still exist");
             assert_eq!(
-                kept.default_role, "captain",
+                default_role_of(&db, invitation).await.as_deref(),
+                Some("captain"),
                 "the row must be left as it was"
             );
         }

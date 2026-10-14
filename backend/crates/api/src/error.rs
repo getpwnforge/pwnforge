@@ -487,6 +487,11 @@ fn team_response(err: &TeamError) -> Response {
             Json(json!({ "error": "invitation_expired" })),
         )
             .into_response(),
+        TeamError::InvitationExpiryTooFar => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "invitation_expiry_too_far" })),
+        )
+            .into_response(),
         TeamError::InvitationMaxUsesReached => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "error": "invitation_max_uses_reached" })),

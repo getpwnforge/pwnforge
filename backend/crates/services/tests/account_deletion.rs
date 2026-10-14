@@ -255,6 +255,7 @@ async fn add_member_at(
         user_id: Set(user_id),
         role: Set(role.to_owned()),
         joined_at: Set(joined_at.fixed_offset()),
+        invited_by: Set(None),
     }
     .insert(db)
     .await

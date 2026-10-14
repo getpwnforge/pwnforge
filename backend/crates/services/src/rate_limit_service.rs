@@ -73,6 +73,27 @@ const AVATAR_UPLOAD_BURST_WINDOW_SECS: i64 = 60;
 const AVATAR_UPLOAD_HOURLY_LIMIT: isize = 30;
 const AVATAR_UPLOAD_HOURLY_WINDOW_SECS: i64 = 60 * 60;
 
+// --- Targeted invitations (teams and workspaces) ---
+// Two windows per flow: one on the author, so one account cannot spray
+// invitations, one on the team or the workspace, so several of its members
+// together cannot either. The email path is tighter than the username path:
+// each invitation there mails an address nobody had to prove they own.
+//
+// One set of keys per flow (team by username, team by email, workspace by
+// username, workspace by email): a burst on one never eats another's budget.
+const INVITE_BY_USERNAME_AUTHOR_LIMIT: isize = 20;
+const INVITE_BY_USERNAME_SCOPE_LIMIT: isize = 50;
+const INVITE_BY_EMAIL_AUTHOR_LIMIT: isize = 10;
+const INVITE_BY_EMAIL_SCOPE_LIMIT: isize = 30;
+const INVITE_WINDOW_SECS: i64 = 60 * 60;
+
+// --- Invitation mail to one address ---
+// Across every team and every workspace, whoever sends it: the bound that
+// stops several teams from flooding one inbox. Past it the invitation is
+// still created, only its mail is not sent.
+const INVITE_MAIL_ADDRESS_LIMIT: isize = 3;
+const INVITE_MAIL_ADDRESS_WINDOW_SECS: i64 = 24 * 60 * 60;
+
 pub enum RateLimitDecision {
     Allowed,
     Limited { retry_after_secs: u64 },
@@ -273,6 +294,70 @@ pub async fn check_avatar_upload(
     Ok(most_restrictive(burst, hourly))
 }
 
+/// Team invitation by username. Both windows are always incremented, as
+/// `check_login_attempt` does. The caller fails closed: a member of any team
+/// could otherwise send unmetered invitations.
+pub async fn check_team_invitation_by_username(
+    redis: &mut ConnectionManager,
+    author_id: Uuid,
+    team_id: Uuid,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_invitation_windows(
+        redis,
+        &invite_author_key("team", "username", author_id),
+        &invite_scope_key("team", "username", team_id),
+        INVITE_BY_USERNAME_AUTHOR_LIMIT,
+        INVITE_BY_USERNAME_SCOPE_LIMIT,
+    )
+    .await
+}
+
+/// Team invitation by email address; see `check_team_invitation_by_username`.
+pub async fn check_team_invitation_by_email(
+    redis: &mut ConnectionManager,
+    author_id: Uuid,
+    team_id: Uuid,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_invitation_windows(
+        redis,
+        &invite_author_key("team", "email", author_id),
+        &invite_scope_key("team", "email", team_id),
+        INVITE_BY_EMAIL_AUTHOR_LIMIT,
+        INVITE_BY_EMAIL_SCOPE_LIMIT,
+    )
+    .await
+}
+
+/// Whether one more invitation mail may go to `email` today, counted across
+/// every team and workspace. Unlike the others this never refuses a request:
+/// the caller creates the invitation either way and only skips the mail, so
+/// the answer is the same whether the address was flooded or not. A Redis
+/// failure is the caller's to treat as a refusal, which here means no mail.
+pub async fn check_invitation_mail_to_address(
+    redis: &mut ConnectionManager,
+    email: &str,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_window(
+        redis,
+        &invite_mail_address_key(email),
+        INVITE_MAIL_ADDRESS_LIMIT,
+        INVITE_MAIL_ADDRESS_WINDOW_SECS,
+    )
+    .await
+}
+
+async fn check_invitation_windows(
+    redis: &mut ConnectionManager,
+    author_key: &str,
+    scope_key: &str,
+    author_limit: isize,
+    scope_limit: isize,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    let by_author = check_window(redis, author_key, author_limit, INVITE_WINDOW_SECS).await?;
+    let by_scope = check_window(redis, scope_key, scope_limit, INVITE_WINDOW_SECS).await?;
+    Ok(most_restrictive(by_author, by_scope))
+}
+
 /// Returns the blocking decision when either window tripped, keeping the
 /// longest wait so a client that retries at the returned delay is not refused
 /// again by the other window.
@@ -362,6 +447,25 @@ fn avatar_upload_burst_key(user_id: Uuid) -> String {
 
 fn avatar_upload_hourly_key(user_id: Uuid) -> String {
     format!("ratelimit:avatar:hourly:user:{user_id}")
+}
+
+// Readable, as the avatar keys are: both ids are opaque uuids.
+fn invite_author_key(scope: &str, path: &str, author_id: Uuid) -> String {
+    format!("ratelimit:invite:{scope}:{path}:author:{author_id}")
+}
+
+fn invite_scope_key(scope: &str, path: &str, scope_id: Uuid) -> String {
+    format!("ratelimit:invite:{scope}:{path}:{scope}:{scope_id}")
+}
+
+/// Hashed, as the login and password-reset keys are: the address is PII.
+/// Trimmed and lowercased first, as the citext columns compare it, so
+/// changing its case does not buy a fresh budget.
+fn invite_mail_address_key(email: &str) -> String {
+    format!(
+        "ratelimit:invite:mail:address:{}",
+        hash_opaque_token(&email.trim().to_lowercase())
+    )
 }
 
 /// Increments a single fixed window and reports whether it is over `limit`.

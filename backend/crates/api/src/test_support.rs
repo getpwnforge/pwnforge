@@ -216,7 +216,11 @@ pub(crate) fn unique(prefix: &str) -> String {
 pub(crate) async fn create_user(db: &sea_orm::DatabaseConnection) -> Uuid {
     users::ActiveModel {
         id: Set(Uuid::now_v7()),
-        username: Set(unique("avatar-test")),
+        // A username the API itself accepts (at most 32 characters), so a
+        // test can invite the account by it. The first digit of a v7 uuid is
+        // the top of its timestamp, the same for every account made today,
+        // so dropping it keeps the name unique.
+        username: Set(format!("u{}", &Uuid::now_v7().simple().to_string()[1..])),
         password_hash: Set("not-a-real-hash".to_owned()),
         locale: Set("en".to_owned()),
         theme: Set("dark".to_owned()),

@@ -131,6 +131,10 @@ pub struct TeamMemberResponse {
     pub avatar_version: Option<Uuid>,
     pub role: TeamRole,
     pub joined_at: DateTime<Utc>,
+    /// The author of the invitation this member accepted, when they joined
+    /// by one. `null` for the team's creator, for members from before this
+    /// was recorded, and once the author's account is gone.
+    pub invited_by: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -173,6 +177,8 @@ fn invitee_is_named_once(request: &CreateInvitationRequest) -> Result<(), Valida
 #[validate(schema(function = invitee_is_named_once))]
 pub struct CreateInvitationRequest {
     pub default_role: TeamRole,
+    /// Seven days from now when left out, at most thirty
+    /// (`invitation_expiry_too_far` beyond).
     pub expires_at: Option<DateTime<Utc>>,
     /// Ignored, and set to 1, when `username` or `invited_email` is given.
     pub max_uses: Option<i32>,
@@ -196,12 +202,14 @@ pub struct CreateInvitationRequest {
     // otherwise reach the lookup untouched.
     #[validate(length(min = 3, max = 32), regex(path = *crate::dto::auth::USERNAME_RE))]
     pub username: Option<String>,
-    /// Invites someone who has no account here yet: they get a link to sign
-    /// up, and join on verifying this address.
+    /// Invites whoever holds this address: an account with it verified sees
+    /// the invitation among its pending ones and accepts it there, or by the
+    /// link the mail carries; anyone else can create an account with it
+    /// first. Nothing is joined without that step.
     ///
-    /// Mutually exclusive with `username`. If the address already belongs to a
-    /// verified account, the invitation is for that account, the same as
-    /// naming it.
+    /// Mutually exclusive with `username`. The answer is the same whether an
+    /// account holds the address or not: it is matched when the invitee
+    /// reads their invitations, never here.
     #[validate(email)]
     pub invited_email: Option<String>,
 }
@@ -229,13 +237,30 @@ pub struct TeamInvitationResponse {
     // Neither `list_active_invitations` nor
     // `list_pending_invitations_for_user` fills it.
     pub token: Option<String>,
+    pub team_id: Uuid,
+    pub team_name: String,
     pub default_role: TeamRole,
+    /// The account named by username. `null` for an invitation by address,
+    /// whether or not an account holds it.
     pub invited_user_id: Option<Uuid>,
     pub invited_email: Option<String>,
-    pub expires_at: Option<DateTime<Utc>>,
+    /// The author, `null` once their account is gone.
+    pub invited_by: Option<Uuid>,
+    pub invited_by_username: Option<String>,
+    pub expires_at: DateTime<Utc>,
     pub max_uses: Option<i32>,
     pub uses: i32,
     pub created_at: DateTime<Utc>,
+}
+
+/// What the invitee sees before accepting by the link: enough for the
+/// confirmation screen, and nothing about anyone else.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamInvitationPreview {
+    pub team_name: String,
+    pub invited_by_username: Option<String>,
+    pub role: TeamRole,
+    pub expires_at: DateTime<Utc>,
 }
 
 #[cfg(test)]

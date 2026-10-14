@@ -18,6 +18,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261012_090000_workspaces_exclusive_ownership::Migration),
             Box::new(m20261012_120000_teams_single_captain::Migration),
             Box::new(m20261014_090000_drop_personal_teams::Migration),
+            Box::new(m20261014_120000_team_invitations_expire::Migration),
+            Box::new(m20261014_121000_members_invited_by::Migration),
         ]
     }
 }
@@ -32,3 +34,5 @@ mod m20261008_120000_personal_team_captains;
 mod m20261012_090000_workspaces_exclusive_ownership;
 mod m20261012_120000_teams_single_captain;
 mod m20261014_090000_drop_personal_teams;
+mod m20261014_120000_team_invitations_expire;
+mod m20261014_121000_members_invited_by;

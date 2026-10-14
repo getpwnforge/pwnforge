@@ -7,6 +7,9 @@
 {{ cta }}:
 {{ link }}
 
+{{ expiry }}
+{{ ignore_notice }}
+
 --
 {{ footer }}
 {{ footer_instance }} {{ public_url }}

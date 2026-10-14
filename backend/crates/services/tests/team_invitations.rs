@@ -1,30 +1,28 @@
-//! Integration tests for which invitations email verification may redeem.
+//! Integration tests for who a team invitation is for, and what answering it
+//! takes.
 //!
 //! These need a real Postgres. What is under test is a `WHERE` clause, and
 //! `MockDatabase` does not execute SQL: it replays whatever rows the test
 //! hands it, filters and all. Asserting against it would prove only that the
 //! test author remembered to leave a row out.
 //!
-//! CI provisions the instance and sets `DATABASE_URL`; locally the dev compose
-//! exposes one.
+//! An invitation by address names no account: it is for whoever has the
+//! address verified when it is read or answered, and nothing ever accepts it
+//! on their behalf, verifying the address included.
 //!
-//! These run in autocommit and leave their rows behind, which is fine against a
-//! test database but does mean the tables grow with every run. Wrapping each
-//! test in a transaction rolled back at the end would fix that; it needs
-//! `verify_address` to take an outer transaction rather than open and commit
-//! its own, so it is a refactor of its own rather than a line to change here.
-//! `an_invitation_may_not_carry_both_targets` would not be the exception it
-//! looks like: a statement that trips a constraint aborts the surrounding
-//! transaction, so its failing insert belongs in a nested `begin()`, which
-//! SeaORM maps to `SAVEPOINT`, rolled back so the outer transaction survives.
+//! CI provisions the instance and sets `DATABASE_URL`; locally the dev compose
+//! exposes one. These run in autocommit and leave their rows behind, which is
+//! fine against a test database.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use chrono::{Duration, Utc};
-use domain::entities::{team_invitations, team_members, teams, users};
+use domain::entities::{team_invitations, team_members, teams, user_emails, users};
+use domain::types::TokenKind;
 use migration::MigratorTrait;
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set, TransactionTrait};
-use services::team_service;
+use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
+use services::team_service::{self, TeamError};
+use services::{auth_service, auth_token_service, token_service};
 use uuid::Uuid;
 
 async fn connect() -> DatabaseConnection {
@@ -51,6 +49,10 @@ fn unique_suffix() -> String {
     format!("{}-{nth}", Uuid::now_v7().simple())
 }
 
+fn fresh_address(prefix: &str) -> String {
+    format!("{prefix}-{}@example.test", unique_suffix())
+}
+
 async fn create_user(db: &DatabaseConnection) -> Uuid {
     let user = users::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -64,6 +66,31 @@ async fn create_user(db: &DatabaseConnection) -> Uuid {
     .expect("the fixture user must insert");
 
     user.id
+}
+
+/// An address of `user_id`, not verified yet.
+async fn add_address(db: &DatabaseConnection, user_id: Uuid, email: &str, primary: bool) -> Uuid {
+    user_emails::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        user_id: Set(user_id),
+        email: Set(email.to_owned()),
+        is_primary: Set(primary),
+        ..Default::default()
+    }
+    .insert(db)
+    .await
+    .expect("the fixture address must insert")
+    .id
+}
+
+/// Verifies an address the way the link in the verification mail does.
+async fn verify(db: &DatabaseConnection, user_id: Uuid, email_id: Uuid) {
+    let secret = auth_token_service::issue(db, user_id, email_id, TokenKind::EmailVerification)
+        .await
+        .expect("a verification token must be issued");
+    auth_service::verify_email(db, &secret)
+        .await
+        .expect("the address must verify");
 }
 
 async fn create_team(db: &DatabaseConnection, creator: Uuid) -> Uuid {
@@ -84,54 +111,67 @@ async fn create_team(db: &DatabaseConnection, creator: Uuid) -> Uuid {
     team.id
 }
 
-/// Writes an invitation row directly, bypassing `create_invitation`.
+/// Writes an invitation row directly, bypassing `create_invitation`, and
+/// returns its id and the secret of its token.
 ///
-/// These tests are about the read side, so the rows are built here rather than
-/// through the service: going the long way round would drag in the whole
-/// creation path (role checks, quotas, mail) for scenarios that only care
-/// about which rows a later query picks up.
+/// These tests are about the read and answer side, so the rows are built
+/// here rather than through the service: going the long way round would drag
+/// in the whole creation path (role checks, rate limits, mail) for scenarios
+/// that only care about which rows a later query picks up.
 async fn try_insert_invitation(
     db: &DatabaseConnection,
     team_id: Uuid,
     invited_user_id: Option<Uuid>,
     invited_email: Option<&str>,
-    expires_at: Option<chrono::DateTime<Utc>>,
-) -> Result<Uuid, sea_orm::DbErr> {
+    expires_at: chrono::DateTime<Utc>,
+    created_by: Option<Uuid>,
+) -> Result<(Uuid, String), sea_orm::DbErr> {
+    let token = token_service::generate_opaque_token();
     let invitation = team_invitations::ActiveModel {
         id: Set(Uuid::now_v7()),
         team_id: Set(team_id),
-        token: Set(format!("hash-{}", unique_suffix())),
+        token: Set(token.hash),
         default_role: Set("member".to_owned()),
         invited_user_id: Set(invited_user_id),
         invited_email: Set(invited_email.map(str::to_owned)),
-        expires_at: Set(expires_at.map(Into::into)),
+        expires_at: Set(expires_at.into()),
         max_uses: Set(Some(1)),
+        created_by: Set(created_by),
         ..Default::default()
     }
     .insert(db)
     .await?;
 
-    Ok(invitation.id)
+    Ok((invitation.id, token.secret))
 }
 
 async fn insert_invitation(
     db: &DatabaseConnection,
     team_id: Uuid,
-    invited_user_id: Option<Uuid>,
     invited_email: Option<&str>,
-    expires_at: Option<chrono::DateTime<Utc>>,
-) -> Uuid {
-    try_insert_invitation(db, team_id, invited_user_id, invited_email, expires_at)
-        .await
-        .expect("the fixture invitation must insert")
+    created_by: Option<Uuid>,
+) -> (Uuid, String) {
+    try_insert_invitation(
+        db,
+        team_id,
+        None,
+        invited_email,
+        Utc::now() + Duration::days(7),
+        created_by,
+    )
+    .await
+    .expect("the fixture invitation must insert")
 }
 
-async fn is_member(db: &DatabaseConnection, team_id: Uuid, user_id: Uuid) -> bool {
+async fn membership(
+    db: &DatabaseConnection,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Option<team_members::Model> {
     team_members::Entity::find_by_id((team_id, user_id))
         .one(db)
         .await
         .expect("membership query must succeed")
-        .is_some()
 }
 
 async fn invitation_exists(db: &DatabaseConnection, invitation_id: Uuid) -> bool {
@@ -142,120 +182,203 @@ async fn invitation_exists(db: &DatabaseConnection, invitation_id: Uuid) -> bool
         .is_some()
 }
 
-/// Runs the hook the way `auth_service::verify_email` does, in its own
-/// transaction, and commits.
-async fn verify_address(db: &DatabaseConnection, email: &str, user_id: Uuid) {
-    let txn = db.begin().await.expect("transaction must open");
-
-    team_service::accept_pending_email_invitations(&txn, email, user_id)
+async fn pending_ids(db: &DatabaseConnection, user_id: Uuid) -> Vec<Uuid> {
+    team_service::list_pending_invitations_for_user(db, user_id)
         .await
-        .expect("accepting pending invitations must succeed");
-
-    txn.commit().await.expect("transaction must commit");
+        .expect("the pending list must load")
+        .into_iter()
+        .map(|invitation| invitation.id)
+        .collect()
 }
 
-/// The flow this hook exists for: an address invited before its owner had an
-/// account joins them on verification.
+/// An address invited before its owner had an account: signing up and
+/// verifying the address joins no team. The invitation waits in the
+/// account's pending list, and only an explicit acceptance joins, recording
+/// the author.
 #[tokio::test]
-async fn verifying_an_address_redeems_an_invitation_addressed_to_it() {
+async fn verifying_an_address_accepts_no_invitation_addressed_to_it() {
     let db = connect().await;
 
     let captain = create_user(&db).await;
-    let newcomer = create_user(&db).await;
     let team_id = create_team(&db, captain).await;
+    let address = fresh_address("newcomer");
+    let (invitation_id, _) = insert_invitation(&db, team_id, Some(&address), Some(captain)).await;
 
-    let address = format!("newcomer-{}@example.test", unique_suffix());
-    let invitation_id = insert_invitation(&db, team_id, None, Some(&address), None).await;
-
-    verify_address(&db, &address, newcomer).await;
+    let newcomer = create_user(&db).await;
+    let email_id = add_address(&db, newcomer, &address, true).await;
+    verify(&db, newcomer, email_id).await;
 
     assert!(
-        is_member(&db, team_id, newcomer).await,
-        "an invitation addressed to this address must join its owner"
+        membership(&db, team_id, newcomer).await.is_none(),
+        "verifying the address must not join the team"
     );
+    assert!(
+        invitation_exists(&db, invitation_id).await,
+        "the invitation must still be pending"
+    );
+    assert_eq!(
+        pending_ids(&db, newcomer).await,
+        vec![invitation_id],
+        "the invitation must be in the account's pending list"
+    );
+
+    team_service::accept_invitation_by_id(&db, invitation_id, newcomer)
+        .await
+        .expect("the account holding the address verified may accept");
+
+    let member = membership(&db, team_id, newcomer)
+        .await
+        .expect("an explicit acceptance joins");
+    assert_eq!(member.invited_by, Some(captain), "the author is recorded");
     assert!(
         !invitation_exists(&db, invitation_id).await,
-        "a redeemed invitation must be consumed"
+        "and the invitation is used up"
     );
+}
+
+/// An address the account verifies only after the invitation was sent:
+/// the invitation appears then, matched when read, not when sent.
+#[tokio::test]
+async fn an_address_verified_later_brings_its_invitation_into_the_pending_list() {
+    let db = connect().await;
+
+    let captain = create_user(&db).await;
+    let team_id = create_team(&db, captain).await;
+    let account = create_user(&db).await;
+    let first = add_address(&db, account, &fresh_address("first"), true).await;
+    verify(&db, account, first).await;
+
+    let second = fresh_address("second");
+    let (invitation_id, _) = insert_invitation(&db, team_id, Some(&second), Some(captain)).await;
+    assert!(pending_ids(&db, account).await.is_empty());
+
+    let second_id = add_address(&db, account, &second, false).await;
+    assert!(
+        pending_ids(&db, account).await.is_empty(),
+        "an unverified address matches nothing"
+    );
+
+    verify(&db, account, second_id).await;
+    assert_eq!(pending_ids(&db, account).await, vec![invitation_id]);
+    assert!(membership(&db, team_id, account).await.is_none());
+}
+
+/// Negative: holding the address unverified is not holding it. The account
+/// neither sees the invitation nor answers it, by id or by its link, and the
+/// preview says nothing about it.
+#[tokio::test]
+async fn an_unverified_address_neither_sees_nor_answers_the_invitation() {
+    let db = connect().await;
+
+    let captain = create_user(&db).await;
+    let team_id = create_team(&db, captain).await;
+    let address = fresh_address("unverified");
+    let (invitation_id, secret) =
+        insert_invitation(&db, team_id, Some(&address), Some(captain)).await;
+
+    let account = create_user(&db).await;
+    add_address(&db, account, &address, true).await;
+
+    assert!(pending_ids(&db, account).await.is_empty());
+    assert!(matches!(
+        team_service::accept_invitation_by_id(&db, invitation_id, account).await,
+        Err(TeamError::InvitationEmailMismatch)
+    ));
+    assert!(matches!(
+        team_service::accept_invitation_by_token(&db, &secret, account).await,
+        Err(TeamError::InvitationEmailMismatch)
+    ));
+    assert!(matches!(
+        team_service::preview_invitation(&db, &secret, account).await,
+        Err(TeamError::InvitationNotFound)
+    ));
+    assert!(membership(&db, team_id, account).await.is_none());
+    assert!(invitation_exists(&db, invitation_id).await);
+}
+
+/// The preview shows the invitee what the link offers, and gives anyone
+/// else the answer an unknown token gets.
+#[tokio::test]
+async fn the_preview_is_for_the_invitee_alone() {
+    let db = connect().await;
+
+    let captain = create_user(&db).await;
+    let team_id = create_team(&db, captain).await;
+    let address = fresh_address("preview");
+    let (_, secret) = insert_invitation(&db, team_id, Some(&address), Some(captain)).await;
+
+    let invitee = create_user(&db).await;
+    let email_id = add_address(&db, invitee, &address, true).await;
+    verify(&db, invitee, email_id).await;
+    let stranger = create_user(&db).await;
+
+    let preview = team_service::preview_invitation(&db, &secret, invitee)
+        .await
+        .expect("the invitee sees the preview");
+    let author = users::Entity::find_by_id(captain)
+        .one(&db)
+        .await
+        .expect("the lookup must succeed")
+        .expect("the author exists");
+    assert_eq!(
+        preview.invited_by_username.as_deref(),
+        Some(author.username.as_str())
+    );
+    assert!(preview.team_name.starts_with("Invite Test"));
+
+    for (user, token) in [(stranger, secret.as_str()), (invitee, "no-such-token")] {
+        assert!(matches!(
+            team_service::preview_invitation(&db, token, user).await,
+            Err(TeamError::InvitationNotFound)
+        ));
+    }
 }
 
 /// An expired invitation is dead, not merely hidden from the listings.
 #[tokio::test]
-async fn verifying_an_address_does_not_redeem_an_expired_invitation() {
+async fn an_expired_invitation_is_neither_listed_nor_accepted() {
     let db = connect().await;
 
     let captain = create_user(&db).await;
-    let latecomer = create_user(&db).await;
     let team_id = create_team(&db, captain).await;
-
-    let address = format!("latecomer-{}@example.test", unique_suffix());
-    let expired = Utc::now() - Duration::hours(1);
-    insert_invitation(&db, team_id, None, Some(&address), Some(expired)).await;
-
-    verify_address(&db, &address, latecomer).await;
-
-    assert!(
-        !is_member(&db, team_id, latecomer).await,
-        "an expired invitation must not join anyone"
-    );
-}
-
-/// A generic link carries no address, so email verification must leave it
-/// alone rather than sweeping it up for every account that happens to verify.
-#[tokio::test]
-async fn verifying_an_address_leaves_generic_links_untouched() {
-    let db = connect().await;
-
-    let captain = create_user(&db).await;
-    let passer_by = create_user(&db).await;
-    let team_id = create_team(&db, captain).await;
-
-    let invitation_id = insert_invitation(&db, team_id, None, None, None).await;
-
-    verify_address(
+    let invitee = create_user(&db).await;
+    let (invitation_id, _) = try_insert_invitation(
         &db,
-        &format!("passer-{}@example.test", unique_suffix()),
-        passer_by,
+        team_id,
+        Some(invitee),
+        None,
+        Utc::now() - Duration::hours(1),
+        Some(captain),
     )
-    .await;
+    .await
+    .expect("the fixture invitation must insert");
 
-    assert!(!is_member(&db, team_id, passer_by).await);
-    assert!(
-        invitation_exists(&db, invitation_id).await,
-        "a generic link is not consumed by an unrelated verification"
-    );
+    assert!(pending_ids(&db, invitee).await.is_empty());
+    assert!(matches!(
+        team_service::accept_invitation_by_id(&db, invitation_id, invitee).await,
+        Err(TeamError::InvitationExpired)
+    ));
+    assert!(membership(&db, team_id, invitee).await.is_none());
 }
 
-/// Verifying an address twice, or an account already in the team through
-/// another route, must not fail the verification it is attached to.
+/// A generic link still joins whoever holds it, and records its author.
 #[tokio::test]
-async fn redeeming_an_invitation_for_an_existing_member_is_not_an_error() {
+async fn a_generic_link_joins_its_holder_and_records_the_author() {
     let db = connect().await;
 
     let captain = create_user(&db).await;
-    let member = create_user(&db).await;
     let team_id = create_team(&db, captain).await;
+    let holder = create_user(&db).await;
+    let (_, secret) = insert_invitation(&db, team_id, None, Some(captain)).await;
 
-    team_members::ActiveModel {
-        team_id: Set(team_id),
-        user_id: Set(member),
-        role: Set("member".to_owned()),
-        ..Default::default()
-    }
-    .insert(&db)
-    .await
-    .expect("the fixture membership must insert");
+    team_service::accept_invitation_by_token(&db, &secret, holder)
+        .await
+        .expect("a generic link joins its holder");
 
-    let address = format!("member-{}@example.test", unique_suffix());
-    let invitation_id = insert_invitation(&db, team_id, None, Some(&address), None).await;
-
-    verify_address(&db, &address, member).await;
-
-    assert!(is_member(&db, team_id, member).await);
-    assert!(
-        !invitation_exists(&db, invitation_id).await,
-        "the now-redundant invitation is dropped rather than left pending"
-    );
+    let member = membership(&db, team_id, holder)
+        .await
+        .expect("the holder is a member");
+    assert_eq!(member.invited_by, Some(captain));
 }
 
 /// Negative: the database refuses a row that names an account *and* an
@@ -279,7 +402,8 @@ async fn an_invitation_may_not_carry_both_targets() {
         &db,
         team_id,
         Some(named_account),
-        Some(&format!("both-{}@example.test", unique_suffix())),
+        Some(&fresh_address("both")),
+        Utc::now() + Duration::days(7),
         None,
     )
     .await;
@@ -309,23 +433,29 @@ async fn an_invitation_may_name_one_target_or_none() {
     let captain = create_user(&db).await;
     let invitee = create_user(&db).await;
     let team_id = create_team(&db, captain).await;
-
-    let address = format!("single-{}@example.test", unique_suffix());
+    let expires_at = Utc::now() + Duration::days(7);
 
     assert!(
-        try_insert_invitation(&db, team_id, None, None, None)
+        try_insert_invitation(&db, team_id, None, None, expires_at, None)
             .await
             .is_ok(),
         "a generic link names nobody and must be accepted"
     );
     assert!(
-        try_insert_invitation(&db, team_id, None, Some(&address), None)
-            .await
-            .is_ok(),
+        try_insert_invitation(
+            &db,
+            team_id,
+            None,
+            Some(&fresh_address("single")),
+            expires_at,
+            None
+        )
+        .await
+        .is_ok(),
         "an invitation addressed to an email must be accepted"
     );
     assert!(
-        try_insert_invitation(&db, team_id, Some(invitee), None, None)
+        try_insert_invitation(&db, team_id, Some(invitee), None, expires_at, None)
             .await
             .is_ok(),
         "an invitation pinned to an account must be accepted"

@@ -65,13 +65,23 @@ deciding question is whether anything else bounds abuse of that route:
 | A password or an opaque token the caller must already hold | Fail **open** | `login`, `password/reset`, `email/resend` |
 | Nothing | Fail **closed** (`503`) | `register`, `password/forgot`, `contact`, `setup` |
 | A session any account can open, and nothing bounding the work | Fail **closed** (`503`) | avatar upload |
+| A session on any team, and a mail to an address the caller names | Fail **closed** (`503`) | team invitations, by username or by address |
 
-The last two rows are the ones that matter. The routes in the second are
+The last three rows are the ones that matter. The routes in the second are
 reachable by anyone and most of them send mail to an address the caller never
 proved they own, so an unlimited one is a free mailer, and for `register`,
 unbounded account creation and an Argon2 CPU sink as well. The avatar upload
 needs a session, but any account will do, and it hands attacker-chosen bytes
-to an image decoder: an unmetered one is a CPU sink.
+to an image decoder: an unmetered one is a CPU sink. An invitation needs no
+more than a team of one's own, and each one mails the invitee.
+
+The invitation limits are per flow (by username or by address), each with
+one window per author and one per team.
+Under them sits one more, on the address mailed: three invitation mails a
+day, whoever sends them. That one never refuses the request, since a refusal
+would tell the author the address was being flooded: past it, or when it
+cannot be read, the invitation is created and answered as usual and only its
+mail is not sent. Its key holds the address hashed.
 
 ## The client IP is only as trustworthy as the proxy count
 

@@ -22,7 +22,7 @@ pub struct Model {
     pub invited_email: Option<String>,
     pub created_by: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
-    pub expires_at: Option<DateTimeWithTimeZone>,
+    pub expires_at: DateTimeWithTimeZone,
     pub max_uses: Option<i32>,
     pub uses: i32,
 }

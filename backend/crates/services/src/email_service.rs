@@ -268,38 +268,8 @@ struct EmailVerificationText {
 }
 
 #[derive(Template)]
-#[template(path = "team_invitation_added.html.j2")]
-struct TeamInvitationAddedHtml {
-    locale: String,
-    title: String,
-    preheader: String,
-    greeting: String,
-    body: String,
-    cta: String,
-    link: String,
-    footer: String,
-    footer_instance: String,
-    footer_note: String,
-    public_url: String,
-}
-
-#[derive(Template)]
-#[template(path = "team_invitation_added.txt")]
-struct TeamInvitationAddedText {
-    title: String,
-    greeting: String,
-    body: String,
-    cta: String,
-    link: String,
-    footer: String,
-    footer_instance: String,
-    footer_note: String,
-    public_url: String,
-}
-
-#[derive(Template)]
-#[template(path = "team_invitation_signup.html.j2")]
-struct TeamInvitationSignupHtml {
+#[template(path = "invitation.html.j2")]
+struct InvitationHtml {
     locale: String,
     title: String,
     preheader: String,
@@ -308,6 +278,8 @@ struct TeamInvitationSignupHtml {
     cta: String,
     link: String,
     fallback_notice: String,
+    expiry: String,
+    ignore_notice: String,
     footer: String,
     footer_instance: String,
     footer_note: String,
@@ -315,13 +287,15 @@ struct TeamInvitationSignupHtml {
 }
 
 #[derive(Template)]
-#[template(path = "team_invitation_signup.txt")]
-struct TeamInvitationSignupText {
+#[template(path = "invitation.txt")]
+struct InvitationText {
     title: String,
     greeting: String,
     body: String,
     cta: String,
     link: String,
+    expiry: String,
+    ignore_notice: String,
     footer: String,
     footer_instance: String,
     footer_note: String,
@@ -586,97 +560,93 @@ pub async fn send_email_verification(
     send(config, to, &subject, &html, &text, None).await
 }
 
-/// Sent when a team invitation targets an email that already matches a
-/// verified account, so the invitation is pinned to that account and there is
-/// nothing to click here beyond going to look at it in-app.
-pub async fn send_team_invitation_added(
-    config: &Config,
-    to: &str,
-    locale: &str,
-    team_name: &str,
-) -> Result<(), EmailError> {
-    let link = format!("{}/teams", config.public_url);
-
-    let title = t!("email.team_invitation_added.title", locale = locale).to_string();
-    let preheader = t!("email.team_invitation_added.preheader", locale = locale).to_string();
-    let greeting = t!("email.common.greeting", locale = locale).to_string();
-    let body = t!(
-        "email.team_invitation_added.body",
-        locale = locale,
-        team_name = team_name
-    )
-    .to_string();
-    let cta = t!("email.team_invitation_added.cta", locale = locale).to_string();
-    let subject = t!("email.team_invitation_added.subject", locale = locale).to_string();
-    let footer = Footer::new(locale);
-
-    let html = TeamInvitationAddedHtml {
-        locale: locale.to_string(),
-        title: title.clone(),
-        preheader,
-        greeting: greeting.clone(),
-        body: body.clone(),
-        cta: cta.clone(),
-        link: link.clone(),
-        footer: footer.text.clone(),
-        footer_instance: footer.instance.clone(),
-        footer_note: footer.note.clone(),
-        public_url: config.public_url.clone(),
-    }
-    .render()?;
-
-    let text = TeamInvitationAddedText {
-        title,
-        greeting,
-        body,
-        cta,
-        link,
-        footer: footer.text,
-        footer_instance: footer.instance,
-        footer_note: footer.note,
-        public_url: config.public_url.clone(),
-    }
-    .render()?;
-
-    send(config, to, &subject, &html, &text, None).await
+/// What an invitation mail invites to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvitationKind {
+    Team,
+    Workspace,
 }
 
-/// Sent when a team invitation targets an email with no matching account
-/// yet: the link points at registration rather than at the app, `%email%`
-/// pre-filled so the account created lands on the email the invitation
-/// actually targets.
-pub async fn send_team_invitation_signup(
+impl InvitationKind {
+    /// The path segment of the page that opens the invitation.
+    fn segment(self) -> &'static str {
+        match self {
+            InvitationKind::Team => "team",
+            InvitationKind::Workspace => "workspace",
+        }
+    }
+}
+
+/// The one invitation mail, for teams and workspaces alike, and the same
+/// whether an account holds `to` or not: it asks the reader to sign in, or
+/// to create an account with this address first, and links to the
+/// invitation itself.
+///
+/// The link carries the token in clear, as the verification and reset links
+/// do; the page posts it back in a body, and it only ever opens the
+/// invitation to the account it names.
+pub async fn send_invitation(
     config: &Config,
     to: &str,
     locale: &str,
-    team_name: &str,
+    kind: InvitationKind,
+    name: &str,
+    token: &str,
+    expires_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), EmailError> {
-    let link = format!(
-        "{}/register?email={}",
-        config.public_url,
-        urlencoding::encode(to)
-    );
+    let message = invitation_message(&config.public_url, locale, kind, name, token, expires_at)?;
+    send(
+        config,
+        to,
+        &message.subject,
+        &message.html,
+        &message.text,
+        None,
+    )
+    .await
+}
 
-    let title = t!("email.team_invitation_signup.title", locale = locale).to_string();
-    let preheader = t!(
-        "email.team_invitation_signup.preheader",
-        locale = locale,
-        team_name = team_name
-    )
-    .to_string();
+struct RenderedMessage {
+    subject: String,
+    html: String,
+    text: String,
+}
+
+fn invitation_message(
+    public_url: &str,
+    locale: &str,
+    kind: InvitationKind,
+    name: &str,
+    token: &str,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Result<RenderedMessage, askama::Error> {
+    let link = format!("{public_url}/invitations/{}?token={token}", kind.segment());
+    let (subject_key, preheader_key, body_key) = match kind {
+        InvitationKind::Team => (
+            "email.invitation.subject_team",
+            "email.invitation.preheader_team",
+            "email.invitation.body_team",
+        ),
+        InvitationKind::Workspace => (
+            "email.invitation.subject_workspace",
+            "email.invitation.preheader_workspace",
+            "email.invitation.body_workspace",
+        ),
+    };
+
+    let date = expires_at.format("%Y-%m-%d %H:%M").to_string();
+    let title = t!(subject_key, locale = locale).to_string();
+    let subject = title.clone();
+    let preheader = t!(preheader_key, locale = locale, name = name).to_string();
     let greeting = t!("email.common.greeting", locale = locale).to_string();
-    let body = t!(
-        "email.team_invitation_signup.body",
-        locale = locale,
-        team_name = team_name
-    )
-    .to_string();
-    let cta = t!("email.team_invitation_signup.cta", locale = locale).to_string();
+    let body = t!(body_key, locale = locale, name = name).to_string();
+    let cta = t!("email.invitation.cta", locale = locale).to_string();
     let fallback_notice = t!("email.common.fallback_notice", locale = locale).to_string();
-    let subject = t!("email.team_invitation_signup.subject", locale = locale).to_string();
+    let expiry = t!("email.invitation.expiry", locale = locale, date = date).to_string();
+    let ignore_notice = t!("email.invitation.ignore_notice", locale = locale).to_string();
     let footer = Footer::new(locale);
 
-    let html = TeamInvitationSignupHtml {
+    let html = InvitationHtml {
         locale: locale.to_string(),
         title: title.clone(),
         preheader,
@@ -685,27 +655,35 @@ pub async fn send_team_invitation_signup(
         cta: cta.clone(),
         link: link.clone(),
         fallback_notice,
+        expiry: expiry.clone(),
+        ignore_notice: ignore_notice.clone(),
         footer: footer.text.clone(),
         footer_instance: footer.instance.clone(),
         footer_note: footer.note.clone(),
-        public_url: config.public_url.clone(),
+        public_url: public_url.to_owned(),
     }
     .render()?;
 
-    let text = TeamInvitationSignupText {
+    let text = InvitationText {
         title,
         greeting,
         body,
         cta,
         link,
+        expiry,
+        ignore_notice,
         footer: footer.text,
         footer_instance: footer.instance,
         footer_note: footer.note,
-        public_url: config.public_url.clone(),
+        public_url: public_url.to_owned(),
     }
     .render()?;
 
-    send(config, to, &subject, &html, &text, None).await
+    Ok(RenderedMessage {
+        subject,
+        html,
+        text,
+    })
 }
 
 pub async fn send_security_alert(
@@ -1245,5 +1223,47 @@ mod tests {
             quoted.to_string(),
             r#""PwnForge, CTF" <hello@pwnforge.app>"#
         );
+    }
+
+    /// The invitation mail renders for both kinds in both languages, carries
+    /// its link and expiry, and leaves no placeholder behind. It takes no
+    /// account at all, which is what keeps its form the same whether one
+    /// holds the address or not.
+    #[test]
+    fn the_invitation_mail_renders_for_both_kinds_in_both_languages() {
+        let expires_at = chrono::DateTime::parse_from_rfc3339("2026-10-21T09:30:00Z")
+            .expect("valid date")
+            .with_timezone(&chrono::Utc);
+
+        for kind in [InvitationKind::Team, InvitationKind::Workspace] {
+            for locale in ["en", "fr"] {
+                let message = invitation_message(
+                    PUBLIC_URL,
+                    locale,
+                    kind,
+                    "Night Owls",
+                    "tok123",
+                    expires_at,
+                )
+                .expect("template must render");
+                let link = format!("{PUBLIC_URL}/invitations/{}?token=tok123", kind.segment());
+
+                for part in [&message.html, &message.text] {
+                    assert!(part.contains(&link), "link missing in {locale}");
+                    assert!(part.contains("Night Owls"), "name missing in {locale}");
+                    assert!(
+                        part.contains("2026-10-21 09:30"),
+                        "expiry missing in {locale}"
+                    );
+                    assert!(
+                        !part.contains("{{"),
+                        "unsubstituted placeholder in {locale}"
+                    );
+                    assert!(!part.contains("%{"), "untranslated variable in {locale}");
+                }
+                assert!(!message.subject.is_empty());
+                assert!(message.html.contains(&format!(r#"lang="{locale}""#)));
+            }
+        }
     }
 }

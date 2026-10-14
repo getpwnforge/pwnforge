@@ -10,13 +10,10 @@
 //! exposes one.
 
 use domain::dto::team::TeamRole;
-use domain::entities::{team_members, users};
+use domain::entities::users;
 use domain::types::AccentColor;
 use migration::MigratorTrait;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    QueryFilter, Set, Statement,
-};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, Set, Statement};
 use uuid::Uuid;
 
 #[path = "common/migrations.rs"]
@@ -69,6 +66,12 @@ async fn insert_team(
 
 const BACKFILL: &str = "m20261008_120000_personal_team_captains";
 
+/// A `team_members` row as this schema holds it.
+struct Member {
+    user_id: Uuid,
+    role: String,
+}
+
 /// The backfill inserts the missing Captain of a personal team and nothing
 /// else: a personal team with a member, an ordinary team, an orphaned
 /// personal team and an instance admin's personal team are left alone.
@@ -88,13 +91,17 @@ async fn the_backfill_adds_missing_captains_and_nothing_else() {
         let staffed_owner = create_user(&db, false).await;
         let staffed = insert_team(&db, "staffed-personal", true, Some(staffed_owner.id)).await;
         // Someone already holds it, and not as Captain: it must stay as is.
-        team_members::ActiveModel {
-            team_id: Set(staffed),
-            user_id: Set(staffed_owner.id),
-            role: Set(TeamRole::Admin.as_str().to_owned()),
-            ..Default::default()
-        }
-        .insert(&db)
+        // A statement rather than the entity, which reads back
+        // `team_members.invited_by`, a column this schema predates.
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, $3)",
+            [
+                staffed.into(),
+                staffed_owner.id.into(),
+                TeamRole::Admin.as_str().into(),
+            ],
+        ))
         .await
         .expect("fixture member");
 
@@ -115,11 +122,19 @@ async fn the_backfill_adds_missing_captains_and_nothing_else() {
         let members = |team_id: Uuid| {
             let db = &db;
             async move {
-                team_members::Entity::find()
-                    .filter(team_members::Column::TeamId.eq(team_id))
-                    .all(db)
-                    .await
-                    .expect("the lookup must succeed")
+                db.query_all_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT user_id, role FROM team_members WHERE team_id = $1",
+                    [team_id.into()],
+                ))
+                .await
+                .expect("the lookup must succeed")
+                .into_iter()
+                .map(|row| Member {
+                    user_id: row.try_get("", "user_id").expect("a uuid"),
+                    role: row.try_get("", "role").expect("text"),
+                })
+                .collect::<Vec<_>>()
             }
         };
 

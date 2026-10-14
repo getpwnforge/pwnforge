@@ -12,6 +12,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub role: String,
     pub joined_at: DateTimeWithTimeZone,
+    pub invited_by: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

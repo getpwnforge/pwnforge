@@ -13,6 +13,7 @@ pub struct Model {
     pub role: Option<String>,
     pub is_guest: bool,
     pub joined_at: DateTimeWithTimeZone,
+    pub invited_by: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

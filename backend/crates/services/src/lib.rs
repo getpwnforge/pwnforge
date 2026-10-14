@@ -9,6 +9,7 @@ pub mod config;
 pub mod contact_service;
 pub mod email_service;
 pub mod instance_service;
+pub mod invitation_service;
 pub mod jwt_service;
 pub mod legal_service;
 pub mod password_service;

@@ -230,7 +230,7 @@ async fn adding_a_member_as_captain_is_refused() {
         let joining = create_user(&db, false).await;
         let team = create_team(&db, &[(captain, "captain")]).await;
 
-        let outcome = team_service::add_member(&db, team, joining, TeamRole::Captain).await;
+        let outcome = team_service::add_member(&db, team, joining, TeamRole::Captain, None).await;
 
         assert!(
             matches!(outcome, Err(TeamError::CaptainMustTransfer)),

@@ -6,8 +6,8 @@ use crate::blocked_email_service::BlockedEmailError;
 use crate::config::Config;
 use crate::turnstile_service::TurnstileAction;
 use crate::{
-    audit_service, auth_token_service, instance_service, legal_service, team_service,
-    token_service, turnstile_service,
+    audit_service, auth_token_service, instance_service, legal_service, token_service,
+    turnstile_service,
 };
 use chrono::Utc;
 use domain::{
@@ -111,9 +111,6 @@ pub enum AuthError {
 
     #[error(transparent)]
     Turnstile(#[from] turnstile_service::TurnstileError),
-
-    #[error(transparent)]
-    Team(#[from] team_service::TeamError),
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
@@ -641,30 +638,29 @@ pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), A
             .await?;
 
     let email_id = token.email_id.ok_or(AuthError::InvalidCredentials)?;
-    let email = user_emails::Entity::find_by_id(email_id)
+    user_emails::Entity::find_by_id(email_id)
         .one(db)
         .await?
         .ok_or(AuthError::InvalidCredentials)?;
-    let user = users::Entity::find_by_id(token.user_id)
+    users::Entity::find_by_id(token.user_id)
         .one(db)
         .await?
         .ok_or(AuthError::InvalidCredentials)?;
-
-    let txn = db.begin().await?;
 
     // Idempotent by filtering on NULL: clicking the link twice is not an
     // error, and the second click must not overwrite the original timestamp.
+    //
+    // Nothing else happens here. An invitation addressed to this address
+    // becomes visible to the account, and stays the account's to accept or
+    // decline: no invitation is ever accepted on someone's behalf (see
+    // `invitation_service::addressed_to`).
     user_emails::Entity::update_many()
         .col_expr(user_emails::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(user_emails::Column::VerifiedAt, Expr::current_timestamp())
         .filter(user_emails::Column::Id.eq(email_id))
         .filter(user_emails::Column::VerifiedAt.is_null())
-        .exec(&txn)
+        .exec(db)
         .await?;
-
-    team_service::accept_pending_email_invitations(&txn, &email.email, user.id).await?;
-
-    txn.commit().await?;
 
     Ok(())
 }
