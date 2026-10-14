@@ -16,7 +16,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use domain::dto::invitation::INVITATION_DEFAULT_DAYS;
+use domain::dto::invitation::{INVITATION_DEFAULT_DAYS, InvitationTarget};
 use domain::dto::team::TeamRole;
 use domain::dto::workspace::{
     CancelReason, CreateWorkspaceInvitationRequest, GuestRole, InvitationStatus, Membership,
@@ -131,6 +131,13 @@ fn to_response(
         workspace_name,
         status,
         role: GuestRole::parse(&row.role).unwrap_or(GuestRole::Viewer),
+        // Not from the address: it is erased once the invitation is closed,
+        // and a workspace has no generic link it could be mistaken for.
+        target: if row.invited_user_id.is_some() {
+            InvitationTarget::Username
+        } else {
+            InvitationTarget::Email
+        },
         invited_user_id: row.invited_user_id,
         invited_username: name_of(row.invited_user_id),
         // Only while pending. Erased from the row on every way out of that

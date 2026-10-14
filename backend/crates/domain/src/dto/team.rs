@@ -1,5 +1,6 @@
 // backend/crates/domain/src/dto/team.rs
 
+use crate::dto::invitation::InvitationTarget;
 use crate::entities::teams;
 use crate::types::AccentColor;
 use chrono::{DateTime, Utc};
@@ -240,9 +241,11 @@ pub struct TeamInvitationResponse {
     pub team_id: Uuid,
     pub team_name: String,
     pub default_role: TeamRole,
+    pub target: InvitationTarget,
     /// The account named by username. `null` for an invitation by address,
     /// whether or not an account holds it.
     pub invited_user_id: Option<Uuid>,
+    pub invited_username: Option<String>,
     pub invited_email: Option<String>,
     /// The author, `null` once their account is gone.
     pub invited_by: Option<Uuid>,

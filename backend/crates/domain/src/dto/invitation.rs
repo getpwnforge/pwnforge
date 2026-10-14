@@ -2,7 +2,7 @@
 //
 // What team and workspace invitations share at the API edge.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::{Validate, ValidationError, ValidationErrors};
 
@@ -43,4 +43,28 @@ impl InvitedByFilter {
 pub struct InvitationTokenRequest {
     #[validate(length(min = 1, max = 128))]
     pub token: String,
+}
+
+/// Whom an invitation names, as the invitation lists show it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum InvitationTarget {
+    /// One account, named by username: `invited_username`.
+    Username,
+    /// One address, for whoever holds it verified: `invited_email`.
+    Email,
+    /// Nobody: a team's generic link, for whoever holds its token. A
+    /// workspace has none.
+    Link,
+}
+
+impl InvitationTarget {
+    /// From the two targeting columns, which never both hold a value.
+    pub fn of(invited_user_id: Option<Uuid>, invited_email: Option<&str>) -> Self {
+        match (invited_user_id, invited_email) {
+            (Some(_), _) => Self::Username,
+            (None, Some(_)) => Self::Email,
+            (None, None) => Self::Link,
+        }
+    }
 }

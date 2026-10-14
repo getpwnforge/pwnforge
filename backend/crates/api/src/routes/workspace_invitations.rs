@@ -1137,6 +1137,10 @@ mod tests {
             .map(id_of)
             .collect();
         assert_eq!(filtered, vec![id_of(&by_admin)]);
+        assert_eq!(
+            list(&app, &f, f.captain, &format!("?invited_by={}", f.admin)).await[0]["target"],
+            "username"
+        );
         assert!(
             list(&app, &f, f.member, &format!("?invited_by={}", f.admin))
                 .await
@@ -1177,6 +1181,10 @@ mod tests {
 
         let listed = list(&app, &f, f.captain, &format!("?invited_by={}", f.member)).await;
         assert_eq!(listed[0]["status"], "accepted");
+        assert_eq!(
+            listed[0]["target"], "email",
+            "still an invitation by address"
+        );
         assert_eq!(
             listed[0]["invited_email"],
             Value::Null,

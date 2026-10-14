@@ -12,7 +12,9 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use domain::dto::invitation::{INVITATION_DEFAULT_DAYS, TEAM_INVITATION_MAX_DAYS};
+use domain::dto::invitation::{
+    INVITATION_DEFAULT_DAYS, InvitationTarget, TEAM_INVITATION_MAX_DAYS,
+};
 use domain::dto::team::{
     CreateInvitationRequest, CreateTeamRequest, TeamInvitationPreview, TeamInvitationResponse,
     TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
@@ -1102,7 +1104,8 @@ pub async fn create_invitation(
         }
     };
 
-    let authors = invitation_service::usernames(db, [creator_id]).await?;
+    let names =
+        invitation_service::usernames(db, invited_user_id.into_iter().chain([creator_id])).await?;
 
     Ok(CreatedInvitation {
         invitation: TeamInvitationResponse {
@@ -1111,10 +1114,12 @@ pub async fn create_invitation(
             team_id,
             team_name: team.name,
             default_role: payload.default_role,
+            target: InvitationTarget::of(invited_user_id, invited_email.as_deref()),
             invited_user_id,
+            invited_username: invited_user_id.and_then(|id| names.get(&id).cloned()),
             invited_email,
             invited_by: Some(creator_id),
-            invited_by_username: authors.get(&creator_id).cloned(),
+            invited_by_username: names.get(&creator_id).cloned(),
             expires_at,
             max_uses,
             uses: 0,
@@ -1137,7 +1142,14 @@ fn invitation_response(
         team_id: invitation.team_id,
         team_name,
         default_role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
+        target: InvitationTarget::of(
+            invitation.invited_user_id,
+            invitation.invited_email.as_deref(),
+        ),
         invited_user_id: invitation.invited_user_id,
+        invited_username: invitation
+            .invited_user_id
+            .and_then(|id| usernames.get(&id).cloned()),
         invited_email: invitation.invited_email,
         invited_by: invitation.created_by,
         invited_by_username: invitation
@@ -1150,8 +1162,16 @@ fn invitation_response(
     }
 }
 
-/// The team's active invitations that name no account: generic links and
-/// invitations by address, not expired, with their author.
+/// The accounts a listing names: the invitees by username and the authors.
+fn people_of(invitations: &[team_invitations::Model]) -> impl Iterator<Item = Uuid> + '_ {
+    invitations
+        .iter()
+        .flat_map(|row| [row.invited_user_id, row.created_by].into_iter().flatten())
+}
+
+/// Every pending invitation of the team, whatever it names: an account by
+/// username, an address, or nobody (a generic link). Not expired, oldest
+/// first, each with its target and its author.
 pub async fn list_active_invitations(
     db: &DatabaseConnection,
     team_id: Uuid,
@@ -1163,15 +1183,12 @@ pub async fn list_active_invitations(
 
     let invitations = team_invitations::Entity::find()
         .filter(team_invitations::Column::TeamId.eq(team_id))
-        .filter(team_invitations::Column::InvitedUserId.is_null())
         .filter(not_expired())
         .order_by_asc(team_invitations::Column::CreatedAt)
         .all(db)
         .await?;
 
-    let usernames =
-        invitation_service::usernames(db, invitations.iter().filter_map(|row| row.created_by))
-            .await?;
+    let usernames = invitation_service::usernames(db, people_of(&invitations)).await?;
 
     Ok(invitations
         .into_iter()
@@ -1198,9 +1215,8 @@ pub async fn list_pending_invitations_for_user(
         .all(db)
         .await?;
 
-    let usernames =
-        invitation_service::usernames(db, invitations.iter().filter_map(|(row, _)| row.created_by))
-            .await?;
+    let rows: Vec<_> = invitations.iter().map(|(row, _)| row.clone()).collect();
+    let usernames = invitation_service::usernames(db, people_of(&rows)).await?;
 
     Ok(invitations
         .into_iter()

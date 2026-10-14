@@ -142,6 +142,7 @@ impl Modify for SecurityAddon {
         domain::dto::team::JoinTeamRequest,
         domain::dto::team::TeamInvitationPreview,
         domain::dto::invitation::InvitationTokenRequest,
+        domain::dto::invitation::InvitationTarget,
         domain::dto::workspace::Membership,
         domain::dto::workspace::WorkspaceType,
         domain::dto::workspace::WorkspaceMode,

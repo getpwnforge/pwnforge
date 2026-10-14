@@ -316,11 +316,11 @@ async fn transfer_captaincy(
     tag = "Teams",
     params(
         ("slug" = String, Path, description = "Team slug"),
-        ("invited_by" = Option<Uuid>, Query, description = "Only the invitations this account created"),
+        ("invited_by" = Option<Uuid>, Query, description = "Only the invitations this account created, whatever they name"),
     ),
     security(("access_token" = [])),
     responses(
-        (status = 200, description = "The team's active invitations that name no account (generic links and invitations by address), with their author", body = [TeamInvitationResponse]),
+        (status = 200, description = "Every pending invitation of the team, oldest first: by username, by address, and generic links (`target`), each with its invitee (`invited_username` or `invited_email`), its author, its creation and its expiry", body = [TeamInvitationResponse]),
         (status = 403, description = "Insufficient role", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed: invited_by is not a uuid", body = UnprocessableErrorResponse),
@@ -1348,6 +1348,188 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["error"], "validation_failed");
+    }
+
+    async fn list_invitations(
+        app: &axum::Router,
+        db: &DatabaseConnection,
+        team_id: Uuid,
+        caller: Uuid,
+        query: &str,
+    ) -> Vec<serde_json::Value> {
+        let (status, body) = request_as(
+            app,
+            "GET",
+            &format!(
+                "/api/v1/teams/{}/invitations{query}",
+                slug_of(db, team_id).await
+            ),
+            Some(caller),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body.as_array().expect("a list").clone()
+    }
+
+    /// The Admin list shows every pending invitation, by username included,
+    /// each with its target, its invitee, its author and its dates; and
+    /// `?invited_by=` narrows it whatever the invitations name.
+    #[tokio::test]
+    async fn the_admin_list_shows_every_pending_invitation_with_its_target() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Admin]).await;
+        let admin = members[0];
+        let invitee = create_user(&db).await;
+        let other_invitee = create_user(&db).await;
+        let address = fresh_address();
+
+        let mut ids = Vec::new();
+        for (caller, body) in [
+            (
+                admin,
+                json!({ "default_role": "member", "username": username_of(&db, invitee).await }),
+            ),
+            (
+                captain,
+                json!({ "default_role": "viewer", "username": username_of(&db, other_invitee).await }),
+            ),
+            (
+                captain,
+                json!({ "default_role": "member", "invited_email": address }),
+            ),
+            (admin, json!({ "default_role": "member" })),
+        ] {
+            let (status, answer) = invite(&app, &db, team_id, caller, body).await;
+            assert_eq!(status, StatusCode::CREATED, "{answer}");
+            ids.push(answer["id"].clone());
+        }
+
+        let listed = list_invitations(&app, &db, team_id, captain, "").await;
+        let entry = |id: &serde_json::Value| {
+            listed
+                .iter()
+                .find(|entry| &entry["id"] == id)
+                .cloned()
+                .expect("the invitation is listed")
+        };
+        assert_eq!(listed.len(), 4);
+        let by_name = entry(&ids[0]);
+        assert_eq!(by_name["target"], "username");
+        assert_eq!(by_name["invited_user_id"], json!(invitee));
+        assert_eq!(
+            by_name["invited_username"],
+            json!(username_of(&db, invitee).await)
+        );
+        assert_eq!(by_name["invited_email"], serde_json::Value::Null);
+        assert_eq!(by_name["invited_by"], json!(admin));
+        assert_eq!(
+            by_name["invited_by_username"],
+            json!(username_of(&db, admin).await)
+        );
+        assert!(by_name["created_at"].is_string() && by_name["expires_at"].is_string());
+        let by_address = entry(&ids[2]);
+        assert_eq!(by_address["target"], "email");
+        assert_eq!(by_address["invited_email"], json!(address));
+        assert_eq!(by_address["invited_username"], serde_json::Value::Null);
+        assert_eq!(entry(&ids[3])["target"], "link");
+
+        let only = |entries: Vec<serde_json::Value>| {
+            let mut found: Vec<String> = entries
+                .iter()
+                .map(|entry| entry["id"].as_str().expect("an id").to_owned())
+                .collect();
+            found.sort();
+            found
+        };
+        let sorted = |picked: &[usize]| {
+            let mut wanted: Vec<String> = picked
+                .iter()
+                .map(|&i| ids[i].as_str().expect("an id").to_owned())
+                .collect();
+            wanted.sort();
+            wanted
+        };
+        assert_eq!(
+            only(
+                list_invitations(&app, &db, team_id, admin, &format!("?invited_by={admin}")).await
+            ),
+            sorted(&[0, 3])
+        );
+        assert_eq!(
+            only(
+                list_invitations(&app, &db, team_id, admin, &format!("?invited_by={captain}"))
+                    .await
+            ),
+            sorted(&[1, 2])
+        );
+    }
+
+    /// The Captain, an Admin and the author, an Admin too since only they
+    /// invite, may revoke an invitation by username; a Member or a Viewer is
+    /// refused (403), someone off the team is told it does not exist (404).
+    #[tokio::test]
+    async fn the_captain_an_admin_or_the_author_revokes_an_invitation_by_username() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(
+            &db,
+            captain,
+            &[
+                TeamRole::Admin,
+                TeamRole::Admin,
+                TeamRole::Member,
+                TeamRole::Viewer,
+            ],
+        )
+        .await;
+        let (author, other_admin, member, viewer) =
+            (members[0], members[1], members[2], members[3]);
+        let outsider = create_user(&db).await;
+        let slug = slug_of(&db, team_id).await;
+
+        for revoker in [captain, other_admin, author] {
+            let invitee = create_user(&db).await;
+            let (_, invitation) = invite(
+                &app,
+                &db,
+                team_id,
+                author,
+                json!({ "default_role": "member", "username": username_of(&db, invitee).await }),
+            )
+            .await;
+            let path = format!(
+                "/api/v1/teams/{slug}/invitations/{}",
+                invitation["id"].as_str().expect("an id")
+            );
+
+            for (refused, status) in [
+                (member, StatusCode::FORBIDDEN),
+                (viewer, StatusCode::FORBIDDEN),
+                (outsider, StatusCode::NOT_FOUND),
+            ] {
+                assert_eq!(
+                    request_as(&app, "DELETE", &path, Some(refused), None)
+                        .await
+                        .0,
+                    status
+                );
+            }
+            let (status, _) = request_as(&app, "DELETE", &path, Some(revoker), None).await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            let (_, pending) = request_as(
+                &app,
+                "GET",
+                "/api/v1/teams/invitations/pending",
+                Some(invitee),
+                None,
+            )
+            .await;
+            assert_eq!(pending, json!([]), "the invitee no longer has it");
+        }
     }
 
     /// The preview answers the invitee, and gives anyone else, or an unknown

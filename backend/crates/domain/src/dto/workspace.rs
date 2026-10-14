@@ -8,6 +8,7 @@ use utoipa::{PartialSchema, ToSchema};
 use uuid::Uuid;
 use validator::{Validate, ValidationError};
 
+use crate::dto::invitation::InvitationTarget;
 use crate::dto::team::TeamRole;
 use crate::entities::workspaces;
 use crate::serde_helpers::deserialize_some;
@@ -819,6 +820,8 @@ pub struct WorkspaceInvitationResponse {
     pub workspace_name: String,
     pub status: InvitationStatus,
     pub role: GuestRole,
+    /// `username` or `email`: a workspace has no generic link.
+    pub target: InvitationTarget,
     /// The account named by username. `null` for an invitation by address,
     /// whether or not an account holds it.
     pub invited_user_id: Option<Uuid>,
