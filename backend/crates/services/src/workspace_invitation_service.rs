@@ -126,7 +126,6 @@ fn to_response(
 
     WorkspaceInvitationResponse {
         id: row.id,
-        token: None,
         workspace_id: row.workspace_id,
         workspace_name,
         status,
@@ -390,11 +389,12 @@ pub async fn create_invitation(
         }
     };
 
-    let mut invitation = responses(db, vec![(row, workspace.name)])
+    // The token went to the invitee's mail, and goes nowhere else: the
+    // author holding it would hold the invitee's link.
+    let invitation = responses(db, vec![(row, workspace.name)])
         .await?
         .pop()
         .ok_or(WorkspaceInvitationError::InvitationNotFound)?;
-    invitation.token = Some(token.secret);
 
     Ok(CreatedInvitation {
         invitation,

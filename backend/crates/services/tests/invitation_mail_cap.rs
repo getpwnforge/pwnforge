@@ -162,7 +162,6 @@ async fn invite_to_workspace(
     let mut answer = serde_json::to_value(&created.invitation).expect("the answer serializes");
     for field in [
         "id",
-        "token",
         "workspace_id",
         "workspace_name",
         "created_at",

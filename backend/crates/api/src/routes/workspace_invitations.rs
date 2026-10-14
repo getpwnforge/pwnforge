@@ -105,7 +105,7 @@ fn to_response(
     request_body = CreateWorkspaceInvitationRequest,
     security(("access_token" = [])),
     responses(
-        (status = 201, description = "Invitation created, pending for seven days. By address, the answer is the same whether an account holds it or not, and the mail with the link goes out either way, at most three a day to one address across every team and workspace; past that the invitation is still created, without a mail. `token` appears only here", body = WorkspaceInvitationResponse),
+        (status = 201, description = "Invitation created, pending for seven days. By address, the answer is the same whether an account holds it or not, and the mail with the link goes out either way, at most three a day to one address across every team and workspace; past that the invitation is still created, without a mail. The answer carries no token: the link goes to the invitee's mail alone", body = WorkspaceInvitationResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 403, description = "insufficient_role: a Viewer, by team role or override, or a guest", body = SimpleErrorResponse),
@@ -430,6 +430,21 @@ mod tests {
         .id
     }
 
+    /// Gives an invitation a token the test knows, the one its mail would
+    /// carry: only the hash is stored, and the answer holds none.
+    async fn known_token(db: &DatabaseConnection, invitation: &Value) -> String {
+        let token = token_service::generate_opaque_token();
+        workspace_invitations::ActiveModel {
+            id: Set(serde_json::from_value(invitation["id"].clone()).expect("an id")),
+            token: Set(token.hash),
+            ..Default::default()
+        }
+        .update(db)
+        .await
+        .expect("the token must be set");
+        token.secret
+    }
+
     async fn username_of(db: &DatabaseConnection, user: Uuid) -> String {
         users::Entity::find_by_id(user)
             .one(db)
@@ -586,23 +601,49 @@ mod tests {
                     < 60
             );
 
-            let secret = body["token"].as_str().expect("the token is in the answer");
+            assert!(body.get("token").is_none(), "the answer carries no token");
             let id: Uuid = serde_json::from_value(body["id"].clone()).expect("an id");
             let stored = workspace_invitations::Entity::find_by_id(id)
                 .one(&db)
                 .await
                 .expect("the lookup must succeed")
                 .expect("the row exists");
-            assert_ne!(stored.token, secret, "the token is not stored as is");
-            assert_eq!(stored.token, token_service::hash_opaque_token(secret));
+            // A SHA-256 in hex, never the 43-character secret the mail carries.
+            assert_eq!(stored.token.len(), 64, "the token is stored hashed");
+            assert!(
+                stored
+                    .token
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            );
         }
 
         let listed = list(&app, &f, f.captain, "").await;
         assert!(
             listed
                 .iter()
-                .all(|invitation| invitation["token"].is_null())
+                .all(|invitation| invitation.get("token").is_none())
         );
+    }
+
+    /// A workspace invitation is always targeted, so its answer has no token
+    /// field at all, by username or by address: the token goes to the
+    /// invitee's mail alone.
+    #[tokio::test]
+    async fn a_workspace_invitation_is_answered_without_its_token() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        let username = username_of(&db, create_user(&db).await).await;
+
+        for body in [
+            json!({ "role": "viewer", "username": username }),
+            json!({ "role": "viewer", "invited_email": fresh_address() }),
+        ] {
+            let (status, answer) = invite(&app, &f, f.member, body).await;
+            assert_eq!(status, StatusCode::CREATED, "{answer}");
+            assert!(answer.get("token").is_none(), "{answer}");
+        }
     }
 
     /// Negative: a Viewer by team role or by override, and a guest, may not
@@ -830,7 +871,7 @@ mod tests {
             json!({ "role": "member", "invited_email": address }),
         )
         .await;
-        let token = invitation["token"].as_str().expect("a token").to_owned();
+        let token = known_token(&db, &invitation).await;
         let id = id_of(&invitation);
 
         let unverified = create_user(&db).await;
@@ -958,7 +999,7 @@ mod tests {
         let f = fixture(&db).await;
         let invitee = create_user(&db).await;
         let invitation = invite_username(&app, &db, &f, f.member, invitee, "member").await;
-        let token = invitation["token"].as_str().expect("a token").to_owned();
+        let token = known_token(&db, &invitation).await;
         let preview = |user: Uuid, token: String| {
             let app = app.clone();
             async move {

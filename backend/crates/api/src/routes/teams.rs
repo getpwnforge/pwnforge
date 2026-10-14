@@ -17,9 +17,9 @@ use domain::dto::error_responses::{
 };
 use domain::dto::invitation::{InvitationTokenRequest, InvitedByFilter};
 use domain::dto::team::{
-    ChangeMemberRoleRequest, CreateInvitationRequest, CreateTeamRequest, JoinTeamRequest,
-    TeamInvitationPreview, TeamInvitationResponse, TeamMemberResponse, TeamPatch, TeamResponse,
-    TeamRole, TransferCaptaincyRequest,
+    ChangeMemberRoleRequest, CreateInvitationRequest, CreateTeamRequest, CreatedTeamInvitation,
+    JoinTeamRequest, TeamInvitationPreview, TeamInvitationResponse, TeamMemberResponse, TeamPatch,
+    TeamResponse, TeamRole, TransferCaptaincyRequest,
 };
 use services::rate_limit_service;
 use services::team_service::{self, TeamError, TransferBy};
@@ -350,7 +350,7 @@ async fn list_invitations(
     request_body = CreateInvitationRequest,
     security(("access_token" = [])),
     responses(
-        (status = 201, description = "Invitation created. By address, the answer is the same whether an account holds it or not (`invited_user_id` is null), and the invitation mail goes out either way, at most three a day to one address across every team and workspace; past that the invitation is still created, without a mail", body = TeamInvitationResponse),
+        (status = 201, description = "Invitation created. A generic link is answered with its `token` (TeamLinkResponse); a targeted invitation has no token field at all (TeamInvitationResponse), since its token goes to the invitee's mail alone. By address, the answer is the same whether an account holds it or not (`invited_user_id` is null), and the mail goes out either way, at most three a day to one address across every team and workspace; past that the invitation is still created, without a mail", body = CreatedTeamInvitation),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 403, description = "Insufficient role, or a non-Captain tried to invite as Captain", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member. invited_user_not_found: no account has this username", body = SimpleErrorResponse),
@@ -366,7 +366,7 @@ async fn create_invitation(
     user: AuthUser,
     Path(slug): Path<String>,
     JsonBody(payload): JsonBody<CreateInvitationRequest>,
-) -> Result<(StatusCode, Json<TeamInvitationResponse>), AppError> {
+) -> Result<(StatusCode, Json<CreatedTeamInvitation>), AppError> {
     payload.validate()?;
 
     let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
@@ -1549,7 +1549,7 @@ mod tests {
             json!({ "default_role": "viewer", "username": username_of(&db, invitee).await }),
         )
         .await;
-        let token = invitation["token"].as_str().expect("a token").to_owned();
+        let token = known_token(&db, &invitation).await;
         let preview = |user: Uuid, token: String| {
             let app = app.clone();
             async move {
@@ -1577,6 +1577,52 @@ mod tests {
         let unknown = preview(invitee, "no-such-token".to_owned()).await;
         assert_eq!(stranger.0, StatusCode::NOT_FOUND);
         assert_eq!(stranger, unknown);
+    }
+
+    /// A targeted invitation's answer has no token field at all, by username
+    /// or by address: its token goes to the invitee's mail alone. A generic
+    /// link's answer carries its token, which is the author's to hand out,
+    /// and it works.
+    #[tokio::test]
+    async fn only_a_generic_link_is_answered_with_its_token() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+
+        for body in [
+            json!({ "default_role": "member", "username": username_of(&db, create_user(&db).await).await }),
+            json!({ "default_role": "member", "invited_email": fresh_address() }),
+        ] {
+            let (status, answer) = invite(&app, &db, team_id, captain, body).await;
+            assert_eq!(status, StatusCode::CREATED, "{answer}");
+            assert!(answer.get("token").is_none(), "{answer}");
+        }
+
+        let (status, link) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "viewer" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(link["target"], "link");
+        let token = link["token"].as_str().expect("a link carries its token");
+        let holder = create_user(&db).await;
+        let (status, _) = post(
+            &app,
+            "/api/v1/teams/join",
+            holder,
+            Some(json!({ "token": token })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            role_of(&db, team_id, holder).await.as_deref(),
+            Some("viewer")
+        );
     }
 
     /// 429 past each window, per author and per team, on both targeted

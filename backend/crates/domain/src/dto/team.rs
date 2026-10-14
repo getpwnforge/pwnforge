@@ -5,6 +5,8 @@ use crate::entities::teams;
 use crate::types::AccentColor;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::openapi::schema::{AnyOfBuilder, Schema};
+use utoipa::openapi::{Ref, RefOr};
 use uuid::Uuid;
 use validator::{Validate, ValidationError};
 
@@ -232,12 +234,6 @@ pub struct JoinTeamRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TeamInvitationResponse {
     pub id: Uuid,
-    /// Only in the response that creates the invitation, never returned by
-    /// any listing afterwards.
-    //
-    // Neither `list_active_invitations` nor
-    // `list_pending_invitations_for_user` fills it.
-    pub token: Option<String>,
     pub team_id: Uuid,
     pub team_name: String,
     pub default_role: TeamRole,
@@ -254,6 +250,55 @@ pub struct TeamInvitationResponse {
     pub max_uses: Option<i32>,
     pub uses: i32,
     pub created_at: DateTime<Utc>,
+}
+
+/// The answer to the creation of a generic link: the invitation and the
+/// token its link carries. The only answer that ever holds a token: a
+/// targeted invitation's goes to its invitee's mail alone, and no listing
+/// shows one.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamLinkResponse {
+    #[serde(flatten)]
+    pub invitation: TeamInvitationResponse,
+    pub token: String,
+}
+
+/// What `POST /teams/{slug}/invitations` answers: a generic link with its
+/// token, or a targeted invitation, which has no token field at all.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum CreatedTeamInvitation {
+    Link(TeamLinkResponse),
+    Targeted(TeamInvitationResponse),
+}
+
+// Written by hand for `anyOf`: the derive renders an untagged enum as
+// `oneOf`, which a link's answer would fail, since it is a valid
+// `TeamInvitationResponse` as well as a `TeamLinkResponse`.
+impl utoipa::PartialSchema for CreatedTeamInvitation {
+    fn schema() -> RefOr<Schema> {
+        AnyOfBuilder::new()
+            .item(Ref::from_schema_name("TeamLinkResponse"))
+            .item(Ref::from_schema_name("TeamInvitationResponse"))
+            .description(Some(
+                "A generic link with its token (TeamLinkResponse), or a targeted \
+                 invitation without one (TeamInvitationResponse)",
+            ))
+            .into()
+    }
+}
+
+impl utoipa::ToSchema for CreatedTeamInvitation {
+    fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
+        schemas.push((
+            "TeamLinkResponse".to_owned(),
+            <TeamLinkResponse as utoipa::PartialSchema>::schema(),
+        ));
+        schemas.push((
+            "TeamInvitationResponse".to_owned(),
+            <TeamInvitationResponse as utoipa::PartialSchema>::schema(),
+        ));
+    }
 }
 
 /// What the invitee sees before accepting by the link: enough for the

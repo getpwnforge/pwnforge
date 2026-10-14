@@ -807,15 +807,12 @@ impl CancelReason {
     }
 }
 
-/// One workspace invitation, as the workspace's lists and the invitee's own
-/// list show it.
+/// One workspace invitation, as its creation, the workspace's lists and the
+/// invitee's own list show it. Never with its token: that goes to the
+/// invitee's mail alone, and only its hash is stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct WorkspaceInvitationResponse {
     pub id: Uuid,
-    /// Only in the answer to its creation, as for a team invitation: the
-    /// link it makes opens the invitation for its invitee alone. Stored
-    /// hashed, never listed.
-    pub token: Option<String>,
     pub workspace_id: Uuid,
     pub workspace_name: String,
     pub status: InvitationStatus,

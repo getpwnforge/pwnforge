@@ -16,8 +16,9 @@ use domain::dto::invitation::{
     INVITATION_DEFAULT_DAYS, InvitationTarget, TEAM_INVITATION_MAX_DAYS,
 };
 use domain::dto::team::{
-    CreateInvitationRequest, CreateTeamRequest, TeamInvitationPreview, TeamInvitationResponse,
-    TeamMemberResponse, TeamPatch, TeamResponse, TeamRole,
+    CreateInvitationRequest, CreateTeamRequest, CreatedTeamInvitation, TeamInvitationPreview,
+    TeamInvitationResponse, TeamLinkResponse, TeamMemberResponse, TeamPatch, TeamResponse,
+    TeamRole,
 };
 use domain::entities::{
     team_invitations, team_members, teams, user_emails, users, workspace_members, workspaces,
@@ -1027,7 +1028,7 @@ pub async fn create_invitation(
     team_id: Uuid,
     creator_id: Uuid,
     payload: CreateInvitationRequest,
-) -> Result<CreatedInvitation<TeamInvitationResponse>, TeamError> {
+) -> Result<CreatedInvitation<CreatedTeamInvitation>, TeamError> {
     // Joining never makes a Captain (see `add_member`). Refused here, where
     // the Captain asking can be told to transfer, rather than at acceptance,
     // where the invitee would be the one to find out.
@@ -1107,30 +1108,41 @@ pub async fn create_invitation(
     let names =
         invitation_service::usernames(db, invited_user_id.into_iter().chain([creator_id])).await?;
 
-    Ok(CreatedInvitation {
-        invitation: TeamInvitationResponse {
-            id: invitation.id,
-            token: Some(token.secret),
-            team_id,
-            team_name: team.name,
-            default_role: payload.default_role,
-            target: InvitationTarget::of(invited_user_id, invited_email.as_deref()),
-            invited_user_id,
-            invited_username: invited_user_id.and_then(|id| names.get(&id).cloned()),
-            invited_email,
-            invited_by: Some(creator_id),
-            invited_by_username: names.get(&creator_id).cloned(),
-            expires_at,
-            max_uses,
-            uses: 0,
-            created_at: invitation.created_at.into(),
-        },
-        mail,
-    })
+    let is_link = invited_user_id.is_none() && invited_email.is_none();
+    let response = TeamInvitationResponse {
+        id: invitation.id,
+        team_id,
+        team_name: team.name,
+        default_role: payload.default_role,
+        target: InvitationTarget::of(invited_user_id, invited_email.as_deref()),
+        invited_user_id,
+        invited_username: invited_user_id.and_then(|id| names.get(&id).cloned()),
+        invited_email,
+        invited_by: Some(creator_id),
+        invited_by_username: names.get(&creator_id).cloned(),
+        expires_at,
+        max_uses,
+        uses: 0,
+        created_at: invitation.created_at.into(),
+    };
+
+    // A generic link is the author's to hand out, so its answer carries the
+    // token. A targeted invitation's goes to its invitee's mail alone: the
+    // author holding it would hold the invitee's link.
+    let invitation = if is_link {
+        CreatedTeamInvitation::Link(TeamLinkResponse {
+            invitation: response,
+            token: token.secret,
+        })
+    } else {
+        CreatedTeamInvitation::Targeted(response)
+    };
+
+    Ok(CreatedInvitation { invitation, mail })
 }
 
-/// The listing shape of a row: never its token, which only the creation
-/// response carries.
+/// The listing shape of a row. Never with its token: only a generic link's
+/// creation answers one (see `create_invitation`).
 fn invitation_response(
     invitation: team_invitations::Model,
     team_name: String,
@@ -1138,7 +1150,6 @@ fn invitation_response(
 ) -> TeamInvitationResponse {
     TeamInvitationResponse {
         id: invitation.id,
-        token: None,
         team_id: invitation.team_id,
         team_name,
         default_role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
