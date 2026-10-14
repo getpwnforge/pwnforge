@@ -76,12 +76,6 @@ pub enum TeamError {
     #[error("invitation has reached its maximum number of uses")]
     InvitationMaxUsesReached,
 
-    #[error("this invitation is not addressed to the current user")]
-    InvitationNotForUser,
-
-    #[error("this invitation was addressed to a different, unverified or unmatched email")]
-    InvitationEmailMismatch,
-
     #[error("user is already invited to this team")]
     AlreadyInvited,
 
@@ -1236,38 +1230,46 @@ pub async fn revoke_invitation(
     Ok(())
 }
 
-/// Whether `user_id` may answer this invitation. A generic link is for
-/// whoever holds it; an addressed one, for the account it names or for an
-/// account with its address verified. The account id wins when both are
-/// set: it is the stronger statement of the two, and consulting only the
-/// address is what once let a third party redeem a link issued in someone
-/// else's name.
-async fn check_invitee<C: ConnectionTrait>(
-    conn: &C,
-    invitation: &team_invitations::Model,
-    user_id: Uuid,
-) -> Result<(), TeamError> {
-    match (&invitation.invited_user_id, &invitation.invited_email) {
-        (Some(invited_user_id), _) if *invited_user_id != user_id => {
-            Err(TeamError::InvitationNotForUser)
-        }
-        (Some(_), _) | (None, None) => Ok(()),
-        (None, Some(invited_email)) => {
-            let matches = user_emails::Entity::find()
-                .filter(user_emails::Column::UserId.eq(user_id))
-                .filter(user_emails::Column::Email.eq(invited_email.clone()))
-                .filter(user_emails::Column::VerifiedAt.is_not_null())
-                .one(conn)
-                .await?
-                .is_some();
+/// How an invitee names the invitation they answer.
+#[derive(Debug, Clone, Copy)]
+enum Answering<'a> {
+    Id(Uuid),
+    Token(&'a str),
+}
 
-            if matches {
-                Ok(())
-            } else {
-                Err(TeamError::InvitationEmailMismatch)
-            }
-        }
-    }
+/// The invitation `by` names, if `user_id` may answer it: an addressed one
+/// for the account it names, or for an account holding its address verified
+/// now; a generic link, which names nobody, for whoever holds its token, and
+/// never by id.
+///
+/// Anything else is `InvitationNotFound`, the answer an unknown id or token
+/// gets, body included, read in the same one query: whoever is not the
+/// invitee learns nothing about the invitation, not even that it exists, nor
+/// whether it has expired.
+async fn find_answerable<C: ConnectionTrait>(
+    conn: &C,
+    by: Answering<'_>,
+    user_id: Uuid,
+) -> Result<team_invitations::Model, TeamError> {
+    let addressed = invitation_service::addressed_to(
+        team_invitations::Column::InvitedUserId,
+        team_invitations::Column::InvitedEmail,
+        user_id,
+    );
+    let query = match by {
+        Answering::Id(id) => team_invitations::Entity::find_by_id(id).filter(addressed),
+        Answering::Token(token) => team_invitations::Entity::find()
+            .filter(team_invitations::Column::Token.eq(token_service::hash_opaque_token(token)))
+            .filter(
+                Condition::any().add(addressed).add(
+                    Condition::all()
+                        .add(team_invitations::Column::InvitedUserId.is_null())
+                        .add(team_invitations::Column::InvitedEmail.is_null()),
+                ),
+            ),
+    };
+
+    query.one(conn).await?.ok_or(TeamError::InvitationNotFound)
 }
 
 /// Uses the invitation up, inside the acceptance's transaction. An addressed
@@ -1342,27 +1344,19 @@ async fn join_by(
 }
 
 /// Acceptance by token (`POST /teams/join`): a generic link, or the link of
-/// an addressed invitation followed by the account it is for.
+/// an addressed invitation followed by the account it is for. An addressed
+/// link must not be usable by whoever else it ends up with (forwarded,
+/// leaked, shared inbox), and is not even acknowledged to them.
 pub async fn accept_invitation_by_token(
     db: &DatabaseConnection,
     token: &str,
     user_id: Uuid,
 ) -> Result<TeamResponse, TeamError> {
-    let token_hash = token_service::hash_opaque_token(token);
-
-    let invitation = team_invitations::Entity::find()
-        .filter(team_invitations::Column::Token.eq(token_hash))
-        .one(db)
-        .await?
-        .ok_or(TeamError::InvitationNotFound)?;
+    let invitation = find_answerable(db, Answering::Token(token), user_id).await?;
 
     if invitation.expires_at < chrono::Utc::now() {
         return Err(TeamError::InvitationExpired);
     }
-
-    // An addressed link must not be usable by whoever else it ends up with
-    // (forwarded, leaked, shared inbox).
-    check_invitee(db, &invitation, user_id).await?;
 
     join_by(db, &invitation, user_id).await
 }
@@ -1373,7 +1367,7 @@ pub async fn accept_invitation_by_id(
     invitation_id: Uuid,
     user_id: Uuid,
 ) -> Result<TeamResponse, TeamError> {
-    let invitation = addressed_invitation(db, invitation_id, user_id).await?;
+    let invitation = find_answerable(db, Answering::Id(invitation_id), user_id).await?;
 
     if invitation.expires_at < chrono::Utc::now() {
         return Err(TeamError::InvitationExpired);
@@ -1387,33 +1381,13 @@ pub async fn reject_invitation_by_id(
     invitation_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), TeamError> {
-    let invitation = addressed_invitation(db, invitation_id, user_id).await?;
+    let invitation = find_answerable(db, Answering::Id(invitation_id), user_id).await?;
 
     team_invitations::Entity::delete_by_id(invitation.id)
         .exec(db)
         .await?;
 
     Ok(())
-}
-
-/// An invitation reached by id is answerable only by its invitee; a generic
-/// link, which names nobody, is not reached this way at all.
-async fn addressed_invitation(
-    db: &DatabaseConnection,
-    invitation_id: Uuid,
-    user_id: Uuid,
-) -> Result<team_invitations::Model, TeamError> {
-    let invitation = team_invitations::Entity::find_by_id(invitation_id)
-        .one(db)
-        .await?
-        .ok_or(TeamError::InvitationNotFound)?;
-
-    if invitation.invited_user_id.is_none() && invitation.invited_email.is_none() {
-        return Err(TeamError::InvitationNotForUser);
-    }
-    check_invitee(db, &invitation, user_id).await?;
-
-    Ok(invitation)
 }
 
 /// What the invitee sees behind a link before answering: the team's name,
@@ -1428,31 +1402,18 @@ pub async fn preview_invitation(
     token: &str,
     user_id: Uuid,
 ) -> Result<TeamInvitationPreview, TeamError> {
-    let token_hash = token_service::hash_opaque_token(token);
+    let invitation = find_answerable(db, Answering::Token(token), user_id).await?;
+    let used_up = invitation
+        .max_uses
+        .is_some_and(|max_uses| invitation.uses >= max_uses);
+    if invitation.expires_at <= chrono::Utc::now() || used_up {
+        return Err(TeamError::InvitationNotFound);
+    }
 
-    let (invitation, team) = team_invitations::Entity::find()
-        .filter(team_invitations::Column::Token.eq(token_hash))
-        .filter(not_expired())
-        .filter(
-            team_invitations::Column::MaxUses
-                .is_null()
-                .or(Expr::col(team_invitations::Column::Uses)
-                    .lt(Expr::col(team_invitations::Column::MaxUses))),
-        )
-        .find_also_related(teams::Entity)
+    let team = teams::Entity::find_by_id(invitation.team_id)
         .one(db)
         .await?
         .ok_or(TeamError::InvitationNotFound)?;
-    let team = team.ok_or(TeamError::InvitationNotFound)?;
-
-    check_invitee(db, &invitation, user_id)
-        .await
-        .map_err(|error| match error {
-            TeamError::InvitationNotForUser | TeamError::InvitationEmailMismatch => {
-                TeamError::InvitationNotFound
-            }
-            other => other,
-        })?;
 
     let authors = invitation_service::usernames(db, invitation.created_by).await?;
 
@@ -1657,81 +1618,6 @@ mod tests {
         let result = resolve_invitee(&db, Uuid::now_v7(), &payload).await;
 
         assert!(matches!(result, Err(TeamError::InvitedUserNotFound)));
-    }
-
-    #[tokio::test]
-    async fn accept_invitation_by_token_rejects_when_verified_email_does_not_match() {
-        let user_id = Uuid::now_v7();
-        let invitation = team_invitations::Model {
-            invited_email: Some("target@example.test".to_owned()),
-            ..pending_invitation_row()
-        };
-
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            // 1: the invitation itself, found by token.
-            .append_query_results([vec![invitation]])
-            // 2: the accepting user has no verified row matching that email.
-            .append_query_results([Vec::<user_emails::Model>::new()])
-            .into_connection();
-
-        let result = accept_invitation_by_token(&db, "some-token", user_id).await;
-
-        assert!(matches!(result, Err(TeamError::InvitationEmailMismatch)));
-    }
-
-    /// Negative: an invitation pinned to an account is checked against that
-    /// account, not against whatever address the row also happens to carry.
-    ///
-    /// Reading the address instead is what let a third party redeem a link
-    /// issued in someone else's name: the id said one person, the address said
-    /// another, and this path consulted the wrong one.
-    #[tokio::test]
-    async fn accept_invitation_by_token_rejects_a_caller_who_is_not_the_named_account() {
-        let named_account = Uuid::now_v7();
-        let someone_else = Uuid::now_v7();
-
-        let invitation = team_invitations::Model {
-            invited_user_id: Some(named_account),
-            invited_email: Some("target@example.test".to_owned()),
-            ..pending_invitation_row()
-        };
-
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![invitation]])
-            .into_connection();
-
-        let result = accept_invitation_by_token(&db, "some-token", someone_else).await;
-
-        assert!(matches!(result, Err(TeamError::InvitationNotForUser)));
-    }
-
-    /// Positive: the named account may redeem its own link, and is not asked
-    /// to also prove it owns the address the row carries.
-    #[tokio::test]
-    async fn accept_invitation_by_token_admits_the_named_account() {
-        let named_account = Uuid::now_v7();
-
-        let invitation = team_invitations::Model {
-            invited_user_id: Some(named_account),
-            invited_email: Some("target@example.test".to_owned()),
-            ..pending_invitation_row()
-        };
-
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([vec![invitation]])
-            .into_connection();
-
-        let result = accept_invitation_by_token(&db, "some-token", named_account).await;
-
-        // The mock runs out of canned answers once the identity check passes,
-        // which is all this test is pinning: the caller is not turned away.
-        assert!(
-            !matches!(
-                result,
-                Err(TeamError::InvitationNotForUser) | Err(TeamError::InvitationEmailMismatch)
-            ),
-            "the named account must clear the identity check"
-        );
     }
 
     fn create_payload() -> CreateTeamRequest {

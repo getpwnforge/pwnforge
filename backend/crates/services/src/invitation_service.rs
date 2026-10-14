@@ -39,14 +39,22 @@ fn verified_addresses_of(user_id: Uuid) -> SelectStatement {
 
 /// The rows `user_id` is the invitee of: named by account, or by one of its
 /// verified addresses. An unverified address matches nothing.
+///
+/// The account wins when a row names one: its address, if it also carried
+/// one, is not read. The single-target constraints make such a row
+/// impossible; this is what still holds if one arrives around them, since
+/// reading the address there is what once let a third party redeem an
+/// invitation issued in someone else's name.
 pub fn addressed_to<A, E>(account: A, email: E, user_id: Uuid) -> Condition
 where
     A: ColumnTrait,
     E: ColumnTrait,
 {
-    Condition::any()
-        .add(account.eq(user_id))
-        .add(email.in_subquery(verified_addresses_of(user_id)))
+    Condition::any().add(account.eq(user_id)).add(
+        Condition::all()
+            .add(account.is_null())
+            .add(email.in_subquery(verified_addresses_of(user_id))),
+    )
 }
 
 /// The usernames of `ids`, for the author and invitee columns of a listing.

@@ -282,11 +282,11 @@ async fn an_unverified_address_neither_sees_nor_answers_the_invitation() {
     assert!(pending_ids(&db, account).await.is_empty());
     assert!(matches!(
         team_service::accept_invitation_by_id(&db, invitation_id, account).await,
-        Err(TeamError::InvitationEmailMismatch)
+        Err(TeamError::InvitationNotFound)
     ));
     assert!(matches!(
         team_service::accept_invitation_by_token(&db, &secret, account).await,
-        Err(TeamError::InvitationEmailMismatch)
+        Err(TeamError::InvitationNotFound)
     ));
     assert!(matches!(
         team_service::preview_invitation(&db, &secret, account).await,

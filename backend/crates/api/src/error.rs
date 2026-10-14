@@ -512,16 +512,6 @@ fn team_response(err: &TeamError) -> Response {
             Json(json!({ "error": "insufficient_role" })),
         )
             .into_response(),
-        TeamError::InvitationNotForUser => (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "invitation_not_for_user" })),
-        )
-            .into_response(),
-        TeamError::InvitationEmailMismatch => (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "invitation_email_mismatch" })),
-        )
-            .into_response(),
         // 409 for the four below: the caller may act on the team, it is the
         // team's state that refuses (who holds the role, who else is in it,
         // whose account is leaving), and a transfer or a deletion changes it.

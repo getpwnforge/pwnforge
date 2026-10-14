@@ -441,11 +441,10 @@ async fn revoke_invitation(
         (status = 200, description = "Joined the team", body = TeamResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
-        (status = 403, description = "Invitation is addressed to a different email than the caller's verified one", body = SimpleErrorResponse),
-        (status = 404, description = "Invitation not found", body = SimpleErrorResponse),
-        (status = 409, description = "Already a member", body = SimpleErrorResponse),
+        (status = 404, description = "invitation_not_found: one body for an unknown token and for an invitation addressed to another account (or to an address the caller has not verified), expired or not", body = SimpleErrorResponse),
+        (status = 409, description = "already_member", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed, invalid_body, invitation_expired or invitation_max_uses_reached", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, or, to the invitee or the holder of a generic link, invitation_expired or invitation_max_uses_reached", body = UnprocessableErrorResponse),
     )
 )]
 async fn accept_invitation_by_token(
@@ -510,10 +509,9 @@ async fn preview_invitation(
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Invitation accepted", body = TeamResponse),
-        (status = 403, description = "Invitation is not addressed to the current user", body = SimpleErrorResponse),
-        (status = 404, description = "Invitation not found", body = SimpleErrorResponse),
-        (status = 409, description = "Already a member", body = SimpleErrorResponse),
-        (status = 422, description = "invitation_expired", body = UnprocessableErrorResponse),
+        (status = 404, description = "invitation_not_found: one body for an unknown id and for an invitation addressed to another account (or to an address the caller has not verified), expired or not. A generic link is not reached by id", body = SimpleErrorResponse),
+        (status = 409, description = "already_member", body = SimpleErrorResponse),
+        (status = 422, description = "invitation_expired, to the invitee alone", body = UnprocessableErrorResponse),
     )
 )]
 async fn accept_invitation_by_id(
@@ -532,8 +530,7 @@ async fn accept_invitation_by_id(
     security(("access_token" = [])),
     responses(
         (status = 204, description = "Invitation rejected"),
-        (status = 403, description = "Invitation is not addressed to the current user", body = SimpleErrorResponse),
-        (status = 404, description = "Invitation not found", body = SimpleErrorResponse),
+        (status = 404, description = "invitation_not_found: one body for an unknown id and for an invitation addressed to another account (or to an address the caller has not verified), expired or not. A generic link is not reached by id", body = SimpleErrorResponse),
     )
 )]
 async fn reject_invitation_by_id(
@@ -931,18 +928,147 @@ mod tests {
 
     async fn verified_address(db: &DatabaseConnection, user: Uuid) -> String {
         let address = fresh_address();
+        add_address(db, user, &address, true).await;
+        address
+    }
+
+    async fn add_address(db: &DatabaseConnection, user: Uuid, address: &str, verified: bool) {
         domain::entities::user_emails::ActiveModel {
             id: sea_orm::Set(Uuid::now_v7()),
             user_id: sea_orm::Set(user),
-            email: sea_orm::Set(address.clone()),
+            email: sea_orm::Set(address.to_owned()),
             is_primary: sea_orm::Set(true),
-            verified_at: sea_orm::Set(Some(chrono::Utc::now().into())),
+            verified_at: sea_orm::Set(verified.then(|| chrono::Utc::now().into())),
             ..Default::default()
         }
         .insert(db)
         .await
         .expect("the fixture address must insert");
-        address
+    }
+
+    /// Gives an invitation a token the test knows, the one its mail would
+    /// carry: only the hash is stored, so nothing else holds it.
+    async fn known_token(db: &DatabaseConnection, invitation: &serde_json::Value) -> String {
+        let token = services::token_service::generate_opaque_token();
+        domain::entities::team_invitations::ActiveModel {
+            id: sea_orm::Set(serde_json::from_value(invitation["id"].clone()).expect("an id")),
+            token: sea_orm::Set(token.hash),
+            ..Default::default()
+        }
+        .update(db)
+        .await
+        .expect("the token must be set");
+        token.secret
+    }
+
+    async fn post(
+        app: &axum::Router,
+        path: &str,
+        caller: Uuid,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, serde_json::Value) {
+        request_as(app, "POST", path, Some(caller), body).await
+    }
+
+    /// Whoever is not the invitee gets, on every route that answers an
+    /// invitation, the very answer an unknown id or token gets: an invitation
+    /// by username or by address, live or expired, and a generic link
+    /// reached by id. None of it is used up, and the invitee still accepts.
+    #[tokio::test]
+    async fn anyone_but_the_invitee_is_answered_as_for_an_unknown_invitation() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        let invitee = create_user(&db).await;
+        let late = create_user(&db).await;
+        let stranger = create_user(&db).await;
+        let unverified = create_user(&db).await;
+        let address = fresh_address();
+        add_address(&db, unverified, &address, false).await;
+
+        let mut created = Vec::new();
+        for body in [
+            json!({ "default_role": "member", "username": username_of(&db, invitee).await }),
+            json!({ "default_role": "member", "invited_email": address }),
+            json!({ "default_role": "member", "username": username_of(&db, late).await }),
+            json!({ "default_role": "member" }),
+        ] {
+            let (status, answer) = invite(&app, &db, team_id, captain, body).await;
+            assert_eq!(status, StatusCode::CREATED, "{answer}");
+            created.push(answer);
+        }
+        let [by_name, by_address, expired, link] =
+            <[serde_json::Value; 4]>::try_from(created).expect("four invitations");
+        domain::entities::team_invitations::ActiveModel {
+            id: sea_orm::Set(serde_json::from_value(expired["id"].clone()).expect("an id")),
+            expires_at: sea_orm::Set((chrono::Utc::now() - chrono::Duration::minutes(1)).into()),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the fixture expires");
+        let name_token = known_token(&db, &by_name).await;
+        let address_token = known_token(&db, &by_address).await;
+        let expired_token = known_token(&db, &expired).await;
+
+        for action in ["accept", "reject"] {
+            let unknown = post(
+                &app,
+                &format!("/api/v1/teams/invitations/{}/{action}", Uuid::now_v7()),
+                stranger,
+                None,
+            )
+            .await;
+            assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+            for (caller, invitation) in [
+                (stranger, &by_name),
+                (stranger, &by_address),
+                (unverified, &by_address),
+                (stranger, &expired),
+                (stranger, &link),
+                (invitee, &link),
+            ] {
+                let path = format!(
+                    "/api/v1/teams/invitations/{}/{action}",
+                    invitation["id"].as_str().expect("an id")
+                );
+                assert_eq!(post(&app, &path, caller, None).await, unknown, "{path}");
+            }
+        }
+
+        for path in ["/api/v1/teams/join", "/api/v1/teams/invitations/preview"] {
+            let unknown = post(
+                &app,
+                path,
+                stranger,
+                Some(json!({ "token": "no-such-token" })),
+            )
+            .await;
+            assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+            for (caller, token) in [
+                (stranger, &name_token),
+                (stranger, &address_token),
+                (unverified, &address_token),
+                (stranger, &expired_token),
+            ] {
+                let answer = post(&app, path, caller, Some(json!({ "token": token }))).await;
+                assert_eq!(answer, unknown, "{path}");
+            }
+        }
+
+        let (status, _) = post(
+            &app,
+            "/api/v1/teams/join",
+            invitee,
+            Some(json!({ "token": name_token })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the invitee still accepts");
+        assert_eq!(
+            role_of(&db, team_id, invitee).await.as_deref(),
+            Some("member")
+        );
     }
 
     async fn username_of(db: &DatabaseConnection, user: Uuid) -> String {
