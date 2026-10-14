@@ -7,6 +7,7 @@ use sea_orm::{
 use services::admin_service::{self, PurgeOutcome};
 use services::jwt_service;
 use services::storage_service::ObjectStore;
+use services::workspace_invitation_service;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -56,6 +57,19 @@ async fn run_once(db: &DatabaseConnection, storage: &ObjectStore) {
         Ok(n) if n > 0 => tracing::info!(deleted = n, "expired team invitations cleaned"),
         Ok(_) => {}
         Err(err) => tracing::error!(error = ?err, "team invitation cleanup failed"),
+    }
+
+    // Expired first, so an invitation closing now starts its retention now.
+    match workspace_invitation_service::expire_stale(db, Utc::now()).await {
+        Ok(n) if n > 0 => tracing::info!(expired = n, "workspace invitations expired"),
+        Ok(_) => {}
+        Err(err) => tracing::error!(error = ?err, "workspace invitation expiry failed"),
+    }
+
+    match workspace_invitation_service::purge_history(db, Utc::now()).await {
+        Ok(n) if n > 0 => tracing::info!(deleted = n, "workspace invitation history purged"),
+        Ok(_) => {}
+        Err(err) => tracing::error!(error = ?err, "workspace invitation purge failed"),
     }
 
     // Each account that failed is already logged with its id by the purge.

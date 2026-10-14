@@ -9,11 +9,10 @@
 //! `DATABASE_URL`; locally the dev compose exposes one.
 
 use chrono::{Duration, Utc};
-use domain::entities::{teams, users, workspace_favorites, workspace_invitations, workspaces};
+use domain::entities::{teams, users, workspace_favorites, workspaces};
 use migration::MigratorTrait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    QueryFilter, Set, Statement,
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Set, Statement,
 };
 use uuid::Uuid;
 
@@ -73,8 +72,9 @@ async fn insert_team(db: &DatabaseConnection, personal: bool, created_by: Option
     id
 }
 
-/// Membership rows and overrides are written and counted with statements
-/// too: the entities read back `invited_by`, a column this schema predates.
+/// Membership rows, overrides and invitations are written and counted with
+/// statements too: the entities read back columns this schema predates
+/// (`invited_by`, and the targeted shape of `workspace_invitations`).
 async fn add_team_member(db: &DatabaseConnection, team_id: Uuid, user_id: Uuid, role: &str) {
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -118,15 +118,17 @@ async fn team_workspace(
     .await
     .expect("the fixture override must insert");
 
-    workspace_invitations::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        workspace_id: Set(id),
-        token: Set(format!("hash-{}", Uuid::now_v7().simple())),
-        default_role: Set("member".to_owned()),
-        expires_at: Set((Utc::now() + Duration::days(7)).fixed_offset()),
-        ..Default::default()
-    }
-    .insert(db)
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_invitations (id, workspace_id, token, default_role, expires_at) \
+         VALUES ($1, $2, $3, 'member', $4)",
+        [
+            Uuid::now_v7().into(),
+            id.into(),
+            format!("hash-{}", Uuid::now_v7().simple()).into(),
+            (Utc::now() + Duration::days(7)).fixed_offset().into(),
+        ],
+    ))
     .await
     .expect("the fixture invitation must insert");
 
@@ -179,12 +181,12 @@ async fn rows_on(db: &DatabaseConnection, workspace_id: Uuid) -> (usize, usize) 
             workspace_id,
         )
         .await,
-        workspace_invitations::Entity::find()
-            .filter(workspace_invitations::Column::WorkspaceId.eq(workspace_id))
-            .all(db)
-            .await
-            .expect("the lookup must succeed")
-            .len(),
+        count_on(
+            db,
+            "SELECT count(*) AS n FROM workspace_invitations WHERE workspace_id = $1",
+            workspace_id,
+        )
+        .await,
     )
 }
 

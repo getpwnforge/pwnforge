@@ -23,6 +23,7 @@ pub mod storage_service;
 pub mod team_service;
 pub mod token_service;
 pub mod turnstile_service;
+pub mod workspace_invitation_service;
 pub mod workspace_service;
 
 use config::Config;

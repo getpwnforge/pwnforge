@@ -12,7 +12,8 @@ use services::{
     contact_service::ContactError, email_service::EmailError, instance_service::InstanceError,
     legal_service::LegalError, permissions_service::PermissionsError,
     session_service::SessionError, setup_service::SetupError, slug_service,
-    storage_service::StorageError, team_service::TeamError, workspace_service::WorkspaceError,
+    storage_service::StorageError, team_service::TeamError,
+    workspace_invitation_service::WorkspaceInvitationError, workspace_service::WorkspaceError,
 };
 use std::collections::HashMap;
 
@@ -77,6 +78,9 @@ pub enum AppError {
 
     #[error(transparent)]
     Workspace(#[from] WorkspaceError),
+
+    #[error(transparent)]
+    WorkspaceInvitation(#[from] WorkspaceInvitationError),
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
@@ -155,6 +159,7 @@ impl IntoResponse for AppError {
             AppError::Contact(err) => contact_response(&err),
             AppError::Team(err) => team_response(&err),
             AppError::Workspace(err) => workspace_response(err),
+            AppError::WorkspaceInvitation(err) => workspace_invitation_response(err),
         }
     }
 }
@@ -721,6 +726,44 @@ fn workspace_response(err: WorkspaceError) -> Response {
                 .into_response()
         }
     }
+}
+
+fn workspace_invitation_response(err: WorkspaceInvitationError) -> Response {
+    let (status, code) = match err {
+        WorkspaceInvitationError::Workspace(inner) => return workspace_response(inner),
+        WorkspaceInvitationError::Db(db_err) => {
+            tracing::error!(error = ?db_err, "workspace invitation operation failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "internal_error" })),
+            )
+                .into_response();
+        }
+        // As for a team invitation: the name is unclaimed, which the signup
+        // form already says.
+        WorkspaceInvitationError::InvitedUserNotFound => {
+            (StatusCode::NOT_FOUND, "invited_user_not_found")
+        }
+        // 409 for the three below: the workspace or the invitation is in a
+        // state that refuses the request, not the caller's role.
+        WorkspaceInvitationError::AlreadyMember => (StatusCode::CONFLICT, "already_member"),
+        WorkspaceInvitationError::AlreadyPending => {
+            (StatusCode::CONFLICT, "invitation_already_pending")
+        }
+        WorkspaceInvitationError::NotPending => (StatusCode::CONFLICT, "invitation_not_pending"),
+        // One body for an unknown invitation and one the caller may not see,
+        // so neither says which it is.
+        WorkspaceInvitationError::InvitationNotFound => {
+            (StatusCode::NOT_FOUND, "invitation_not_found")
+        }
+        // Only ever to the invitee: anyone else gets `invitation_not_found`
+        // before the date is looked at. 422 as for a team invitation.
+        WorkspaceInvitationError::InvitationExpired => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "invitation_expired")
+        }
+    };
+
+    (status, Json(json!({ "error": code }))).into_response()
 }
 
 #[cfg(test)]

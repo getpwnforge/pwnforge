@@ -2,7 +2,7 @@
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     routing::{get, post},
 };
@@ -12,6 +12,7 @@ use crate::middleware::workspace::{WorkspaceMember, role};
 use crate::middleware::{auth::AuthUser, json::JsonBody};
 use crate::{error::AppError, state::AppState};
 use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorResponse};
+use domain::dto::invitation::InvitedByFilter;
 use domain::dto::workspace::{
     CreateWorkspaceInput, EffectiveMember, Membership, UpdateWorkspaceInput, WorkspaceResponse,
     WorkspaceSummary,
@@ -174,7 +175,7 @@ async fn delete_workspace(
     params(("slug" = String, Path, description = "Workspace slug")),
     security(("access_token" = [])),
     responses(
-        (status = 200, description = "Workspace archived; idempotent", body = WorkspaceResponse),
+        (status = 200, description = "Workspace archived; idempotent. Every pending invitation to it is cancelled in the same transaction (cancel_reason workspace_archived), and unarchiving brings none back", body = WorkspaceResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 403, description = "Captain only, or the owner of a solo workspace", body = SimpleErrorResponse),
         (status = 404, description = "Workspace not found, or no access to it", body = SimpleErrorResponse),
@@ -253,19 +254,29 @@ async fn remove_favorite(
     get,
     path = "/api/v1/workspaces/{slug}/members",
     tag = "Workspaces",
-    params(("slug" = String, Path, description = "Workspace slug")),
+    params(
+        ("slug" = String, Path, description = "Workspace slug"),
+        ("invited_by" = Option<Uuid>, Query, description = "Only the guests who joined by an invitation from this account"),
+    ),
     security(("access_token" = [])),
     responses(
-        (status = 200, description = "Everyone with access, most senior first; excluded members are not listed", body = [EffectiveMember]),
+        (status = 200, description = "Everyone with access, most senior first; excluded members are not listed. A guest carries the author of the invitation they accepted (`invited_by`)", body = [EffectiveMember]),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 404, description = "Workspace not found, or no access to it", body = SimpleErrorResponse),
+        (status = 422, description = "validation_failed: invited_by is not a uuid", body = UnprocessableErrorResponse),
     )
 )]
 async fn list_members(
     State(state): State<AppState>,
     member: WorkspaceMember<role::Viewer>,
+    Query(filter): Query<InvitedByFilter>,
 ) -> Result<Json<Vec<EffectiveMember>>, AppError> {
-    let members = workspace_service::list_effective_members(&state.db, &member.workspace).await?;
+    let invited_by = filter.parse()?;
+    let mut members =
+        workspace_service::list_effective_members(&state.db, &member.workspace).await?;
+    if let Some(author) = invited_by {
+        members.retain(|member| member.invited_by == Some(author));
+    }
     Ok(Json(members))
 }
 

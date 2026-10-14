@@ -17,7 +17,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::storage_service::{AvatarKind, ObjectStore, ObjectsToPurge};
-use crate::{permissions_service, slug_service, team_service};
+use crate::{permissions_service, slug_service, team_service, workspace_invitation_service};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
@@ -446,25 +446,37 @@ pub(crate) async fn delete_workspace_rows<C: ConnectionTrait>(
     Ok(ObjectsToPurge::avatar(AvatarKind::Workspace, workspace_id))
 }
 
+/// Archives a workspace and, in the same transaction, cancels every pending
+/// invitation to it (see `workspace_invitation_service::close_on_archive`).
+/// The workspace row is locked as invitation creation and acceptance lock
+/// it, so neither can slip a pending invitation or a new guest past the
+/// archive.
 pub async fn archive_workspace(
     db: &DatabaseConnection,
     workspace_id: Uuid,
 ) -> Result<workspaces::Model, WorkspaceError> {
+    let txn = db.begin().await?;
+
     let workspace = workspaces::Entity::find_by_id(workspace_id)
-        .one(db)
+        .lock(LockType::NoKeyUpdate)
+        .one(&txn)
         .await?
         .ok_or(WorkspaceError::WorkspaceNotFound)?;
 
     // Idempotent: setting the flag it already has is not an error.
-    workspaces::ActiveModel {
+    let archived = workspaces::ActiveModel {
         id: Set(workspace.id),
         archived: Set(true),
         updated_at: Set(Utc::now().into()),
         ..Default::default()
     }
-    .update(db)
-    .await
-    .map_err(Into::into)
+    .update(&txn)
+    .await?;
+
+    workspace_invitation_service::close_on_archive(&txn, workspace_id).await?;
+
+    txn.commit().await?;
+    Ok(archived)
 }
 
 pub async fn unarchive_workspace(
@@ -577,6 +589,7 @@ pub async fn list_effective_members(
                 // No membership row stands behind sole ownership, so the
                 // workspace's own creation is the date the owner got access.
                 joined_at: workspace.created_at.into(),
+                invited_by: None,
             })
             .into_iter()
             .collect());
@@ -640,6 +653,8 @@ pub async fn list_effective_members(
             // The team_members date, not the override's: an override
             // changes what they may do here, not when they gained access.
             joined_at: team_member.joined_at.into(),
+            // Recorded for guests only: a team member's way in is the team.
+            invited_by: None,
         });
     }
 
@@ -683,6 +698,7 @@ pub async fn list_effective_members(
             role: Membership::Active(TeamRole::from_str(&role).unwrap_or(TeamRole::Viewer)),
             is_guest: true,
             joined_at: member.joined_at.into(),
+            invited_by: member.invited_by,
         });
     }
 

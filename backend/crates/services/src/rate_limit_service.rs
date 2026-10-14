@@ -328,6 +328,39 @@ pub async fn check_team_invitation_by_email(
     .await
 }
 
+/// Workspace invitation by username; see `check_team_invitation_by_username`.
+pub async fn check_workspace_invitation_by_username(
+    redis: &mut ConnectionManager,
+    author_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_invitation_windows(
+        redis,
+        &invite_author_key("workspace", "username", author_id),
+        &invite_scope_key("workspace", "username", workspace_id),
+        INVITE_BY_USERNAME_AUTHOR_LIMIT,
+        INVITE_BY_USERNAME_SCOPE_LIMIT,
+    )
+    .await
+}
+
+/// Workspace invitation by email address; see
+/// `check_team_invitation_by_username`.
+pub async fn check_workspace_invitation_by_email(
+    redis: &mut ConnectionManager,
+    author_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_invitation_windows(
+        redis,
+        &invite_author_key("workspace", "email", author_id),
+        &invite_scope_key("workspace", "email", workspace_id),
+        INVITE_BY_EMAIL_AUTHOR_LIMIT,
+        INVITE_BY_EMAIL_SCOPE_LIMIT,
+    )
+    .await
+}
+
 /// Whether one more invitation mail may go to `email` today, counted across
 /// every team and workspace. Unlike the others this never refuses a request:
 /// the caller creates the invitation either way and only skips the mail, so

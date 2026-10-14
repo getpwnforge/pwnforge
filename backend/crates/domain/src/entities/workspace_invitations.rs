@@ -8,23 +8,34 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub workspace_id: Uuid,
+    pub invited_user_id: Option<Uuid>,
+    #[sea_orm(
+        column_type = "custom(\"citext\")",
+        select_as = "text",
+        save_as = "citext",
+        nullable
+    )]
+    pub invited_email: Option<String>,
+    #[sea_orm(column_type = "Text")]
+    pub role: String,
     #[sea_orm(column_type = "Text", unique)]
     pub token: String,
+    pub invited_by: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
-    pub default_role: String,
-    pub created_by: Option<Uuid>,
+    pub status: String,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub cancel_reason: Option<String>,
+    pub accepted_by: Option<Uuid>,
     pub expires_at: DateTimeWithTimeZone,
-    pub max_uses: Option<i32>,
-    pub uses: i32,
-    pub as_guest: bool,
     pub created_at: DateTimeWithTimeZone,
+    pub resolved_at: Option<DateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
         belongs_to = "super::users::Entity",
-        from = "Column::CreatedBy",
+        from = "Column::InvitedBy",
         to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"

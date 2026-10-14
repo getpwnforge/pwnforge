@@ -1,6 +1,7 @@
-//! The two migrations of the team invitation rework, each at its own point
-//! and each with its `down()`: every team invitation given an expiry, and
-//! the `invited_by` columns on both membership tables.
+//! The three migrations of the invitation rework, each at its own point and
+//! each with its `down()`: every team invitation given an expiry, the
+//! `invited_by` columns on both membership tables, and `workspace_invitations`
+//! rebuilt for targeted invitations.
 //!
 //! Each test works in a throwaway database of its own, migrated up to just
 //! before the migration under test. Rows are written with statements: the
@@ -22,6 +23,7 @@ use scratch::in_scratch_database;
 
 const EXPIRE: &str = "m20261014_120000_team_invitations_expire";
 const INVITED_BY: &str = "m20261014_121000_members_invited_by";
+const TARGETED: &str = "m20261014_122000_targeted_workspace_invitations";
 
 async fn migrate_to_just_before(db: &DatabaseConnection, name: &str) {
     migration::Migrator::up(db, Some(position_of(name)))
@@ -60,6 +62,23 @@ async fn create_team(db: &DatabaseConnection) -> Uuid {
     )
     .await
     .expect("the fixture team must insert");
+    id
+}
+
+async fn create_team_workspace(db: &DatabaseConnection, team_id: Uuid) -> Uuid {
+    let id = Uuid::now_v7();
+    run(
+        db,
+        "INSERT INTO workspaces (id, team_id, slug, name, color, type, mode, \
+         default_writeup_visibility) VALUES ($1, $2, $3, 'W', 'ember', 'event', 'team', 'team')",
+        vec![
+            id.into(),
+            team_id.into(),
+            format!("im-{}", id.simple()).into(),
+        ],
+    )
+    .await
+    .expect("the fixture workspace must insert");
     id
 }
 
@@ -258,6 +277,65 @@ async fn the_membership_tables_gain_invited_by_and_roll_back() {
         for table in ["team_members", "workspace_members"] {
             assert!(!column_exists(&db, table, "invited_by").await, "{table}");
         }
+
+        db.close().await.ok();
+    })
+    .await;
+}
+
+/// The table is rebuilt for targeted invitations when it is empty, and the
+/// migration refuses to run, changing nothing, when it holds a row of the
+/// previous shape. `down()` restores the previous shape.
+#[tokio::test]
+async fn workspace_invitations_are_rebuilt_only_when_empty_and_roll_back() {
+    in_scratch_database(|db| async move {
+        migrate_to_just_before(&db, TARGETED).await;
+        let team = create_team(&db).await;
+        let workspace = create_team_workspace(&db, team).await;
+        let legacy = Uuid::now_v7();
+        run(
+            &db,
+            "INSERT INTO workspace_invitations (id, workspace_id, token, default_role, expires_at) \
+             VALUES ($1, $2, 'hash-legacy', 'member', now() + interval '7 days')",
+            vec![legacy.into(), workspace.into()],
+        )
+        .await
+        .expect("a row of the previous shape inserts");
+
+        let message = migration::Migrator::up(&db, Some(1))
+            .await
+            .expect_err("the migration must refuse a table with rows")
+            .to_string();
+        assert!(message.contains("1 row(s)"), "got {message}");
+        assert!(column_exists(&db, "workspace_invitations", "max_uses").await);
+
+        run(&db, "DELETE FROM workspace_invitations WHERE id = $1", vec![legacy.into()])
+            .await
+            .expect("the row goes");
+        migration::Migrator::up(&db, Some(1))
+            .await
+            .expect("an empty table is rebuilt");
+        for column in ["invited_user_id", "invited_email", "status", "accepted_by", "resolved_at"] {
+            assert!(column_exists(&db, "workspace_invitations", column).await, "{column}");
+        }
+        for column in ["max_uses", "uses", "as_guest", "default_role", "created_by"] {
+            assert!(!column_exists(&db, "workspace_invitations", column).await, "{column}");
+        }
+        let refused = run(
+            &db,
+            "INSERT INTO workspace_invitations (workspace_id, invited_email, role, token, expires_at) \
+             VALUES ($1, 'admin@example.test', 'admin', 'hash-admin', now())",
+            vec![workspace.into()],
+        )
+        .await
+        .expect_err("a role above member must be refused");
+        assert!(refused.to_string().contains("ck_workspace_invitations_role"));
+
+        migration::Migrator::down(&db, Some(1))
+            .await
+            .expect("down() must run");
+        assert!(column_exists(&db, "workspace_invitations", "max_uses").await);
+        assert!(!column_exists(&db, "workspace_invitations", "status").await);
 
         db.close().await.ok();
     })

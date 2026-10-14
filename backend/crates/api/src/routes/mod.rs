@@ -7,6 +7,7 @@ pub mod instance;
 pub mod legal;
 pub mod setup;
 pub mod teams;
+pub mod workspace_invitations;
 pub mod workspace_members;
 pub mod workspaces;
 

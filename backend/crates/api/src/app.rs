@@ -84,6 +84,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::teams::router())
         .merge(routes::workspaces::router())
         .merge(routes::workspace_members::router())
+        .merge(routes::workspace_invitations::router())
         .nest("/instance", routes::instance::router())
         .nest("/legal", routes::legal::router())
         .nest("/auth", routes::auth::router())
