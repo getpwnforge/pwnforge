@@ -91,6 +91,11 @@ impl IntoResponse for AppError {
         match self {
             AppError::Validation(errors) => validation_response(&errors),
             AppError::JsonBody(err) => json_body_response(&err),
+            // Inside the service, after Turnstile, so it comes back as an
+            // `AuthError`; answered like every other limit, header included.
+            AppError::Auth(AuthError::RateLimited { retry_after_secs }) => {
+                rate_limited_response(retry_after_secs)
+            }
             AppError::Auth(err) => auth_response(err),
             AppError::RateLimited { retry_after_secs } => rate_limited_response(retry_after_secs),
 
@@ -257,6 +262,9 @@ fn auth_response(err: AuthError) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
         }
         AuthError::Turnstile(_) => (StatusCode::BAD_REQUEST, "turnstile_failed"),
+        AuthError::LimiterUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "service_unavailable"),
+        // Answered before this match (see `into_response`).
+        AuthError::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
         // Internal failures: log the cause, return an opaque code.
         _ => {
             tracing::error!(error = ?err, "unhandled auth error");

@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use super::{blocked_email_service, email_service, jwt_service, password_service, session_service};
 use crate::blocked_email_service::BlockedEmailError;
 use crate::config::Config;
+use crate::rate_limit_service::{self, RateLimitDecision};
 use crate::turnstile_service::TurnstileAction;
 use crate::{
     audit_service, auth_token_service, instance_service, legal_service, token_service,
@@ -16,6 +17,7 @@ use domain::{
     entities::{reserved_usernames, user_emails, users},
 };
 use jsonwebtoken::EncodingKey;
+use redis::aio::ConnectionManager;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
     TransactionTrait, prelude::DateTimeWithTimeZone, sea_query::Expr,
@@ -46,6 +48,16 @@ fn map_unique_violation(err: DbErr) -> AuthError {
 pub enum AuthError {
     #[error("email domain is not allowed")]
     BlockedEmail(#[from] BlockedEmailError),
+
+    /// A window of `rate_limit_service` checked inside the service, after
+    /// Turnstile: the failed sign-ins of an identifier, the reset requests of
+    /// an address.
+    #[error("rate limit exceeded")]
+    RateLimited { retry_after_secs: u64 },
+
+    /// A window that fails closed could not be read.
+    #[error("rate limiter unavailable")]
+    LimiterUnavailable,
 
     #[error("public signup is disabled")]
     PublicSignupDisabled,
@@ -208,8 +220,15 @@ pub async fn register(
     Ok(RegisteredUser { user, email })
 }
 
+/// Signs in. The route has already counted the attempt against the IP
+/// window; Turnstile comes next, then the identifier's window of failed
+/// passwords, which only a failure that got past Turnstile fills (see
+/// `rate_limit_service::login_identifier_blocked`). Both identifier
+/// operations fail open, as the login row of the rate-limit table says: the
+/// password check still stands underneath.
 pub async fn login(
     db: &DatabaseConnection,
+    redis: &mut ConnectionManager,
     config: &Config,
     payload: LoginRequest,
     encoding_key: &EncodingKey,
@@ -224,6 +243,38 @@ pub async fn login(
     )
     .await?;
 
+    let submitted = payload.username_or_email.clone();
+    match rate_limit_service::login_identifier_blocked(redis, &submitted).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AuthError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            tracing::error!(error = ?err, "login identifier rate limit unavailable, allowing request");
+        }
+    }
+
+    let outcome = authenticate(db, payload, encoding_key, ctx).await;
+    let counted = match &outcome {
+        Err(AuthError::InvalidCredentials) => {
+            rate_limit_service::record_login_failure(redis, &submitted).await
+        }
+        Ok(_) => rate_limit_service::reset_login_attempts(redis, &submitted).await,
+        Err(_) => Ok(()),
+    };
+    if let Err(err) = counted {
+        tracing::error!(error = ?err, "failed to update the login identifier rate limit");
+    }
+    outcome
+}
+
+/// The credential half of `login`, after its gates.
+async fn authenticate(
+    db: &DatabaseConnection,
+    payload: LoginRequest,
+    encoding_key: &EncodingKey,
+    ctx: SessionContext,
+) -> Result<LoggedInUser, AuthError> {
     let identifier = payload.username_or_email.trim();
 
     let (user, login_email) = if identifier.contains('@') {
@@ -388,8 +439,20 @@ pub async fn fetch_user(
     Ok((user, email))
 }
 
+/// Sends a reset link, answering the same whatever the address.
+///
+/// The route has counted the request against the IP window; Turnstile comes
+/// next, then the address's window, so a request that fails the challenge
+/// does not spend the share of the address it names. That window fails
+/// closed, like the IP one: there is nothing to prove underneath.
+///
+/// The link is issued and mailed in a task of its own, so the answer comes
+/// back as fast for an address with an account as for one without: awaiting
+/// the mail only on the first branch made the response time say which it
+/// was.
 pub async fn password_forgot(
     db: &DatabaseConnection,
+    redis: &mut ConnectionManager,
     config: &Config,
     email: &str,
     turnstile_token: &str,
@@ -402,6 +465,17 @@ pub async fn password_forgot(
         client_ip,
     )
     .await?;
+
+    match rate_limit_service::check_password_forgot_email(redis, email).await {
+        Ok(RateLimitDecision::Allowed) => {}
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AuthError::RateLimited { retry_after_secs });
+        }
+        Err(err) => {
+            tracing::error!(error = ?err, "password reset address rate limit unavailable, refusing");
+            return Err(AuthError::LimiterUnavailable);
+        }
+    }
 
     let email = normalize_email(email);
 
@@ -426,29 +500,11 @@ pub async fn password_forgot(
                 return Ok(());
             }
 
-            let token = match auth_token_service::issue(
-                db,
-                user.id,
-                email_row.id,
-                domain::types::TokenKind::PasswordReset,
-            )
-            .await
-            {
-                Ok(token) => token,
-                Err(err) => {
-                    // Swallowed on purpose: propagating would make the response
-                    // depend on whether the account exists.
-                    tracing::error!(error = ?err, user_id = %user.id, "failed to issue reset token");
-                    return Ok(());
-                }
-            };
-
-            if let Err(err) =
-                email_service::send_password_reset(config, &email_row.email, &user.locale, &token)
-                    .await
-            {
-                tracing::error!(error = ?err, user_id = %user.id, "failed to send password reset email");
-            }
+            let db = db.clone();
+            let config = config.clone();
+            tokio::spawn(async move {
+                deliver_reset_link(&db, &config, &user, &email_row).await;
+            });
         }
         None => {
             // Do not reveal whether the email exists. The caller should always get a success response.
@@ -467,6 +523,31 @@ pub async fn password_forgot(
     }
 
     Ok(())
+}
+
+/// Issues and mails a reset link. Every failure is logged and swallowed: the
+/// caller answered long ago, and the same whatever happens here.
+async fn deliver_reset_link(
+    db: &DatabaseConnection,
+    config: &Config,
+    user: &users::Model,
+    email_row: &user_emails::Model,
+) {
+    let token = match auth_token_service::issue(db, user.id, email_row.id, TokenKind::PasswordReset)
+        .await
+    {
+        Ok(token) => token,
+        Err(err) => {
+            tracing::error!(error = ?err, user_id = %user.id, "failed to issue reset token");
+            return;
+        }
+    };
+
+    if let Err(err) =
+        email_service::send_password_reset(config, &email_row.email, &user.locale, &token).await
+    {
+        tracing::error!(error = ?err, user_id = %user.id, "failed to send password reset email");
+    }
 }
 
 /// Applies a new password from a reset link.

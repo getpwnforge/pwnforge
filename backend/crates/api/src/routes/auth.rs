@@ -124,9 +124,10 @@ async fn login(
     // resolve a client IP, so a malformed X-Forwarded-For header cannot be
     // used to dodge the rate limit.
     let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
-    let identifier = payload.username_or_email.clone();
     let mut redis = state.redis.clone();
-    match rate_limit_service::check_login_attempt(&mut redis, &identifier, rate_limit_ip).await {
+    // The IP window first, on every attempt. The identifier's window of
+    // failed passwords is the service's, after Turnstile.
+    match rate_limit_service::check_login_ip(&mut redis, rate_limit_ip).await {
         Ok(RateLimitDecision::Limited { retry_after_secs }) => {
             return Err(AppError::RateLimited { retry_after_secs });
         }
@@ -139,6 +140,7 @@ async fn login(
     let ctx = session_context(&headers, client_ip);
     let logged_in = auth_service::login(
         &state.db,
+        &mut redis,
         &state.config,
         payload,
         &state.jwt_keys.encoding,
@@ -146,10 +148,6 @@ async fn login(
         rate_limit_ip,
     )
     .await?;
-
-    if let Err(err) = rate_limit_service::reset_login_attempts(&mut redis, &identifier).await {
-        tracing::error!(error = ?err, "failed to reset login rate limit after successful login");
-    }
 
     let jar = set_auth_cookies(
         jar,
@@ -265,7 +263,8 @@ async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserRe
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
-        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+        (status = 429, description = "Rate limited: per IP first, then, past Turnstile, per address", body = RateLimitedErrorResponse),
+        (status = 503, description = "service_unavailable: a rate limiter cannot be reached", body = SimpleErrorResponse),
     )
 )]
 async fn password_forgot(
@@ -277,14 +276,11 @@ async fn password_forgot(
     payload.validate()?;
 
     let rate_limit_ip = ip.unwrap_or_else(|| remote.ip());
+    let mut redis = state.redis.clone();
 
-    match rate_limit_service::check_password_forgot(
-        &mut state.redis.clone(),
-        &payload.email,
-        rate_limit_ip,
-    )
-    .await
-    {
+    // The IP window first; the address's comes after Turnstile, in the
+    // service, so a failed challenge does not spend it.
+    match rate_limit_service::check_password_forgot_ip(&mut redis, rate_limit_ip).await {
         Ok(RateLimitDecision::Limited { retry_after_secs }) => {
             return Err(AppError::RateLimited { retry_after_secs });
         }
@@ -299,6 +295,7 @@ async fn password_forgot(
 
     auth_service::password_forgot(
         &state.db,
+        &mut redis,
         &state.config,
         &payload.email,
         &payload.turnstile_token,
@@ -370,7 +367,8 @@ async fn password_reset(
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed, invalid_body, password_compromised or password_unchanged", body = UnprocessableErrorResponse),
-        (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
+        (status = 429, description = "Rate limited: 10 attempts an hour per account", body = RateLimitedErrorResponse),
+        (status = 503, description = "service_unavailable: the rate limiter cannot be reached", body = SimpleErrorResponse),
     )
 )]
 async fn password_change(
@@ -382,6 +380,20 @@ async fn password_change(
     JsonBody(payload): JsonBody<PasswordChangeRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
+
+    // Per account, before the Argon2 verification it bounds. Fails closed,
+    // as the avatar upload does: any account reaches this route, and nothing
+    // else bounds the work.
+    match rate_limit_service::check_password_change(&mut state.redis.clone(), user.id).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            tracing::error!(error = ?err, "password change rate limit unavailable, refusing");
+            return Err(AppError::ServiceUnavailable);
+        }
+    }
 
     // Absent is fine: without it every session is revoked, including this one.
     let refresh_token = jar.get("refresh_token").map(|c| c.value().to_owned());
@@ -452,9 +464,10 @@ async fn email_verify(
 
 /// Sends a new verification link.
 ///
-/// Takes the opaque token returned alongside an `email_not_verified`
-/// failure, not an email address: the caller has already proven it holds a
-/// pending verification for that address.
+/// Takes the handle returned alongside an `email_not_verified` failure, or
+/// the token of an earlier verification link, not an email address: the
+/// caller has already proven it holds the password or the mailbox. The new
+/// link goes to the address on file.
 #[utoipa::path(
     post,
     path = "/api/v1/auth/email/resend",
@@ -470,11 +483,17 @@ async fn email_verify(
 )]
 async fn email_resend(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
     JsonBody(payload): JsonBody<EmailResendRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
-    // 1. Rate limit keyed on the opaque token: 1 per 60s, 5 per hour.
-    match rate_limit_service::check_email_resend(&mut state.redis.clone(), &payload.token).await {
+    let mut redis = state.redis.clone();
+    // 1. Per IP first: the token windows below key on whatever the caller
+    //    sends, so on their own every made-up token got fresh ones.
+    match rate_limit_service::check_email_resend_ip(&mut redis, ip.unwrap_or_else(|| remote.ip()))
+        .await
+    {
         Ok(RateLimitDecision::Limited { retry_after_secs }) => {
             return Err(AppError::RateLimited { retry_after_secs });
         }
@@ -483,9 +502,19 @@ async fn email_resend(
             tracing::error!(error = ?err, "email resend rate limit unavailable, allowing request");
         }
     }
-    // 2. auth_service::resend_verification.
+    // 2. Then keyed on the opaque token: 1 per 60s, 5 per hour.
+    match rate_limit_service::check_email_resend(&mut redis, &payload.token).await {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            tracing::error!(error = ?err, "email resend rate limit unavailable, allowing request");
+        }
+    }
+    // 3. auth_service::resend_verification.
     auth_service::resend_verification(&state.db, &state.config, &payload.token).await?;
-    // 3. 202.
+    // 4. 202.
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -541,11 +570,12 @@ mod tests {
         ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
     };
     use serde_json::{Value, json};
+    use services::token_service::hash_opaque_token;
     use std::net::{IpAddr, Ipv6Addr, SocketAddr};
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::test_support::{app, app_with_config, config, db, env_or};
+    use crate::test_support::{app, app_with_config, config, cookie_for, db, env_or};
 
     const PASSWORD: &str = "a-long-test-password-1!";
 
@@ -649,6 +679,20 @@ mod tests {
         json!({ "username_or_email": identifier, "password": password, "turnstile_token": turnstile })
     }
 
+    fn identifier_key(identifier: &str) -> String {
+        format!(
+            "ratelimit:login:identifier:{}",
+            hash_opaque_token(&identifier.trim().to_lowercase())
+        )
+    }
+
+    fn turnstile_on() -> services::config::Config {
+        let mut config = config();
+        config.turnstile_site_key = Some("test-site-key".to_owned());
+        config.turnstile_secret_key = Some("test-secret-key-never-sent".to_owned());
+        config
+    }
+
     async fn verification_tokens(db: &DatabaseConnection, user: Uuid) -> Vec<auth_tokens::Model> {
         auth_tokens::Entity::find()
             .filter(auth_tokens::Column::UserId.eq(user))
@@ -749,6 +793,171 @@ mod tests {
         }
     }
 
+    /// The identifier's window counts failed passwords, and only those past
+    /// Turnstile: requests refused by the challenge leave it empty, while the
+    /// IP window, checked first, counts every one.
+    #[tokio::test]
+    async fn only_failed_passwords_past_turnstile_count_against_the_identifier() {
+        let db = db().await;
+        let app = app_with_config(&db, turnstile_on()).await;
+        let mut redis = redis().await;
+        let (_, username, _) = account(&db, true).await;
+        let ip = fresh_ip();
+
+        for _ in 0..12 {
+            let (status, _, body) = post(
+                &app,
+                "/api/v1/auth/login",
+                login_body(&username, "wrong-password-12", ""),
+                ip,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["error"], "turnstile_failed");
+        }
+        let counted: Option<i64> = redis.get(identifier_key(&username)).await.expect("GET");
+        assert_eq!(
+            counted, None,
+            "a request refused by Turnstile is not a failed password"
+        );
+        let by_ip: Option<i64> = redis
+            .get(format!("ratelimit:login:ip:{ip}"))
+            .await
+            .expect("GET");
+        assert_eq!(by_ip, Some(12));
+    }
+
+    /// Ten failed passwords block the identifier, the right password
+    /// included, until the window ends; a success before that clears it.
+    #[tokio::test]
+    async fn ten_failed_passwords_block_the_identifier_and_a_success_clears_it() {
+        let db = db().await;
+        let app = app(&db).await;
+        let mut redis = redis().await;
+        let (_, username, _) = account(&db, true).await;
+
+        for _ in 0..3 {
+            let (status, _, _) = post(
+                &app,
+                "/api/v1/auth/login",
+                login_body(&username, "wrong-password-12", ""),
+                fresh_ip(),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        let (status, _, _) = post(
+            &app,
+            "/api/v1/auth/login",
+            login_body(&username, PASSWORD, ""),
+            fresh_ip(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let counted: Option<i64> = redis.get(identifier_key(&username)).await.expect("GET");
+        assert_eq!(counted, None, "a success clears the failures");
+
+        for _ in 0..10 {
+            let (status, _, _) = post(
+                &app,
+                "/api/v1/auth/login",
+                login_body(&username, "wrong-password-12", ""),
+                fresh_ip(),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        let (status, headers, body) = post(
+            &app,
+            "/api/v1/auth/login",
+            login_body(&username, PASSWORD, ""),
+            fresh_ip(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        assert_eq!(body["error"], "rate_limited");
+        assert!(headers.contains_key(header::RETRY_AFTER));
+        let _: () = redis.del(identifier_key(&username)).await.expect("DEL");
+    }
+
+    /// The IP window comes before anything else, Turnstile included.
+    #[tokio::test]
+    async fn the_login_ip_window_comes_first() {
+        let db = db().await;
+        let app = app_with_config(&db, turnstile_on()).await;
+        let mut redis = redis().await;
+        let ip = fresh_ip();
+        let key = format!("ratelimit:login:ip:{ip}");
+        let _: () = redis.set_ex(&key, 30, 900).await.expect("SET");
+
+        let (status, _, _) = post(
+            &app,
+            "/api/v1/auth/login",
+            login_body("anyone", PASSWORD, ""),
+            ip,
+            None,
+        )
+        .await;
+        let _: () = redis.del(&key).await.expect("DEL");
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// A reset request refused by Turnstile counts against the IP, never
+    /// against the address it names; past the challenge, the address window
+    /// fails closed.
+    #[tokio::test]
+    async fn the_address_window_of_a_reset_request_comes_after_turnstile() {
+        let db = db().await;
+        let mut redis = redis().await;
+        let address = format!("{}@example.test", Uuid::now_v7().simple());
+        let email_key = format!(
+            "ratelimit:forgot:email:{}",
+            hash_opaque_token(&address.to_lowercase())
+        );
+        let ip = fresh_ip();
+
+        let guarded = app_with_config(&db, turnstile_on()).await;
+        for _ in 0..4 {
+            let (status, _, _) = post(
+                &guarded,
+                "/api/v1/auth/password/forgot",
+                json!({ "email": address, "turnstile_token": "" }),
+                ip,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        let by_address: Option<i64> = redis.get(&email_key).await.expect("GET");
+        assert_eq!(
+            by_address, None,
+            "a failed challenge spends nothing of the address"
+        );
+        let by_ip: Option<i64> = redis
+            .get(format!("ratelimit:forgot:ip:{ip}"))
+            .await
+            .expect("GET");
+        assert_eq!(by_ip, Some(4));
+
+        let open = app(&db).await;
+        let _: () = redis.set(&email_key, "not-a-counter").await.expect("SET");
+        let (status, _, body) = post(
+            &open,
+            "/api/v1/auth/password/forgot",
+            json!({ "email": address, "turnstile_token": "" }),
+            fresh_ip(),
+            None,
+        )
+        .await;
+        let _: () = redis.del(&email_key).await.expect("DEL");
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    }
+
     /// A made-up reset token is refused before the breach check runs: a
     /// compromised password with an unknown token is answered `token_invalid`.
     #[tokio::test]
@@ -790,6 +999,74 @@ mod tests {
         .await;
         let _: () = redis.del(&key).await.expect("DEL");
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// The resend IP window comes before the token windows: a refused
+    /// request spends nothing of the token's.
+    #[tokio::test]
+    async fn the_resend_ip_window_comes_before_the_token_windows() {
+        let db = db().await;
+        let app = app(&db).await;
+        let mut redis = redis().await;
+        let ip = fresh_ip();
+        let key = format!("ratelimit:resend:ip:{ip}");
+        let token = format!("made-up-{}", Uuid::now_v7().simple());
+        let _: () = redis.set_ex(&key, 20, 3600).await.expect("SET");
+
+        let (status, _, _) = post(
+            &app,
+            "/api/v1/auth/email/resend",
+            json!({ "token": token }),
+            ip,
+            None,
+        )
+        .await;
+        let _: () = redis.del(&key).await.expect("DEL");
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let by_token: Option<i64> = redis
+            .get(format!(
+                "ratelimit:resend:token:{}",
+                hash_opaque_token(&token)
+            ))
+            .await
+            .expect("GET");
+        assert_eq!(by_token, None);
+    }
+
+    /// Password changes are limited per account, and the limit fails closed.
+    #[tokio::test]
+    async fn password_changes_are_limited_per_account_and_fail_closed() {
+        let db = db().await;
+        let app = app(&db).await;
+        let mut redis = redis().await;
+        let (user, _, _) = account(&db, true).await;
+        let key = format!("ratelimit:password_change:user:{user}");
+        let body =
+            json!({ "current_password": "wrong-password-12", "new_password": "Another-pass-34!" });
+        let cookie = cookie_for(user);
+
+        let _: () = redis.set_ex(&key, 10, 3600).await.expect("SET");
+        let (limited, _, _) = post(
+            &app,
+            "/api/v1/auth/password/change",
+            body.clone(),
+            fresh_ip(),
+            Some(&cookie),
+        )
+        .await;
+        let _: () = redis.set(&key, "not-a-counter").await.expect("SET");
+        let (unavailable, _, _) = post(
+            &app,
+            "/api/v1/auth/password/change",
+            body,
+            fresh_ip(),
+            Some(&cookie),
+        )
+        .await;
+        let _: () = redis.del(&key).await.expect("DEL");
+
+        assert_eq!(limited, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(unavailable, StatusCode::SERVICE_UNAVAILABLE);
     }
 
     /// With Turnstile on, a sign-in that carries no token is refused with

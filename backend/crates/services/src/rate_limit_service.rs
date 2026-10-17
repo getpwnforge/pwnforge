@@ -34,12 +34,22 @@ const RESEND_BURST_LIMIT: isize = 1;
 const RESEND_BURST_WINDOW_SECS: i64 = 60;
 const RESEND_HOURLY_LIMIT: isize = 5;
 const RESEND_HOURLY_WINDOW_SECS: i64 = 60 * 60;
+// And one per IP, checked first: the token windows key on whatever string
+// the caller sends, so on their own every made-up token gets fresh ones.
+const RESEND_IP_LIMIT: isize = 20;
+const RESEND_IP_WINDOW_SECS: i64 = 60 * 60;
 
 // --- Email verification ---
 // Bounds the lookups an unauthenticated caller can trigger: the token is
 // 256 bits, so this is not what stops a guess.
 const VERIFY_IP_LIMIT: isize = 30;
 const VERIFY_IP_WINDOW_SECS: i64 = 60 * 60;
+
+// --- Password change ---
+// Per account: every attempt runs Argon2 on the current password, so an
+// unmetered route is a CPU sink for any signed-in account.
+const PASSWORD_CHANGE_USER_LIMIT: isize = 10;
+const PASSWORD_CHANGE_WINDOW_SECS: i64 = 60 * 60;
 
 // --- Setup ---
 // The setup wizard is a single endpoint that creates the first administrator and instance settings.
@@ -121,33 +131,51 @@ pub async fn check_register_attempt(
     .await
 }
 
-/// Login rate limit, checked on two independent fixed windows: one for the
-/// submitted identifier (username or email, lowercased so a case-varying
-/// attacker cannot spread attempts across buckets), one per IP. Either window
-/// tripping blocks the request; both are always incremented so the counts stay
-/// accurate regardless of which one is checked first.
-///
-/// The identifier window keys on the submitted string, not on the resolved
-/// account: someone who knows both the username and the email of a target gets
-/// two separate quotas. Resolving the account first would close that gap but
-/// would mean a database round-trip on every attempt, including the ones we
-/// want to reject cheaply. The IP window covers the remainder.
-pub async fn check_login_attempt(
+/// Login, per IP: every attempt counts, checked before anything else.
+pub async fn check_login_ip(
     redis: &mut ConnectionManager,
-    identifier: &str,
     ip: IpAddr,
 ) -> Result<RateLimitDecision, redis::RedisError> {
-    let by_identifier = check_window(
+    check_window(redis, &login_ip_key(ip), LOGIN_IP_LIMIT, LOGIN_WINDOW_SECS).await
+}
+
+/// Login, per identifier: whether the submitted username or email is over its
+/// share of failed attempts, read without counting this one.
+///
+/// Only failures count (see `record_login_failure`), and only those that got
+/// past Turnstile: anyone may send a request naming any account, so a window
+/// every request filled was a way to lock a known account out with eleven
+/// requests and no password. The identifier is lowercased so a case-varying
+/// caller cannot spread failures across buckets, and keyed on the submitted
+/// string, not the resolved account: someone who knows both the username and
+/// the email of a target gets two quotas. Resolving the account first would
+/// close that gap at the cost of a database round-trip on every attempt; the
+/// IP window covers the remainder.
+pub async fn login_identifier_blocked(
+    redis: &mut ConnectionManager,
+    identifier: &str,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    peek_window(
+        redis,
+        &login_identifier_key(identifier),
+        LOGIN_IDENTIFIER_LIMIT,
+    )
+    .await
+}
+
+/// Counts one failed password for the identifier.
+pub async fn record_login_failure(
+    redis: &mut ConnectionManager,
+    identifier: &str,
+) -> Result<(), redis::RedisError> {
+    check_window(
         redis,
         &login_identifier_key(identifier),
         LOGIN_IDENTIFIER_LIMIT,
         LOGIN_WINDOW_SECS,
     )
-    .await?;
-
-    let by_ip = check_window(redis, &login_ip_key(ip), LOGIN_IP_LIMIT, LOGIN_WINDOW_SECS).await?;
-
-    Ok(most_restrictive(by_identifier, by_ip))
+    .await
+    .map(|_| ())
 }
 
 /// Clears the per-identifier window after a successful login.
@@ -164,33 +192,40 @@ pub async fn reset_login_attempts(
     Ok(())
 }
 
-/// Rate limit for password reset requests.
+/// Password reset requests, per IP: checked first, on every request.
 ///
 /// The caller must treat a Redis failure as a refusal rather than swallowing
-/// it: unlike login, there is no password check underneath this endpoint, so
-/// failing open turns it into a free mailer aimed at arbitrary addresses.
-pub async fn check_password_forgot(
+/// it, here and for the address window: unlike login, there is no password
+/// check underneath this endpoint, so failing open turns it into a free
+/// mailer aimed at arbitrary addresses.
+pub async fn check_password_forgot_ip(
     redis: &mut ConnectionManager,
-    email: &str,
     ip: IpAddr,
 ) -> Result<RateLimitDecision, redis::RedisError> {
-    let by_email = check_window(
-        redis,
-        &forgot_email_key(email),
-        FORGOT_EMAIL_LIMIT,
-        FORGOT_WINDOW_SECS,
-    )
-    .await?;
-
-    let by_ip = check_window(
+    check_window(
         redis,
         &forgot_ip_key(ip),
         FORGOT_IP_LIMIT,
         FORGOT_WINDOW_SECS,
     )
-    .await?;
+    .await
+}
 
-    Ok(most_restrictive(by_email, by_ip))
+/// Password reset requests, per address: checked after Turnstile, so a
+/// request that fails it does not spend the share of the address it names.
+/// Before, three requests without a challenge kept anyone from resetting the
+/// password of an address they knew.
+pub async fn check_password_forgot_email(
+    redis: &mut ConnectionManager,
+    email: &str,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_window(
+        redis,
+        &forgot_email_key(email),
+        FORGOT_EMAIL_LIMIT,
+        FORGOT_WINDOW_SECS,
+    )
+    .await
 }
 
 pub async fn check_password_reset(
@@ -198,6 +233,20 @@ pub async fn check_password_reset(
     ip: IpAddr,
 ) -> Result<RateLimitDecision, redis::RedisError> {
     check_window(redis, &reset_ip_key(ip), RESET_IP_LIMIT, RESET_WINDOW_SECS).await
+}
+
+/// Verification resend, per IP, checked before the token windows.
+pub async fn check_email_resend_ip(
+    redis: &mut ConnectionManager,
+    ip: IpAddr,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_window(
+        redis,
+        &email_resend_ip_key(ip),
+        RESEND_IP_LIMIT,
+        RESEND_IP_WINDOW_SECS,
+    )
+    .await
 }
 
 /// Email verification, per IP.
@@ -210,6 +259,22 @@ pub async fn check_email_verify_ip(
         &email_verify_ip_key(ip),
         VERIFY_IP_LIMIT,
         VERIFY_IP_WINDOW_SECS,
+    )
+    .await
+}
+
+/// Password change, per account. The caller fails closed, as for the avatar
+/// upload: any account can reach the route, and each attempt is an Argon2
+/// verification.
+pub async fn check_password_change(
+    redis: &mut ConnectionManager,
+    user_id: Uuid,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_window(
+        redis,
+        &password_change_key(user_id),
+        PASSWORD_CHANGE_USER_LIMIT,
+        PASSWORD_CHANGE_WINDOW_SECS,
     )
     .await
 }
@@ -467,8 +532,16 @@ fn reset_ip_key(ip: IpAddr) -> String {
     format!("ratelimit:reset:ip:{ip}")
 }
 
+fn email_resend_ip_key(ip: IpAddr) -> String {
+    format!("ratelimit:resend:ip:{ip}")
+}
+
 fn email_verify_ip_key(ip: IpAddr) -> String {
     format!("ratelimit:verify:ip:{ip}")
+}
+
+fn password_change_key(user_id: Uuid) -> String {
+    format!("ratelimit:password_change:user:{user_id}")
 }
 
 fn email_resend_key(token_hash: &str) -> String {
@@ -523,6 +596,24 @@ fn invite_mail_address_key(email: &str) -> String {
         "ratelimit:invite:mail:address:{}",
         hash_opaque_token(&email.trim().to_lowercase())
     )
+}
+
+/// Reads a fixed window without counting this request: limited once the
+/// window already holds `limit`, so the request that would make it go over
+/// is the one refused. Absent means nothing counted yet.
+async fn peek_window(
+    redis: &mut ConnectionManager,
+    key: &str,
+    limit: isize,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    let count: Option<isize> = redis.get(key).await?;
+    if count.unwrap_or(0) >= limit {
+        let ttl: i64 = redis.ttl(key).await?;
+        return Ok(RateLimitDecision::Limited {
+            retry_after_secs: ttl.max(0) as u64,
+        });
+    }
+    Ok(RateLimitDecision::Allowed)
 }
 
 /// Increments a single fixed window and reports whether it is over `limit`.

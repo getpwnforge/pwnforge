@@ -1,12 +1,13 @@
-//! The reset link against what can happen around it: its expiry, and a
-//! forced reset by an administrator.
+//! The reset link against what can happen around it: its expiry, a forced
+//! reset by an administrator, and the time the request for it takes.
 //!
-//! A real Postgres: what is under test is the order of locks and
-//! statements between overlapping transactions. The tests that need one
-//! transaction to wait on another find the wait in `pg_stat_activity`
-//! rather than sleeping a guessed amount. CI provides it; locally
-//! `make test-backend` points at the dev compose.
+//! A real Postgres, and for the request a real Redis: what is under test is
+//! the order of locks and statements between overlapping transactions. The
+//! tests that need one transaction to wait on another find the wait in
+//! `pg_stat_activity` rather than sleeping a guessed amount. CI provides
+//! both; locally `make test-backend` points at the dev compose.
 
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -14,6 +15,7 @@ use domain::dto::auth::SessionContext;
 use domain::entities::{auth_tokens, user_emails, users};
 use domain::types::TokenKind;
 use migration::MigratorTrait;
+use redis::aio::ConnectionManager;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend,
     EntityTrait, QueryFilter, Set, Statement, TransactionTrait,
@@ -21,6 +23,7 @@ use sea_orm::{
 use services::audit_service::AuditContext;
 use services::auth_service::{self, AuthError};
 use services::auth_token_service::{self, AuthTokenError};
+use services::config::{EmailBackend, SmtpTls};
 use services::{admin_service, token_service};
 use uuid::Uuid;
 
@@ -37,6 +40,14 @@ async fn connect() -> DatabaseConnection {
         .await
         .expect("migrations must apply");
     db
+}
+
+async fn connect_redis() -> ConnectionManager {
+    let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned());
+    let client = redis::Client::open(url).expect("REDIS_URL must be a valid Redis URL");
+    ConnectionManager::new(client)
+        .await
+        .expect("a Redis instance must be reachable")
 }
 
 /// An account with a verified primary address, and that address.
@@ -273,4 +284,55 @@ async fn a_reset_in_flight_cannot_overwrite_a_forced_reset() {
         "the reset in flight must find its link spent, got {outcome:?}"
     );
     assert_eq!(password_hash(&db, user).await, "forced-hash");
+}
+
+/// The reset link is issued and mailed in a task of its own: the request
+/// answers at once even when the mail server never does, and the link is
+/// still issued.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reset_request_answers_before_its_mail_is_sent() {
+    let db = connect().await;
+    let mut redis = connect_redis().await;
+    let (user, address) = account(&db).await;
+
+    // A mail server that accepts the connection and never greets.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").expect("a port must be free");
+    let mut config = config::config();
+    config.email_backend = EmailBackend::Smtp;
+    config.email_from = "noreply@example.test".to_owned();
+    config.smtp_host = "127.0.0.1".to_owned();
+    config.smtp_port = silent.local_addr().expect("an address").port();
+    config.smtp_tls = SmtpTls::None;
+
+    let answered = tokio::time::timeout(
+        Duration::from_secs(3),
+        auth_service::password_forgot(
+            &db,
+            &mut redis,
+            &config,
+            &address,
+            "",
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ),
+    )
+    .await
+    .expect("the request must answer without waiting for the mail");
+    answered.expect("the request must succeed");
+
+    let mut issued = false;
+    for _ in 0..60 {
+        issued = auth_tokens::Entity::find()
+            .filter(auth_tokens::Column::UserId.eq(user))
+            .filter(auth_tokens::Column::Kind.eq(TokenKind::PasswordReset.as_str()))
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .is_some();
+        if issued {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    drop(silent);
+    assert!(issued, "the link is issued in the background");
 }
