@@ -57,6 +57,10 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
       setUnauthenticatedHandler(() => {
         const hadSession = queryClient.getQueryData(AUTH_ME_QUERY_KEY) != null;
 
+        // Everything the lost session fetched goes, as on logout: an account
+        // signing in next in this tab would otherwise be served this one's
+        // cached answers while they are still fresh.
+        queryClient.removeQueries();
         queryClient.setQueryData(AUTH_ME_QUERY_KEY, null);
 
         if (hadSession) {

@@ -10,8 +10,9 @@ use domain::{
     types::RevokedReason,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
-    QueryFilter, Set, TransactionTrait, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    EntityTrait, ExprTrait, QueryFilter, QuerySelect, Set, TransactionTrait,
+    sea_query::{Expr, LockType},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -27,11 +28,73 @@ pub enum SessionError {
     #[error("refresh token was already used")]
     Reused,
 
+    /// Retired by a rotation less than `ROTATION_GRACE_SECS` ago: refused,
+    /// without treating it as a replay (see `rotate`).
+    #[error("refresh token was rotated moments ago")]
+    RecentlyRotated,
+
     #[error(transparent)]
     Audit(#[from] AuditError),
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),
+}
+
+/// How long after a rotation the retired token is refused without being
+/// treated as a replay.
+///
+/// Two tabs, or a tab and a slow retry, routinely send the same refresh
+/// cookie a moment apart: the first rotates it, the second arrives with the
+/// old one. Read as reuse, that logged the account out everywhere. Inside
+/// this window the late request is refused, which gives a thief holding a
+/// copy nothing either; after it, reuse detection applies as before.
+pub const ROTATION_GRACE_SECS: i64 = 10;
+
+/// Serializes, per account, the writes that open, rotate or end its
+/// sessions: `issue`, `rotate`, `revoke_all`, and the forced password
+/// reset. Each takes the account's row first, inside its transaction.
+///
+/// Without it a rotation could claim a token, then a `revoke_all` begin and
+/// wait on that token, and the rotation commit a replacement that
+/// `revoke_all`, reading as of its own start, never saw: a session that
+/// survived a suspension or a password change. Taking the row first also
+/// gives every one of them the same lock order, account then tokens.
+///
+/// `FOR NO KEY UPDATE`, not `FOR UPDATE`: the writers above still exclude
+/// each other, but an insert into another table that references the account
+/// only needs `FOR KEY SHARE` on it, which this mode leaves free, so a
+/// session write never holds up an audit entry or a team membership.
+pub(crate) async fn lock_user<C: ConnectionTrait>(conn: &C, user_id: Uuid) -> Result<(), DbErr> {
+    users::Entity::find_by_id(user_id)
+        .select_only()
+        .column(users::Column::Id)
+        .lock(LockType::NoKeyUpdate)
+        .into_tuple::<Uuid>()
+        .one(conn)
+        .await?;
+    Ok(())
+}
+
+/// Whether the token was retired by a rotation less than
+/// `ROTATION_GRACE_SECS` ago. Compared in SQL against `now()`: `revoked_at`
+/// is stamped by the database, so its clock alone decides, and a skew
+/// between the application and the database cannot stretch or close the
+/// window.
+async fn rotated_recently<C: ConnectionTrait>(conn: &C, token_id: Uuid) -> Result<bool, DbErr> {
+    let recent = refresh_tokens::Entity::find_by_id(token_id)
+        .select_only()
+        .column(refresh_tokens::Column::Id)
+        .filter(refresh_tokens::Column::RevokedReason.eq(RevokedReason::Rotated.as_str()))
+        .filter(
+            Expr::col(refresh_tokens::Column::RevokedAt).gt(Expr::cust_with_values(
+                "now() - make_interval(secs => $1)",
+                [ROTATION_GRACE_SECS],
+            )),
+        )
+        .into_tuple::<Uuid>()
+        .one(conn)
+        .await?;
+    Ok(recent.is_some())
 }
 
 /// Called by auth_service::login and, later, the OAuth callback.
@@ -45,6 +108,7 @@ pub async fn issue(
     // One transaction for the session and the activity stamp, so a sign-in
     // never records activity for a session that does not exist.
     let txn = db.begin().await?;
+    lock_user(&txn, user_id).await?;
 
     // Store the refresh token in the database, associated with the user.
     let issued_session = refresh_tokens::ActiveModel {
@@ -83,9 +147,11 @@ pub async fn issue(
 /// became two working sessions, and the reuse detection below never fired because
 /// nothing was revoked at the time either of them looked.
 ///
-/// A caller that loses the claim is treated exactly like a replay, because
-/// from the server's side the two are the same event: one secret presented
-/// twice. The whole chain is revoked and both parties must sign in again.
+/// A caller that loses the claim to a rotation less than
+/// `ROTATION_GRACE_SECS` old is a second tab: refused, nothing else. Any
+/// other loss is treated exactly like a replay, because from the server's
+/// side the two are the same event: one secret presented twice. The whole
+/// chain is revoked and both parties must sign in again.
 pub async fn rotate(
     db: &DatabaseConnection,
     presented: &str,
@@ -97,9 +163,14 @@ pub async fn rotate(
 
     // Reuse of a revoked token means the chain has been duplicated: either an
     // attacker or the legitimate user is replaying a copy. Revoke every live
-    // token of this user so both are forced to re-authenticate.
+    // token of this user so both are forced to re-authenticate. Unless it was
+    // rotated a moment ago, which is a second tab rather than a copy (see
+    // `ROTATION_GRACE_SECS`).
     if token.revoked_at.is_some() {
         if token.revoked_reason.as_deref() == Some(RevokedReason::Rotated.as_str()) {
+            if rotated_recently(db, token.id).await? {
+                return Err(SessionError::RecentlyRotated);
+            }
             return Err(handle_reuse(db, &token, ctx).await?);
         }
 
@@ -113,6 +184,7 @@ pub async fn rotate(
     let new_refresh_token = token_service::generate_opaque_token();
 
     let txn = db.begin().await?;
+    lock_user(&txn, token.user_id).await?;
 
     // Claim the presented token. `revoked_at IS NULL` is the whole point: it
     // makes the retirement the race's arbiter, so exactly one concurrent
@@ -131,8 +203,12 @@ pub async fn rotate(
     if claimed.rows_affected == 0 {
         // Someone else retired this token between the read above and here.
         // Roll back before touching the chain, so the revocation is not undone
-        // along with this transaction.
+        // along with this transaction. A concurrent rotation that won is the
+        // grace case; anything else is a replay.
         txn.rollback().await?;
+        if rotated_recently(db, token.id).await? {
+            return Err(SessionError::RecentlyRotated);
+        }
         return Err(handle_reuse(db, &token, ctx).await?);
     }
 
@@ -191,20 +267,18 @@ async fn touch_last_activity<C: ConnectionTrait>(conn: &C, user_id: Uuid) -> Res
 /// reached the server twice, and neither caller can be told apart from an
 /// attacker holding a copy, so the safe answer is the same.
 ///
-/// Known gap on the racing path: the winner may still be inside its own
-/// transaction, so the replacement token it is inserting is not yet visible
-/// here and survives this sweep. The stolen copy is dead either way, the audit
-/// entry is written, and the next rotation on that chain trips detection
-/// again, but the account is not guaranteed to be fully logged out on that
-/// one interleaving. Closing it needs the claim and the sweep to serialize on
-/// the same row, which costs a lock on every refresh.
+/// The sweep waits on the account's row (see `lock_user`), so a rotation
+/// still inside its transaction finishes first and its replacement is swept
+/// too.
 async fn handle_reuse(
     db: &DatabaseConnection,
     token: &refresh_tokens::Model,
     ctx: &SessionContext,
 ) -> Result<SessionError, SessionError> {
+    let txn = db.begin().await?;
     let sessions_revoked =
-        revoke_all(db, token.user_id, RevokedReason::ReuseDetected, None).await?;
+        revoke_all(&txn, token.user_id, RevokedReason::ReuseDetected, None).await?;
+    txn.commit().await?;
 
     tracing::warn!(
         user_id = %token.user_id,
@@ -263,12 +337,18 @@ pub async fn revoke(
 
 /// Called by rotate (reuse), password_reset, password_change,
 /// admin_service::suspend_user (2.13) and the CLI (2.24).
-pub async fn revoke_all<C: ConnectionTrait>(
-    db: &C,
+///
+/// Takes a transaction, not a connection: it locks the account's row first
+/// (see `lock_user`), which only holds until the transaction ends, so the
+/// sweep sees every session a rotation in progress was about to add.
+pub async fn revoke_all(
+    txn: &DatabaseTransaction,
     user_id: Uuid,
     reason: RevokedReason,
     except: Option<Uuid>,
 ) -> Result<u64, SessionError> {
+    lock_user(txn, user_id).await?;
+
     let mut query = refresh_tokens::Entity::update_many()
         .col_expr(refresh_tokens::Column::RevokedAt, Expr::current_timestamp())
         .col_expr(
@@ -282,7 +362,7 @@ pub async fn revoke_all<C: ConnectionTrait>(
         query = query.filter(refresh_tokens::Column::Id.ne(except));
     }
 
-    let update_result = query.exec(db).await?;
+    let update_result = query.exec(txn).await?;
 
     Ok(update_result.rows_affected)
 }

@@ -212,16 +212,21 @@ async fn refresh(
     tag = "Auth",
     security(("refresh_token" = [])),
     responses(
-        (status = 204, description = "Logged out"),
-        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 204, description = "Logged out: both cookies are cleared in every case, and the refresh token revoked when the server knows it"),
     )
 )]
 async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<(CookieJar, StatusCode), AppError> {
-    if let Some(token) = jar.get("refresh_token") {
-        auth_service::logout(&state.db, token.value()).await?;
+    // The cookies go whatever the revocation does: an error here used to
+    // leave both in the browser, the access token usable for the rest of its
+    // lifetime by whoever used that browser next. The revocation is best
+    // effort, and a token the server no longer knows is already logged out.
+    if let Some(token) = jar.get("refresh_token")
+        && let Err(err) = auth_service::logout(&state.db, token.value()).await
+    {
+        tracing::warn!(error = ?err, "logout could not revoke the refresh token");
     }
 
     Ok((
@@ -529,7 +534,7 @@ fn clear_auth_cookies(jar: CookieJar, config: &Config) -> CookieJar {
 mod tests {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
-    use axum::http::{HeaderMap, Request, StatusCode};
+    use axum::http::{HeaderMap, Request, StatusCode, header};
     use domain::entities::{auth_tokens, user_emails, users};
     use redis::AsyncCommands;
     use sea_orm::{
@@ -711,6 +716,58 @@ mod tests {
             1,
             "the resend issued a verification link, for the mail alone"
         );
+    }
+
+    /// Logging out clears both cookies even when the refresh token cannot be
+    /// revoked, here because the server does not know it.
+    #[tokio::test]
+    async fn logging_out_always_clears_the_cookies() {
+        let db = db().await;
+        let app = app(&db).await;
+
+        let (status, headers, _) = post(
+            &app,
+            "/api/v1/auth/logout",
+            Value::Null,
+            fresh_ip(),
+            Some("refresh_token=not-a-token-the-server-knows; access_token=whatever"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let cleared: Vec<String> = headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().expect("ascii").to_owned())
+            .collect();
+        for name in ["access_token=", "refresh_token="] {
+            assert!(
+                cleared
+                    .iter()
+                    .any(|cookie| cookie.starts_with(name) && cookie.contains("Max-Age=0")),
+                "{name} must be cleared, got {cleared:?}"
+            );
+        }
+    }
+
+    /// A made-up reset token is refused before the breach check runs: a
+    /// compromised password with an unknown token is answered `token_invalid`.
+    #[tokio::test]
+    async fn an_unknown_reset_token_is_refused_before_the_breach_check() {
+        let db = db().await;
+        let mut config = config();
+        config.check_pwned_passwords = true;
+        let app = app_with_config(&db, config).await;
+
+        let (status, _, body) = post(
+            &app,
+            "/api/v1/auth/password/reset",
+            json!({ "token": "no-such-reset-token", "new_password": "Password123!" }),
+            fresh_ip(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["error"], "token_invalid");
     }
 
     /// Verification is limited per IP.

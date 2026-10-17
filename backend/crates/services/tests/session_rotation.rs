@@ -14,7 +14,10 @@ use tokio::sync::Barrier;
 use domain::dto::auth::SessionContext;
 use domain::entities::refresh_tokens;
 use migration::MigratorTrait;
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
+use sea_orm::sea_query::Expr;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, QueryFilter, Set,
+};
 use services::session_service::{self, SessionError};
 use services::token_service;
 use uuid::Uuid;
@@ -113,7 +116,9 @@ async fn concurrent_rotation_lets_exactly_one_caller_win() {
         for racer in racers {
             match racer.await.expect("the rotation task must not panic") {
                 Ok(_) => winners += 1,
-                Err(SessionError::Reused) => losers += 1,
+                // The loser arrives with a token rotated a moment ago: refused
+                // without revoking anything (see `ROTATION_GRACE_SECS`).
+                Err(SessionError::RecentlyRotated) => losers += 1,
                 Err(other) => panic!("unexpected rotation failure: {other:?}"),
             }
         }
@@ -122,6 +127,11 @@ async fn concurrent_rotation_lets_exactly_one_caller_win() {
             winners, 1,
             "attempt {attempt}: exactly one concurrent rotation may succeed, \
              got {winners} winners and {losers} refusals"
+        );
+        assert_eq!(
+            live_session_count(&db, user_id).await,
+            1,
+            "attempt {attempt}: the winner's session survives the loser"
         );
     }
 }
@@ -167,9 +177,23 @@ async fn concurrent_rotation_retires_the_presented_token() {
     );
 }
 
-/// The deterministic replay: rotate once, then present the spent secret again.
-/// This is the case the conditional claim does not change, pinned here so the
-/// rewrite cannot regress it.
+/// Moves the rotation of `token_id` `seconds` into the past, by the database
+/// clock, the one the grace window is read against.
+async fn age_rotation(db: &DatabaseConnection, token_id: Uuid, seconds: i64) {
+    refresh_tokens::Entity::update_many()
+        .col_expr(
+            refresh_tokens::Column::RevokedAt,
+            Expr::cust_with_values("now() - make_interval(secs => $1)", [seconds]),
+        )
+        .filter(refresh_tokens::Column::Id.eq(token_id))
+        .exec(db)
+        .await
+        .expect("the fixture rotation must age");
+}
+
+/// The deterministic replay: rotate once, then present the spent secret
+/// again, past the grace window. This is the case the conditional claim does
+/// not change, pinned here so the rewrite cannot regress it.
 #[tokio::test]
 async fn replaying_a_spent_token_revokes_the_whole_chain() {
     let db = connect().await;
@@ -189,6 +213,12 @@ async fn replaying_a_spent_token_revokes_the_whole_chain() {
         "after a clean rotation the replacement is the only live session"
     );
 
+    age_rotation(
+        &db,
+        issued.session_id,
+        session_service::ROTATION_GRACE_SECS + 1,
+    )
+    .await;
     let replay = session_service::rotate(&db, &issued.secret, &ctx()).await;
 
     assert!(
@@ -201,6 +231,167 @@ async fn replaying_a_spent_token_revokes_the_whole_chain() {
         0,
         "reuse detection must revoke every live session of the account"
     );
+}
+
+/// Inside the grace window, the token just rotated is refused, and nothing
+/// else happens: a second tab, not a thief, and the session the first tab
+/// got stays live.
+#[tokio::test]
+async fn a_token_rotated_moments_ago_is_refused_without_revoking_anything() {
+    let db = connect().await;
+    let user_id = create_user(&db).await;
+    let issued = session_service::issue(&db, user_id, &ctx())
+        .await
+        .expect("issuing the initial session must succeed");
+    session_service::rotate(&db, &issued.secret, &ctx())
+        .await
+        .expect("the first rotation must succeed");
+
+    let late = session_service::rotate(&db, &issued.secret, &ctx()).await;
+
+    assert!(
+        matches!(late, Err(SessionError::RecentlyRotated)),
+        "got {:?}",
+        late.err()
+    );
+    assert_eq!(
+        live_session_count(&db, user_id).await,
+        1,
+        "the replacement session is still live"
+    );
+}
+
+/// A sweep waits for a rotation that holds the account, then sweeps the
+/// session that rotation added. The rotation is played here by hand, in the
+/// order and the lock modes `rotate` takes: the account, then the token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_sweep_waits_for_a_rotation_in_progress_and_sweeps_its_session() {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
+
+    let db = connect().await;
+    let user_id = create_user(&db).await;
+    let issued = session_service::issue(&db, user_id, &ctx())
+        .await
+        .expect("issuing the initial session must succeed");
+
+    let rotation = db.begin().await.expect("the transaction opens");
+    rotation
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE",
+            [user_id.into()],
+        ))
+        .await
+        .expect("the account locks");
+    rotation
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE refresh_tokens SET revoked_at = now(), revoked_reason = 'rotated' WHERE id = $1",
+            [issued.session_id.into()],
+        ))
+        .await
+        .expect("the token is claimed");
+
+    let sweep = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let txn = db.begin().await?;
+            session_service::revoke_all(
+                &txn,
+                user_id,
+                domain::types::RevokedReason::AdminRevoked,
+                None,
+            )
+            .await?;
+            txn.commit().await?;
+            Ok::<_, SessionError>(())
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let successor = token_service::generate_opaque_token();
+    let successor_id = Uuid::now_v7();
+    rotation
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) \
+             VALUES ($1, $2, $3, now() + interval '30 days')",
+            [successor_id.into(), user_id.into(), successor.hash.into()],
+        ))
+        .await
+        .expect("the successor inserts");
+    rotation.commit().await.expect("the rotation commits");
+
+    sweep
+        .await
+        .expect("the sweep task must not panic")
+        .expect("the sweep must succeed");
+    let successor = refresh_tokens::Entity::find_by_id(successor_id)
+        .one(&db)
+        .await
+        .expect("the lookup must succeed")
+        .expect("the successor exists");
+    assert!(
+        successor.revoked_at.is_some(),
+        "the session added by the rotation is swept too"
+    );
+}
+
+/// The account lock that session writes take keeps them apart, and only
+/// them: while a sweep holds it, an insert elsewhere that references the
+/// account, here an audit entry naming it, goes through rather than waiting
+/// for the sweep to end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_account_lock_leaves_inserts_that_reference_the_account_free() {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
+    use services::audit_service::{self, AuditContext, AuditTarget};
+
+    let db = connect().await;
+    let user_id = create_user(&db).await;
+
+    let sweep = db.begin().await.expect("the transaction opens");
+    session_service::revoke_all(
+        &sweep,
+        user_id,
+        domain::types::RevokedReason::AdminRevoked,
+        None,
+    )
+    .await
+    .expect("the sweep takes the account");
+
+    // The lock is held: another session write could not take it now.
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE NOWAIT",
+        [user_id.into()],
+    ))
+    .await
+    .expect_err("the sweep holds the account");
+
+    let inserted = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        audit_service::record(
+            &db,
+            domain::types::AuditAction::AuthRefreshReuseDetected,
+            &AuditContext {
+                actor_id: None,
+                ip_address: None,
+                user_agent: None,
+            },
+            AuditTarget {
+                user_id: Some(user_id),
+                ..Default::default()
+            },
+            None,
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+    sweep.commit().await.expect("the sweep commits");
+
+    inserted
+        .expect("an insert referencing the account must not wait on the sweep")
+        .expect("the audit entry must insert");
 }
 
 /// A rotation that is not contended still works end to end, and leaves the

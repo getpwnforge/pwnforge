@@ -1,5 +1,5 @@
 // src/api/auth.ts
-import { api } from "@/lib/api";
+import { api, endSession } from "@/lib/api";
 import { isUnauthorized, toApiError } from "@/lib/api-error";
 import type {
   ForgotPasswordPayload,
@@ -43,9 +43,12 @@ export async function register(payload: RegisterPayload): Promise<User> {
   return data;
 }
 
-/** Revokes the refresh token server-side and clears the cookies. */
+/**
+ * Revokes the refresh token server-side and clears the cookies, once any
+ * refresh in flight has landed (see `endSession`).
+ */
 export async function logout(): Promise<void> {
-  await api.post("/auth/logout", null, { skipAuthRefresh: true });
+  await endSession(() => api.post("/auth/logout", null, { skipAuthRefresh: true }));
 }
 
 /**

@@ -230,9 +230,10 @@ fn auth_response(err: AuthError) -> Response {
         AuthError::Session(err) => match err {
             // Same code for all three: the client cannot act on the distinction, and
             // telling it apart would leak whether a token ever existed.
-            SessionError::NotFound | SessionError::Expired | SessionError::Reused => {
-                (StatusCode::UNAUTHORIZED, "invalid_refresh_token")
-            }
+            SessionError::NotFound
+            | SessionError::Expired
+            | SessionError::Reused
+            | SessionError::RecentlyRotated => (StatusCode::UNAUTHORIZED, "invalid_refresh_token"),
             SessionError::Db(_) | SessionError::Audit(_) => {
                 tracing::error!(error = ?err, "session store failure");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")

@@ -662,11 +662,23 @@ pub async fn force_password_reset(
 
     let txn = db.begin().await?;
 
+    // The account first, as every session write takes it (see
+    // `session_service::lock_user`): a reset by link in progress either
+    // finishes before this one, which then overrides it, or waits and finds
+    // its link spent below.
+    session_service::lock_user(&txn, user.id).await?;
+
     users::Entity::update_many()
         .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::PasswordHash, Expr::value(locked_hash))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
+        .await?;
+
+    // In this transaction, not in `issue` after the commit: a reset link that
+    // outlived the forced reset, because the replacement could not be issued,
+    // would hand the account back to whoever held the old one.
+    auth_token_service::invalidate_pending(&txn, user.id, domain::types::TokenKind::PasswordReset)
         .await?;
 
     let session_count = revoke_all(

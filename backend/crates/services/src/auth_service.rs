@@ -470,6 +470,13 @@ pub async fn password_forgot(
 }
 
 /// Applies a new password from a reset link.
+///
+/// The link is looked up first, without being spent, so a made-up one is
+/// refused before the breach check: otherwise every guess cost an outbound
+/// request to the breach database. It is spent last, inside the transaction
+/// that writes the password, after the account's row is taken (see
+/// `session_service::lock_user`): a forced reset landing meanwhile either
+/// waits and then overrides this one, or has already spent the link.
 pub async fn password_reset(
     db: &DatabaseConnection,
     config: &Config,
@@ -477,11 +484,17 @@ pub async fn password_reset(
     new_password: String,
     ctx: SessionContext,
 ) -> Result<(), AuthError> {
+    let token = auth_token_service::find(db, secret, TokenKind::PasswordReset).await?;
+    if token.used_at.is_some() {
+        return Err(auth_token_service::AuthTokenError::Consumed.into());
+    }
+    if token.expires_at <= Utc::now() {
+        return Err(auth_token_service::AuthTokenError::Expired.into());
+    }
+
     // Check if the password is already compromised
     reject_if_compromised(config, &new_password).await?;
 
-    let token =
-        auth_token_service::consume(db, secret, domain::types::TokenKind::PasswordReset).await?;
     let user = users::Entity::find_by_id(token.user_id)
         .one(db)
         .await?
@@ -503,6 +516,9 @@ pub async fn password_reset(
     let hashed_password = password_service::hash_password(new_password).await?;
 
     let txn = db.begin().await?;
+    session_service::lock_user(&txn, user.id).await?;
+    auth_token_service::consume(&txn, secret, TokenKind::PasswordReset).await?;
+
     users::Entity::update_many()
         .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::PasswordHash, Expr::value(hashed_password))
