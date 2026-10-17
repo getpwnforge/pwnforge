@@ -56,8 +56,14 @@ impl RevokedReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
+    /// The link of a verification mail: proves the mailbox, and marks the
+    /// address verified.
     EmailVerification,
     PasswordReset,
+    /// What a sign-in on an unverified address answers with: proves the
+    /// password, not the mailbox, so it only asks for another verification
+    /// mail, sent to the address on file. Never accepted to verify.
+    EmailVerificationResend,
 }
 
 impl TokenKind {
@@ -65,6 +71,7 @@ impl TokenKind {
         match self {
             TokenKind::EmailVerification => "email_verification",
             TokenKind::PasswordReset => "password_reset",
+            TokenKind::EmailVerificationResend => "email_verification_resend",
         }
     }
 }

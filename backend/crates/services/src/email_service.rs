@@ -449,13 +449,29 @@ struct TestEmailText {
     public_url: String,
 }
 
+/// A link to a page of the app carrying a token, in the fragment: what
+/// follows `#` never leaves the browser, so the token stays out of the
+/// access logs of every server and proxy the page load goes through. The
+/// page reads it, then drops it from the address bar and the history.
+fn token_link(public_url: &str, path: &str, token: &str) -> String {
+    format!("{public_url}/{path}#token={token}")
+}
+
+fn reset_link(public_url: &str, token: &str) -> String {
+    token_link(public_url, "auth/password/reset", token)
+}
+
+fn verification_link(public_url: &str, token: &str) -> String {
+    token_link(public_url, "auth/email/verify", token)
+}
+
 pub async fn send_password_reset(
     config: &Config,
     to: &str,
     locale: &str,
     token: &str,
 ) -> Result<(), EmailError> {
-    let link = format!("{}/auth/password/reset?token={token}", config.public_url);
+    let link = reset_link(&config.public_url, token);
 
     let title = t!("email.password_reset.title", locale = locale).to_string();
     let preheader = t!("email.password_reset.preheader", locale = locale).to_string();
@@ -511,7 +527,7 @@ pub async fn send_email_verification(
     token: &str,
 ) -> Result<(), EmailError> {
     // Same shape, link points at the verification page.
-    let link = format!("{}/auth/email/verify?token={token}", config.public_url);
+    let link = verification_link(&config.public_url, token);
 
     let title = t!("email.email_verification.title", locale = locale).to_string();
     let preheader = t!("email.email_verification.preheader", locale = locale).to_string();
@@ -620,7 +636,11 @@ fn invitation_message(
     token: &str,
     expires_at: chrono::DateTime<chrono::Utc>,
 ) -> Result<RenderedMessage, askama::Error> {
-    let link = format!("{public_url}/invitations/{}?token={token}", kind.segment());
+    let link = token_link(
+        public_url,
+        &format!("invitations/{}", kind.segment()),
+        token,
+    );
     let (subject_key, preheader_key, body_key) = match kind {
         InvitationKind::Team => (
             "email.invitation.subject_team",
@@ -1101,7 +1121,7 @@ mod tests {
 
     #[test]
     fn password_reset_renders_in_both_languages() {
-        let link = "https://example.test/auth/password/reset?token=abc123";
+        let link = "https://example.test/auth/password/reset#token=abc123";
 
         for locale in ["en", "fr"] {
             let html = password_reset_html(locale, link)
@@ -1141,7 +1161,7 @@ mod tests {
     #[test]
     fn password_reset_text_carries_the_link() {
         let footer = Footer::new("en");
-        let link = "https://example.test/auth/password/reset?token=abc123";
+        let link = "https://example.test/auth/password/reset#token=abc123";
 
         let text = PasswordResetText {
             title: t!("email.password_reset.title", locale = "en").to_string(),
@@ -1246,7 +1266,7 @@ mod tests {
                     expires_at,
                 )
                 .expect("template must render");
-                let link = format!("{PUBLIC_URL}/invitations/{}?token=tok123", kind.segment());
+                let link = format!("{PUBLIC_URL}/invitations/{}#token=tok123", kind.segment());
 
                 for part in [&message.html, &message.text] {
                     assert!(part.contains(&link), "link missing in {locale}");
@@ -1264,6 +1284,23 @@ mod tests {
                 assert!(!message.subject.is_empty());
                 assert!(message.html.contains(&format!(r#"lang="{locale}""#)));
             }
+        }
+    }
+
+    /// Every link that carries a token carries it in the fragment, which the
+    /// browser never sends: a query string would land in the access log of
+    /// every server and proxy the page load goes through.
+    #[test]
+    fn token_links_carry_the_token_in_the_fragment() {
+        for (link, path) in [
+            (reset_link(PUBLIC_URL, "tok123"), "/auth/password/reset"),
+            (
+                verification_link(PUBLIC_URL, "tok123"),
+                "/auth/email/verify",
+            ),
+        ] {
+            assert_eq!(link, format!("{PUBLIC_URL}{path}#token=tok123"));
+            assert!(!link.contains('?'), "no query string in {link}");
         }
     }
 }

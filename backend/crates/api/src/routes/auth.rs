@@ -417,9 +417,28 @@ async fn password_change(
 )]
 async fn email_verify(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
     JsonBody(payload): JsonBody<EmailVerifyRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
+
+    // Fails open, like password/reset: the 256-bit token underneath is what
+    // stops a guess, this only bounds the lookups.
+    match rate_limit_service::check_email_verify_ip(
+        &mut state.redis.clone(),
+        ip.unwrap_or_else(|| remote.ip()),
+    )
+    .await
+    {
+        Ok(RateLimitDecision::Limited { retry_after_secs }) => {
+            return Err(AppError::RateLimited { retry_after_secs });
+        }
+        Ok(RateLimitDecision::Allowed) => {}
+        Err(err) => {
+            tracing::error!(error = ?err, "email verify rate limit unavailable, allowing request");
+        }
+    }
 
     auth_service::verify_email(&state.db, &payload.token).await?;
 
@@ -510,12 +529,211 @@ fn clear_auth_cookies(jar: CookieJar, config: &Config) -> CookieJar {
 mod tests {
     use axum::body::Body;
     use axum::extract::ConnectInfo;
-    use axum::http::{Request, StatusCode};
-    use std::net::SocketAddr;
+    use axum::http::{HeaderMap, Request, StatusCode};
+    use domain::entities::{auth_tokens, user_emails, users};
+    use redis::AsyncCommands;
+    use sea_orm::{
+        ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    };
+    use serde_json::{Value, json};
+    use std::net::{IpAddr, Ipv6Addr, SocketAddr};
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::test_support::{app_with_config, config, db};
+    use crate::test_support::{app, app_with_config, config, db, env_or};
+
+    const PASSWORD: &str = "a-long-test-password-1!";
+
+    /// A documentation address (RFC 3849) of its own per call, so no two
+    /// tests share a rate-limit bucket.
+    fn fresh_ip() -> IpAddr {
+        let id = Uuid::now_v7().as_u128();
+        IpAddr::V6(Ipv6Addr::new(
+            0x2001,
+            0x0db8,
+            0x0a11,
+            (id >> 64) as u16,
+            (id >> 48) as u16,
+            (id >> 32) as u16,
+            (id >> 16) as u16,
+            id as u16,
+        ))
+    }
+
+    async fn redis() -> redis::aio::ConnectionManager {
+        let client = redis::Client::open(env_or("REDIS_URL", "redis://127.0.0.1:6379"))
+            .expect("REDIS_URL must be valid");
+        redis::aio::ConnectionManager::new(client)
+            .await
+            .expect("a Redis instance must be reachable")
+    }
+
+    /// An account with `PASSWORD`, signing in by its username, and its
+    /// primary address, verified or not.
+    async fn account(db: &DatabaseConnection, verified: bool) -> (Uuid, String, String) {
+        let id = Uuid::now_v7();
+        let username = format!("a{}", &id.simple().to_string()[1..]);
+        let address = format!("{username}@example.test");
+        let hash = services::password_service::hash_password(PASSWORD.to_owned())
+            .await
+            .expect("the password must hash");
+        users::ActiveModel {
+            id: Set(id),
+            username: Set(username.clone()),
+            password_hash: Set(hash),
+            locale: Set("en".to_owned()),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .expect("the fixture user must insert");
+        user_emails::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            user_id: Set(id),
+            email: Set(address.clone()),
+            is_primary: Set(true),
+            verified_at: Set(verified.then(|| chrono::Utc::now().into())),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .expect("the fixture address must insert");
+        (id, username, address)
+    }
+
+    async fn post(
+        app: &axum::Router,
+        uri: &str,
+        body: Value,
+        ip: IpAddr,
+        cookie: Option<&str>,
+    ) -> (StatusCode, HeaderMap, Value) {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json");
+        if let Some(cookie) = cookie {
+            request = request.header("cookie", cookie);
+        }
+        let mut request = request
+            .body(Body::from(body.to_string()))
+            .expect("request must build");
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::new(ip, 0)));
+
+        let response = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("router must answer");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body must be readable");
+        let value = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes).expect("the body must be JSON")
+        };
+        (status, headers, value)
+    }
+
+    fn login_body(identifier: &str, password: &str, turnstile: &str) -> Value {
+        json!({ "username_or_email": identifier, "password": password, "turnstile_token": turnstile })
+    }
+
+    async fn verification_tokens(db: &DatabaseConnection, user: Uuid) -> Vec<auth_tokens::Model> {
+        auth_tokens::Entity::find()
+            .filter(auth_tokens::Column::UserId.eq(user))
+            .filter(auth_tokens::Column::Kind.eq("email_verification"))
+            .all(db)
+            .await
+            .expect("the lookup must succeed")
+    }
+
+    /// Signing in on an unverified address answers with a handle that asks
+    /// for another verification mail and nothing else: it does not verify
+    /// the address, so knowing the password is not knowing the mailbox.
+    #[tokio::test]
+    async fn the_handle_from_an_unverified_sign_in_resends_but_never_verifies() {
+        let db = db().await;
+        let app = app(&db).await;
+        let (user, username, _) = account(&db, false).await;
+        let ip = fresh_ip();
+
+        let (status, _, body) = post(
+            &app,
+            "/api/v1/auth/login",
+            login_body(&username, PASSWORD, ""),
+            ip,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "email_not_verified");
+        let handle = body["resend_token"].as_str().expect("a handle").to_owned();
+
+        let (status, _, body) = post(
+            &app,
+            "/api/v1/auth/email/verify",
+            json!({ "token": handle }),
+            ip,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"], "token_invalid");
+        let address = user_emails::Entity::find()
+            .filter(user_emails::Column::UserId.eq(user))
+            .one(&db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the address exists");
+        assert!(
+            address.verified_at.is_none(),
+            "the address stays unverified"
+        );
+
+        assert!(verification_tokens(&db, user).await.is_empty());
+        let (status, _, _) = post(
+            &app,
+            "/api/v1/auth/email/resend",
+            json!({ "token": handle }),
+            ip,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(
+            verification_tokens(&db, user).await.len(),
+            1,
+            "the resend issued a verification link, for the mail alone"
+        );
+    }
+
+    /// Verification is limited per IP.
+    #[tokio::test]
+    async fn email_verification_is_limited_per_ip() {
+        let db = db().await;
+        let app = app(&db).await;
+        let mut redis = redis().await;
+        let ip = fresh_ip();
+        let key = format!("ratelimit:verify:ip:{ip}");
+        let _: () = redis.set_ex(&key, 30, 3600).await.expect("SET");
+
+        let (status, _, _) = post(
+            &app,
+            "/api/v1/auth/email/verify",
+            json!({ "token": "any-token" }),
+            ip,
+            None,
+        )
+        .await;
+        let _: () = redis.del(&key).await.expect("DEL");
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
 
     /// With Turnstile on, a sign-in that carries no token is refused with
     /// 400 turnstile_failed. The refusal is local: the secret below is not a

@@ -35,6 +35,12 @@ const RESEND_BURST_WINDOW_SECS: i64 = 60;
 const RESEND_HOURLY_LIMIT: isize = 5;
 const RESEND_HOURLY_WINDOW_SECS: i64 = 60 * 60;
 
+// --- Email verification ---
+// Bounds the lookups an unauthenticated caller can trigger: the token is
+// 256 bits, so this is not what stops a guess.
+const VERIFY_IP_LIMIT: isize = 30;
+const VERIFY_IP_WINDOW_SECS: i64 = 60 * 60;
+
 // --- Setup ---
 // The setup wizard is a single endpoint that creates the first administrator and instance settings.
 const SETUP_IP_LIMIT: isize = 5;
@@ -192,6 +198,20 @@ pub async fn check_password_reset(
     ip: IpAddr,
 ) -> Result<RateLimitDecision, redis::RedisError> {
     check_window(redis, &reset_ip_key(ip), RESET_IP_LIMIT, RESET_WINDOW_SECS).await
+}
+
+/// Email verification, per IP.
+pub async fn check_email_verify_ip(
+    redis: &mut ConnectionManager,
+    ip: IpAddr,
+) -> Result<RateLimitDecision, redis::RedisError> {
+    check_window(
+        redis,
+        &email_verify_ip_key(ip),
+        VERIFY_IP_LIMIT,
+        VERIFY_IP_WINDOW_SECS,
+    )
+    .await
 }
 
 pub async fn check_email_resend(
@@ -445,6 +465,10 @@ fn forgot_ip_key(ip: IpAddr) -> String {
 
 fn reset_ip_key(ip: IpAddr) -> String {
     format!("ratelimit:reset:ip:{ip}")
+}
+
+fn email_verify_ip_key(ip: IpAddr) -> String {
+    format!("ratelimit:verify:ip:{ip}")
 }
 
 fn email_resend_key(token_hash: &str) -> String {

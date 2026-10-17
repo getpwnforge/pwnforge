@@ -10,6 +10,7 @@ use crate::{
     turnstile_service,
 };
 use chrono::Utc;
+use domain::types::TokenKind;
 use domain::{
     dto::auth::{LoggedInUser, LoginRequest, RegisterRequest, RegisteredUser, SessionContext},
     entities::{reserved_usernames, user_emails, users},
@@ -272,14 +273,14 @@ pub async fn login(
             .ok_or(AuthError::InvalidCredentials)?,
     };
 
+    // A handle to ask for another verification mail, not a verification
+    // token: the caller has proven the password, not the mailbox, and a
+    // token that verified would let anyone who registers an address they do
+    // not hold verify it, then receive what is sent to it.
     if email.verified_at.is_none() {
-        let resend_token = auth_token_service::issue(
-            db,
-            user.id,
-            email.id,
-            domain::types::TokenKind::EmailVerification,
-        )
-        .await?;
+        let resend_token =
+            auth_token_service::issue(db, user.id, email.id, TokenKind::EmailVerificationResend)
+                .await?;
 
         return Err(AuthError::EmailNotVerified { resend_token });
     }
@@ -666,13 +667,24 @@ pub async fn verify_email(db: &DatabaseConnection, secret: &str) -> Result<(), A
 }
 
 /// Re-sends the verification link for a user's address.
+///
+/// Takes either the link of an earlier verification mail, expired or spent,
+/// or the handle a sign-in on the unverified address answered with. Both
+/// only ever send a new link to the address on file.
 pub async fn resend_verification(
     db: &DatabaseConnection,
     config: &Config,
     secret: &str,
 ) -> Result<(), AuthError> {
-    let token =
-        auth_token_service::find(db, secret, domain::types::TokenKind::EmailVerification).await?;
+    let token = auth_token_service::find_any(
+        db,
+        secret,
+        &[
+            TokenKind::EmailVerification,
+            TokenKind::EmailVerificationResend,
+        ],
+    )
+    .await?;
     let user_id = token.user_id;
 
     let email_id = token.email_id.ok_or(AuthError::InvalidCredentials)?;

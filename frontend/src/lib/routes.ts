@@ -32,7 +32,7 @@ export const ROUTES = {
   login: "/login",
   register: "/register",
   // Matches the link sent by `email_service::send_email_verification` exactly
-  // (`{public_url}/auth/email/verify?token=...`) — the backend builds that URL
+  // (`{public_url}/auth/email/verify#token=...`): the backend builds that URL
   // itself, so the frontend route has to line up with it, not the other way.
   confirmEmail: "/auth/email/verify",
   forgotPassword: "/forgot-password",
