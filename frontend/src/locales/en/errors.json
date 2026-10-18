@@ -27,7 +27,6 @@
     "invalid_body": "The request could not be processed. Reload the page and try again.",
     "malformed_json": "The request could not be processed. Reload the page and try again.",
     "unsupported_media_type": "The request could not be processed. Reload the page and try again.",
-    "legal_acceptance_required": "You must accept the terms to continue.",
     "turnstile_failed": "Turnstile verification failed. Please try again."
   },
   "auth": {

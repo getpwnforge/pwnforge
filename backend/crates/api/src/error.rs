@@ -431,7 +431,6 @@ fn alert_response(err: &AlertError) -> Response {
 fn legal_response(err: &LegalError) -> Response {
     let (status, code) = match err {
         LegalError::VersionStale => (StatusCode::CONFLICT, "legal_version_stale"),
-        LegalError::AcceptanceRequired => (StatusCode::FORBIDDEN, "legal_acceptance_required"),
         LegalError::Db(_) => {
             tracing::error!(error = ?err, "legal acceptance store failure");
             (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")

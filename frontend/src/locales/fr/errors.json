@@ -27,7 +27,6 @@
     "invalid_body": "La requête n'a pas pu être traitée. Rechargez la page et réessayez.",
     "malformed_json": "La requête n'a pas pu être traitée. Rechargez la page et réessayez.",
     "unsupported_media_type": "La requête n'a pas pu être traitée. Rechargez la page et réessayez.",
-    "legal_acceptance_required": "Vous devez accepter les conditions pour continuer.",
     "turnstile_failed": "La vérification Turnstile a échoué. Veuillez réessayer."
   },
   "auth": {

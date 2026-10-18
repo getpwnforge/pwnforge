@@ -40,7 +40,6 @@ export const API_ERROR_CODES = [
   "malformed_json",
   "unsupported_media_type",
   "legal_version_stale",
-  "legal_acceptance_required",
   // Frontend-only: the request never reached the API.
   "network",
 ] as const;
