@@ -15,9 +15,9 @@ use domain::dto::workspace::WorkspaceMode;
 use domain::entities::{users, workspaces};
 use redis::{AsyncCommands, aio::ConnectionManager};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, TransactionTrait, prelude::DateTimeWithTimeZone,
-    sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
+    prelude::DateTimeWithTimeZone, sea_query::Expr,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -313,15 +313,14 @@ pub async fn delete_user(
         return Err(AdminError::SelfTarget);
     }
 
-    if is_counted_admin(&user) && admin_count(db).await? == 1 {
-        return Err(AdminError::LastAdmin);
-    }
-
     let primary_email = auth_service::primary_email(db, user.id).await?;
 
     let purge_date: Option<DateTimeWithTimeZone> = match kind {
         DeletionKind::Standard => {
             let txn = db.begin().await?;
+
+            // A scheduled account leaves the administrator count.
+            ensure_not_last_admin(&txn, user.id).await?;
 
             // Locked before the check: a transfer naming this account Captain
             // takes the same row, so it either lands first and is refused
@@ -582,18 +581,19 @@ pub async fn demote_admin(
 
     let primary_email = auth_service::primary_email(db, user.id).await?;
 
-    let count = admin_count(db).await?;
-    let counted = is_counted_admin(&user);
-    if counted && count == 1 {
-        return Err(AdminError::LastAdmin);
+    // Transaction: clear is_instance_admin, record UserDemoteAdmin.
+    let txn = db.begin().await?;
+
+    let (user, count) = ensure_not_last_admin(&txn, user.id).await?;
+    // Demoted by another operation while this one waited on the lock.
+    if !user.is_instance_admin {
+        return Ok(());
     }
+    let counted = is_counted_admin(&user);
 
     if Some(user.id) == ctx.actor_id {
         return Err(AdminError::SelfTarget);
     }
-
-    // 4. Transaction: clear is_instance_admin, record UserDemoteAdmin.
-    let txn = db.begin().await?;
 
     users::Entity::update_many()
         .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
@@ -870,6 +870,8 @@ async fn delete_account(
 ) -> Result<(), AdminError> {
     let txn = db.begin().await?;
 
+    ensure_not_last_admin(&txn, user_id).await?;
+
     // The account's id goes in the entry's own data, not only in its target:
     // `target_user_id` is set to NULL with the account, and the entry would
     // no longer say whom it was about.
@@ -967,6 +969,43 @@ async fn delete_account_rows<C: ConnectionTrait>(
     Ok(objects)
 }
 
+/// Key of the advisory lock that every operation taking an administrator out
+/// of the count holds for its transaction (see `ensure_not_last_admin`).
+/// Arbitrary but fixed: nothing else in the instance takes this key.
+pub const ADMIN_QUORUM_LOCK: i64 = 0x7077_6e66_6164_6d6e;
+
+/// Refuses to take `user_id` out of the administrator count when it is the
+/// last one in it, and returns the account as read under the lock, with the
+/// count. Called by every such operation (a demotion, a deletion request, an
+/// account deletion) in its own transaction, before it writes anything.
+///
+/// The quorum lock comes first: two removals in flight would otherwise each
+/// count the other administrator, and both go through. It holds until the
+/// transaction ends, so the next removal counts once this one is committed.
+async fn ensure_not_last_admin<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<(users::Model, u64), AdminError> {
+    conn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT pg_advisory_xact_lock($1)",
+        [ADMIN_QUORUM_LOCK.into()],
+    ))
+    .await?;
+
+    let user = users::Entity::find_by_id(user_id)
+        .one(conn)
+        .await?
+        .ok_or(AdminError::UserNotFound)?;
+    let count = admin_count(conn).await?;
+
+    if is_counted_admin(&user) && count == 1 {
+        return Err(AdminError::LastAdmin);
+    }
+
+    Ok((user, count))
+}
+
 /// Whether `user` is one of the administrators `admin_count` counts. The
 /// last-admin guards apply to those only: an admin scheduled for deletion is
 /// already out of the count, so removing them leaves it where it is.
@@ -974,7 +1013,8 @@ fn is_counted_admin(user: &users::Model) -> bool {
     user.is_instance_admin && user.purge_scheduled_at.is_none()
 }
 
-/// Counts remaining administrators, used by demote_admin.
+/// Counts remaining administrators, used by `ensure_not_last_admin` and
+/// `promote_admin`.
 async fn admin_count<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
     // Counts users where is_instance_admin is true and purge_scheduled_at is null, to avoid counting admins that are scheduled for deletion.
     users::Entity::find()
