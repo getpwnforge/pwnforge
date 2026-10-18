@@ -14,41 +14,12 @@ import { FormError } from "@/components/common/FormError";
 import { loginSchema, type LoginValues } from "@/lib/schemas/auth";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
+import { safeRedirect } from "@/lib/safe-redirect";
 import { InputGroup, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { isApiError } from "@/lib/api-error";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useTurnstile } from "@/hooks/useTurnstile";
 import { TurnstileWidget } from "@/components/common/TurnstileWidget";
-
-/**
- * Where to land after signing in.
- *
- * Only same-origin paths are accepted: `//evil.tld` and `https://evil.tld` are
- * both values a browser will happily follow off-site, and this one comes
- * straight from the query string. The router refuses an external target too;
- * this check does not rely on it. A backslash is refused outright, since
- * browsers read `/\evil.tld` as `//evil.tld`, and the rest is resolved the
- * way the browser would resolve it: tabs and newlines dropped, `/./` and
- * `/../` folded. Only a result on this origin is used, and only as resolved.
- */
-function safeRedirect(target: string | null): string {
-  if (!target || !target.startsWith("/") || target.startsWith("//") || target.includes("\\")) {
-    return ROUTES.workspaces;
-  }
-
-  let resolved: URL;
-  try {
-    resolved = new URL(target, window.location.origin);
-  } catch {
-    return ROUTES.workspaces;
-  }
-
-  if (resolved.origin !== window.location.origin) {
-    return ROUTES.workspaces;
-  }
-
-  return `${resolved.pathname}${resolved.search}${resolved.hash}`;
-}
 
 export function LoginPage() {
   const { t } = useTranslation(["auth", "common"]);
