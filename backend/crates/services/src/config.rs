@@ -322,6 +322,19 @@ impl Config {
 
         Ok(())
     }
+
+    /// Whether `public_url` is an `https://` address. Not refused at boot, as
+    /// a local instance runs on plain HTTP, but warned about (see `main`):
+    /// without TLS in front, the setup token, every password and the session
+    /// cookies cross the network in clear.
+    pub fn public_url_is_https(&self) -> bool {
+        is_https(&self.public_url)
+    }
+}
+
+fn is_https(url: &str) -> bool {
+    url.get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
 }
 
 impl StorageConfig {
@@ -577,6 +590,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An `https://` address in any case passes; plain HTTP, a missing
+    /// scheme or an empty value do not.
+    #[test]
+    fn only_an_https_public_url_counts_as_https() {
+        for url in ["https://ctf.example.test", "HTTPS://ctf.example.test:8443"] {
+            assert!(is_https(url), "{url} is https");
+        }
+        for url in ["http://localhost:5173", "ctf.example.test", "https:/x", ""] {
+            assert!(!is_https(url), "{url:?} is not https");
+        }
+    }
 
     /// Positive: the shapes an operator legitimately configures, from local
     /// development to a host on a non-standard port.

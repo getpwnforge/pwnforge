@@ -60,6 +60,12 @@ If you bring your own S3 instead, clear `COMPOSE_PROFILES` in `.env` and fill in
 
 The account you create on the `/setup` page is the instance's administration account. Create a separate account for everyday use.
 
+### Serve it over HTTPS
+
+The stack serves plain HTTP on `HTTP_PORT`: it does not terminate TLS itself. Put a TLS-terminating reverse proxy in front of it (Caddy, Traefik, Nginx Proxy Manager, Cloudflare...), set `PUBLIC_URL` and `CORS_ORIGIN` to the `https://` address that proxy serves, and set `TRUSTED_PROXY_COUNT=2` (see `.env.example`).
+
+Do it before opening `/setup`. That page sends the setup token and the administrator's password, and over plain HTTP they cross the network in clear, as every later password and session cookie would. Keep `COOKIE_SECURE=true`: browsers then refuse the session cookies over plain HTTP, so an instance reached without TLS keeps no one signed in rather than exposing their sessions. The backend logs a warning at startup when `PUBLIC_URL` is not an `https://` address.
+
 ### Enable Turnstile (optional)
 
 [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) adds a bot check to sign-in, registration, password reset requests and the contact form. It is off until you configure it.

@@ -35,6 +35,17 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     let port = config.port;
 
+    // warn! rather than a refusal: a local instance runs on plain HTTP.
+    if !config.public_url_is_https() {
+        tracing::warn!(
+            public_url = %config.public_url,
+            "PUBLIC_URL is not https. Fine for local development; anywhere else, serve \
+             the instance behind a TLS-terminating reverse proxy: without it the setup \
+             token, every password and the session cookies cross the network in clear, \
+             and browsers drop the session cookies while COOKIE_SECURE is on"
+        );
+    }
+
     let db = services::connect_db(&config).await?;
     let redis = services::connect_redis(&config).await?;
 
