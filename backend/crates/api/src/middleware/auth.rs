@@ -2,20 +2,12 @@
 use crate::{error::AppError, state::AppState};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use axum_extra::extract::CookieJar;
-use domain::entities::users;
 use redis::AsyncCommands;
-use sea_orm::{EntityTrait, QuerySelect, prelude::DateTimeWithTimeZone};
-use serde::{Deserialize, Serialize};
 use services::{
-    admin_service::suspension_cache_key,
-    auth_service::{self, AuthError},
     jwt_service,
+    suspension_cache::{self, SuspensionState, suspension_cache_key},
 };
 use uuid::Uuid;
-
-/// Short enough that a suspension takes effect within seconds even if the
-/// explicit invalidation on the admin side fails.
-const SUSPENSION_CACHE_TTL_SECS: u64 = 30;
 
 /// An authenticated caller.
 ///
@@ -55,33 +47,6 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
-/// Cached suspension state for a user. All fields `None` means active.
-#[derive(Debug, Serialize, Deserialize)]
-struct SuspensionState {
-    suspended_at: Option<DateTimeWithTimeZone>,
-    suspended_until: Option<DateTimeWithTimeZone>,
-    suspended_reason: Option<String>,
-    purge_scheduled_at: Option<DateTimeWithTimeZone>,
-}
-
-impl SuspensionState {
-    fn as_error(&self) -> Option<AuthError> {
-        auth_service::suspension_error(
-            self.suspended_at,
-            self.suspended_until,
-            self.suspended_reason.clone(),
-            self.purge_scheduled_at,
-        )
-    }
-}
-
-type SuspensionRow = (
-    Option<DateTimeWithTimeZone>,
-    Option<DateTimeWithTimeZone>,
-    Option<String>,
-    Option<DateTimeWithTimeZone>,
-);
-
 /// Resolves suspension state, reading through a short-lived Redis cache.
 ///
 /// Redis is an optimisation, not the source of truth: any Redis failure falls
@@ -89,7 +54,9 @@ type SuspensionRow = (
 /// cache write is ignored, since the next request will simply query again.
 ///
 /// The negative case is cached too: without it, the overwhelming majority of
-/// requests would miss and the cache would buy nothing.
+/// requests would miss and the cache would buy nothing. The fill only takes
+/// an empty entry (see `suspension_cache`): a suspension landing between the
+/// read below and the fill has written its own state, which must win.
 async fn resolve_suspension(state: &AppState, user_id: Uuid) -> Result<SuspensionState, AppError> {
     let mut redis = state.redis.clone();
     let key = suspension_cache_key(user_id);
@@ -102,75 +69,13 @@ async fn resolve_suspension(state: &AppState, user_id: Uuid) -> Result<Suspensio
         return Ok(parsed);
     }
 
-    let row: Option<SuspensionRow> = users::Entity::find_by_id(user_id)
-        .select_only()
-        .column(users::Column::SuspendedAt)
-        .column(users::Column::SuspendedUntil)
-        .column(users::Column::SuspendedReason)
-        .column(users::Column::PurgeScheduledAt)
-        .into_tuple()
-        .one(&state.db)
-        .await?;
-
     // A valid token pointing at a row that no longer exists: the account was
     // deleted while the access token was still live.
-    let (suspended_at, suspended_until, suspended_reason, purge_scheduled_at) =
-        row.ok_or(AppError::Unauthorized)?;
+    let suspension = suspension_cache::read(&state.db, user_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
 
-    let suspension = SuspensionState {
-        suspended_at,
-        suspended_until,
-        suspended_reason,
-        purge_scheduled_at,
-    };
-
-    if let Ok(payload) = serde_json::to_string(&suspension) {
-        let _: Result<(), _> = redis.set_ex(&key, payload, SUSPENSION_CACHE_TTL_SECS).await;
-    }
+    suspension_cache::fill(&mut redis, user_id, &suspension).await;
 
     Ok(suspension)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Utc;
-
-    fn state(
-        at: Option<DateTimeWithTimeZone>,
-        until: Option<DateTimeWithTimeZone>,
-        purge_scheduled_at: Option<DateTimeWithTimeZone>,
-    ) -> SuspensionState {
-        SuspensionState {
-            suspended_at: at,
-            suspended_until: until,
-            suspended_reason: None,
-            purge_scheduled_at,
-        }
-    }
-
-    #[test]
-    fn active_account_is_not_rejected() {
-        assert!(state(None, None, None).as_error().is_none());
-    }
-
-    #[test]
-    fn permanent_suspension_is_rejected() {
-        let at = Utc::now().into();
-        assert!(state(Some(at), None, None).as_error().is_some());
-    }
-
-    #[test]
-    fn future_deadline_is_rejected() {
-        let at = Utc::now().into();
-        let until = (Utc::now() + chrono::Duration::days(1)).into();
-        assert!(state(Some(at), Some(until), None).as_error().is_some());
-    }
-
-    #[test]
-    fn expired_suspension_does_not_block() {
-        let at = (Utc::now() - chrono::Duration::days(2)).into();
-        let until = (Utc::now() - chrono::Duration::days(1)).into();
-        assert!(state(Some(at), Some(until), None).as_error().is_none());
-    }
 }

@@ -20,6 +20,7 @@ pub mod setup_service;
 pub mod slug_service;
 pub mod stats_service;
 pub mod storage_service;
+pub mod suspension_cache;
 pub mod team_service;
 pub mod token_service;
 pub mod turnstile_service;

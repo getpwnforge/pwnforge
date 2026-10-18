@@ -7,13 +7,14 @@ use crate::{
     password_service::{self, PasswordError},
     session_service::{self, SessionError, revoke_all},
     storage_service::{AvatarKind, ObjectStore, ObjectsToPurge},
+    suspension_cache,
     team_service::{self, Succession, TeamError},
     workspace_service::{self, WorkspaceError},
 };
 use chrono::{Duration, Utc};
 use domain::dto::workspace::WorkspaceMode;
 use domain::entities::{users, workspaces};
-use redis::{AsyncCommands, aio::ConnectionManager};
+use redis::aio::ConnectionManager;
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
@@ -144,7 +145,9 @@ pub async fn suspend_user(
 
     txn.commit().await?;
 
-    invalidate_suspension_cache(redis, user.id).await;
+    // The suspended state, not a deletion of the entry: a request that read
+    // the account before this commit could otherwise cache it as active again.
+    suspension_cache::store_blocked(db, redis, user.id).await;
 
     // Send an email alert to the user, if they have a primary email. This is best-effort: the account is already suspended, and the transaction has committed.
     if let Some(email) = primary_email {
@@ -237,7 +240,7 @@ pub async fn unsuspend_user(
 
     txn.commit().await?;
 
-    invalidate_suspension_cache(redis, user.id).await;
+    suspension_cache::clear(redis, user.id).await;
 
     if let Some(primary_email) = primary_email
         && let Err(err) = email_service::send_account_notice(
@@ -392,7 +395,7 @@ pub async fn delete_user(
         }
     };
 
-    invalidate_suspension_cache(redis, user.id).await;
+    suspension_cache::store_blocked(db, redis, user.id).await;
 
     if let Some(primary_email) = primary_email {
         let event_kind = match kind {
@@ -763,10 +766,6 @@ pub async fn revoke_sessions(
     Ok(revoked_count)
 }
 
-pub fn suspension_cache_key(user_id: Uuid) -> String {
-    format!("user:{user_id}:suspension")
-}
-
 /// What one pass of `purge_scheduled_deletions` did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PurgeOutcome {
@@ -1022,16 +1021,4 @@ async fn admin_count<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
         .filter(users::Column::PurgeScheduledAt.is_null())
         .count(db)
         .await
-}
-
-/// Drops the cached suspension state so a decision applies immediately.
-///
-/// Best effort by design: the cache is an optimisation, and its TTL bounds
-/// the damage of a failure here to thirty seconds.
-async fn invalidate_suspension_cache(redis: &mut ConnectionManager, user_id: Uuid) {
-    let key = suspension_cache_key(user_id);
-
-    if let Err(err) = redis.del::<_, ()>(&key).await {
-        tracing::warn!(error = ?err, %user_id, "failed to invalidate suspension cache");
-    }
 }
