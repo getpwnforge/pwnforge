@@ -215,8 +215,9 @@ jobs:
         # --ignore-scripts blocks lifecycle scripts (preinstall/install/postinstall) from
         # any dependency, including transitive ones, from running arbitrary code at install
         # time. If a specific trusted package genuinely needs its build script (native
-        # bindings, etc.), allowlist it explicitly via `pnpm.onlyBuiltDependencies` in
-        # package.json instead of dropping this flag.
+        # bindings, etc.), allowlist it explicitly under `allowBuilds` in
+        # frontend/pnpm-workspace.yaml (pnpm 11 replaced `onlyBuiltDependencies` with it)
+        # instead of dropping this flag.
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Lint

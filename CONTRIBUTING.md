@@ -100,6 +100,18 @@ make test-backend
 pnpm test
 ```
 
+### Frontend tests
+
+`pnpm test` runs [Vitest](https://vitest.dev) once, in a jsdom environment,
+over every `src/**/*.test.ts(x)` file, and fails when a test fails or when it
+finds none. Components are rendered with Testing Library; the network is
+faked at the app's own axios instance (`src/test/fake-api.ts`), never with an
+HTTP mocking library. `src/test/setup.ts` undoes after each test what one
+could leave behind for the next: the rendered tree, the zustand stores, the
+shared query cache, both storages and the address bar. Test files are type
+checked on their own (`tsconfig.test.json`), so their types never reach the
+application code.
+
 Use `make test-backend` rather than `cargo test` directly. Parts of the suite
 talk to a real Postgres, Redis and object store, and the target starts them,
 loads the root `.env` and points the endpoints at the host. A bare `cargo test`
