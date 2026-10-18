@@ -18,7 +18,13 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
+      # Full history: on a push, paths-filter compares against commits it
+      # finds locally and fetches only the ones it does not, which would need
+      # the credentials this checkout no longer keeps.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Filter paths
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -69,6 +75,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -86,7 +94,7 @@ jobs:
 
       - name: Clippy
         working-directory: backend
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       # Garage cannot be a `services:` container: it needs a config file, and
       # services start before the repository is checked out, so there is
@@ -160,7 +168,7 @@ jobs:
           PWNFORGE_S3_SECRET_ACCESS_KEY: cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici
           PWNFORGE_S3_BUCKET_ATTACHMENTS: pwnforge-attachments
           PWNFORGE_S3_BUCKET_AVATARS: pwnforge-avatars
-        run: cargo test --all-features --no-fail-fast
+        run: cargo test --locked --all-features --no-fail-fast
 
       - name: Object storage logs on failure
         if: failure()
@@ -173,6 +181,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         # Corepack ships with Node itself and reads the "packageManager" field in
