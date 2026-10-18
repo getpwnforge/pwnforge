@@ -83,6 +83,17 @@ async fn run_once(db: &DatabaseConnection, storage: &ObjectStore) {
         }
         Err(err) => tracing::error!(error = ?err, "scheduled deletion purge failed"),
     }
+
+    match admin_service::purge_unverified_accounts(db, storage).await {
+        Ok(PurgeOutcome {
+            purged: 0,
+            failed: 0,
+        }) => {}
+        Ok(PurgeOutcome { purged, failed }) => {
+            tracing::info!(purged, failed, "accounts never verified purged")
+        }
+        Err(err) => tracing::error!(error = ?err, "unverified account purge failed"),
+    }
 }
 
 async fn clean_refresh_tokens(db: &DatabaseConnection) -> Result<u64, DbErr> {

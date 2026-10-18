@@ -86,6 +86,8 @@ pub enum AuditAction {
     UserDeleteByAdmin,
     UserDeletionScheduled,
     UserPurged,
+    /// An account deleted by the cleanup task for never verifying an address.
+    UserUnverifiedPurged,
     UserDeletionCancelled,
     UserPromoteAdmin,
     UserDemoteAdmin,
@@ -112,6 +114,7 @@ impl AuditAction {
             Self::UserDeleteByAdmin => "user.delete_by_admin",
             Self::UserDeletionScheduled => "user.deletion_scheduled",
             Self::UserPurged => "user.purged",
+            Self::UserUnverifiedPurged => "user.unverified_purged",
             Self::UserDeletionCancelled => "user.deletion_cancelled",
             Self::UserPromoteAdmin => "user.promote_admin",
             Self::UserDemoteAdmin => "user.demote_admin",

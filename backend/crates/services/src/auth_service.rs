@@ -335,6 +335,10 @@ async fn authenticate(
     // token: the caller has proven the password, not the mailbox, and a
     // token that verified would let anyone who registers an address they do
     // not hold verify it, then receive what is sent to it.
+    //
+    // Unconditional, and the purge of accounts that never verified an
+    // address relies on it: relaxing it means disabling that purge too (see
+    // `admin_service::purge_unverified_accounts`).
     if email.verified_at.is_none() {
         let resend_token =
             auth_token_service::issue(db, user.id, email.id, TokenKind::EmailVerificationResend)

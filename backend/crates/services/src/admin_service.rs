@@ -13,12 +13,14 @@ use crate::{
 };
 use chrono::{Duration, Utc};
 use domain::dto::workspace::WorkspaceMode;
-use domain::entities::{users, workspaces};
+use domain::entities::{legal_acceptances, user_emails, users, workspaces};
+use domain::legal::AcceptanceMethod;
 use redis::aio::ConnectionManager;
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
-    prelude::DateTimeWithTimeZone, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, ExprTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select, Statement, TransactionTrait,
+    prelude::DateTimeWithTimeZone,
+    sea_query::{Expr, Query},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -40,6 +42,11 @@ pub enum AdminError {
     /// An admin acting on their own account, where it makes no sense.
     #[error("self target")]
     SelfTarget,
+
+    /// An account selected by `purge_unverified_accounts` that no longer
+    /// meets its criteria once locked: verified, or promoted, meanwhile.
+    #[error("account no longer meets the purge criteria")]
+    NoLongerPurgeable,
 
     /// A deletion request for the Captain of teams that have other members,
     /// named here by slug: each needs its Captain role transferred first.
@@ -383,7 +390,7 @@ pub async fn delete_user(
                 action: domain::types::AuditAction::UserDeleteByAdmin,
                 ctx,
                 reason,
-                kind,
+                kind: DeletionCause::Requested(kind),
                 details: serde_json::json!({
                     "is_instance_admin": user.is_instance_admin,
                     "created_at": user.created_at,
@@ -766,7 +773,8 @@ pub async fn revoke_sessions(
     Ok(revoked_count)
 }
 
-/// What one pass of `purge_scheduled_deletions` did.
+/// What one pass of `purge_scheduled_deletions` or
+/// `purge_unverified_accounts` did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PurgeOutcome {
     pub purged: u64,
@@ -787,12 +795,109 @@ pub async fn purge_scheduled_deletions(
     db: &DatabaseConnection,
     store: &ObjectStore,
 ) -> Result<PurgeOutcome, AdminError> {
-    const BATCH_SIZE: u64 = 1000;
     let due = Utc::now();
+
+    purge_each(
+        db,
+        store,
+        users::Entity::find().filter(users::Column::PurgeScheduledAt.lte(due)),
+        domain::types::AuditAction::UserPurged,
+        // The request that scheduled it was a standard one.
+        DeletionCause::Requested(DeletionKind::Standard),
+    )
+    .await
+}
+
+/// How many days a new account has to verify an address before
+/// `purge_unverified_accounts` deletes it.
+pub const UNVERIFIED_ACCOUNT_DAYS: i32 = 7;
+
+/// Deletes every account that never verified an address in time, so that an
+/// address registered by someone who does not own it is not held forever:
+/// the owner could neither register with it nor sign in with it. Called from
+/// the periodic task in api/src/tasks/cleanup.rs.
+///
+/// The criteria are those of `never_verified`, checked again inside each
+/// deletion, under the account's locks: an address verified meanwhile keeps
+/// the account. Each deletion goes through `delete_account`, with an audit
+/// entry that names the account by id only. Like the scheduled purge, one
+/// account that fails does not stop the others.
+///
+/// It assumes that verifying an address is mandatory. An account signs in
+/// only with a verified address (`auth_service::authenticate` refuses any
+/// other, whatever the configuration), every session and access token comes
+/// from that sign-in, and an address stays verified once it is: an account
+/// this deletes has never been usable. Any future setting that relaxes the
+/// verification, or another way in such as an OAuth sign-in, must disable
+/// this purge as well.
+pub async fn purge_unverified_accounts(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+) -> Result<PurgeOutcome, AdminError> {
+    purge_each(
+        db,
+        store,
+        never_verified(),
+        domain::types::AuditAction::UserUnverifiedPurged,
+        DeletionCause::NeverVerified,
+    )
+    .await
+}
+
+/// The accounts `purge_unverified_accounts` deletes, on the database clock:
+/// - created more than `UNVERIFIED_ACCOUNT_DAYS` days ago;
+/// - with none of their addresses verified, ever: an address is never
+///   unverified once verified, so `verified_at` on each of them is the whole
+///   history, and an address added but not verified yet counts as none;
+/// - not an administrator;
+/// - not the account the setup created: it alone holds the operator's
+///   acceptance (`AcceptanceMethod::Operator`), which registration never
+///   records. The admin CLI creates no account.
+fn never_verified() -> Select<users::Entity> {
+    users::Entity::find()
+        .filter(
+            Expr::col((users::Entity, users::Column::CreatedAt)).lt(Expr::cust_with_values(
+                "now() - make_interval(days => $1)",
+                [UNVERIFIED_ACCOUNT_DAYS],
+            )),
+        )
+        .filter(
+            users::Column::Id.not_in_subquery(
+                Query::select()
+                    .column(user_emails::Column::UserId)
+                    .from(user_emails::Entity)
+                    .and_where(user_emails::Column::VerifiedAt.is_not_null())
+                    .to_owned(),
+            ),
+        )
+        .filter(users::Column::IsInstanceAdmin.eq(false))
+        .filter(
+            users::Column::Id.not_in_subquery(
+                Query::select()
+                    .column(legal_acceptances::Column::UserId)
+                    .from(legal_acceptances::Entity)
+                    .and_where(
+                        legal_acceptances::Column::Method.eq(AcceptanceMethod::Operator.as_str()),
+                    )
+                    .to_owned(),
+            ),
+        )
+}
+
+/// Deletes, one by one, every account `selection` finds, walking by id past
+/// the failures (see `purge_scheduled_deletions`).
+async fn purge_each(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    selection: Select<users::Entity>,
+    action: domain::types::AuditAction,
+    cause: DeletionCause,
+) -> Result<PurgeOutcome, AdminError> {
+    const BATCH_SIZE: u64 = 1000;
     let mut outcome = PurgeOutcome::default();
     let mut after: Option<Uuid> = None;
 
-    // System-initiated: no human actor behind a scheduled purge.
+    // System-initiated: no human actor behind a purge.
     let ctx = AuditContext {
         actor_id: None,
         ip_address: None,
@@ -800,10 +905,10 @@ pub async fn purge_scheduled_deletions(
     };
 
     loop {
-        let mut batch = users::Entity::find()
+        let mut batch = selection
+            .clone()
             .select_only()
             .column(users::Column::Id)
-            .filter(users::Column::PurgeScheduledAt.lte(due))
             .order_by_asc(users::Column::Id)
             .limit(BATCH_SIZE);
         if let Some(after) = after {
@@ -817,21 +922,23 @@ pub async fn purge_scheduled_deletions(
 
         for user_id in ids {
             let record = DeletionRecord {
-                action: domain::types::AuditAction::UserPurged,
+                action,
                 ctx: &ctx,
                 reason: None,
-                // The request that scheduled it was a standard one.
-                kind: DeletionKind::Standard,
+                kind: cause,
                 details: serde_json::json!({}),
             };
 
             match delete_account(db, store, user_id, record).await {
                 Ok(()) => outcome.purged += 1,
+                // Selected, then changed before its deletion: nothing failed.
+                Err(AdminError::NoLongerPurgeable) => {}
                 Err(error) => {
                     tracing::error!(
                         %user_id,
                         ?error,
-                        "scheduled deletion of this account failed, moving on to the next"
+                        cause = cause.as_str(),
+                        "purge of this account failed, moving on to the next"
                     );
                     outcome.failed += 1;
                 }
@@ -845,13 +952,32 @@ pub async fn purge_scheduled_deletions(
     Ok(outcome)
 }
 
+/// Why `delete_account` deletes an account, as its audit entry records it.
+#[derive(Debug, Clone, Copy)]
+enum DeletionCause {
+    /// An administrator's request, carried out now or once its grace period
+    /// is over.
+    Requested(DeletionKind),
+    /// No address verified in time (see `purge_unverified_accounts`).
+    NeverVerified,
+}
+
+impl DeletionCause {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested(kind) => kind.as_str(),
+            Self::NeverVerified => "unverified",
+        }
+    }
+}
+
 /// The audit entry an account deletion writes, in the same transaction as
 /// the deletion itself.
 struct DeletionRecord<'a> {
     action: domain::types::AuditAction,
     ctx: &'a AuditContext,
     reason: Option<&'a str>,
-    kind: DeletionKind,
+    kind: DeletionCause,
     /// More about the account, as a JSON object; `delete_account` adds its
     /// id and `kind`. Never a username or an address: the entry outlives
     /// the account, and must not keep what the deletion removes.
@@ -860,7 +986,7 @@ struct DeletionRecord<'a> {
 
 /// Deletes one account and what is only its own, in one transaction, then
 /// purges their objects once it is committed. The only path that deletes a
-/// user row: the scheduled purge and the immediate deletions both come here.
+/// user row: the purges and the immediate deletions all come here.
 async fn delete_account(
     db: &DatabaseConnection,
     store: &ObjectStore,
@@ -870,6 +996,10 @@ async fn delete_account(
     let txn = db.begin().await?;
 
     ensure_not_last_admin(&txn, user_id).await?;
+
+    if let DeletionCause::NeverVerified = record.kind {
+        ensure_still_never_verified(&txn, user_id).await?;
+    }
 
     // The account's id goes in the entry's own data, not only in its target:
     // `target_user_id` is set to NULL with the account, and the entry would
@@ -966,6 +1096,42 @@ async fn delete_account_rows<C: ConnectionTrait>(
     users::Entity::delete_by_id(user_id).exec(conn).await?;
 
     Ok(objects)
+}
+
+/// Refuses, with `NoLongerPurgeable`, to purge an account that no longer
+/// meets the criteria of `never_verified`, read again in the deletion's own
+/// transaction. The account's row and its addresses are locked first: a
+/// promotion or a verification landing now either commits before, and is
+/// seen here, or waits and finds the account gone.
+async fn ensure_still_never_verified<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<(), AdminError> {
+    users::Entity::find_by_id(user_id)
+        .select_only()
+        .column(users::Column::Id)
+        .lock_exclusive()
+        .into_tuple::<Uuid>()
+        .one(conn)
+        .await?;
+    user_emails::Entity::find()
+        .select_only()
+        .column(user_emails::Column::Id)
+        .filter(user_emails::Column::UserId.eq(user_id))
+        .lock_exclusive()
+        .into_tuple::<Uuid>()
+        .all(conn)
+        .await?;
+
+    let still = never_verified()
+        .filter(users::Column::Id.eq(user_id))
+        .select_only()
+        .column(users::Column::Id)
+        .into_tuple::<Uuid>()
+        .one(conn)
+        .await?;
+
+    still.map(|_| ()).ok_or(AdminError::NoLongerPurgeable)
 }
 
 /// Key of the advisory lock that every operation taking an administrator out
