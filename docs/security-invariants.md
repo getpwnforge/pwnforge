@@ -20,7 +20,11 @@ Permissions are resolved per request against the database, at the moment the
 resource is loaded: in its extractor where one exists (`WorkspaceMember`), or in
 the service call the handler makes first (`team_service::get_team_for_member`).
 Suspension is checked the same way, through a short-lived cache that fails
-through to the database rather than guessing.
+through to the database rather than guessing. A request fills that cache only
+where it is empty, and a change that blocks an account (a suspension, a
+deletion) writes the blocked state into it rather than deleting the entry: a
+request that read the account just before the change cannot then cache it as
+active again.
 
 ## A 404 hides existence, a 403 admits it
 
@@ -62,9 +66,9 @@ deciding question is whether anything else bounds abuse of that route:
 
 | Underneath the endpoint | On limiter failure | Examples |
 | --- | --- | --- |
-| A password or an opaque token the caller must already hold | Fail **open** | `login`, `password/reset`, `email/resend` |
+| A password or an opaque token the caller must already hold | Fail **open** | `login`, `password/reset`, `email/verify`, `email/resend` |
 | Nothing | Fail **closed** (`503`) | `register`, `password/forgot`, `contact`, `setup` |
-| A session any account can open, and nothing bounding the work | Fail **closed** (`503`) | avatar upload |
+| A session any account can open, and nothing bounding the work | Fail **closed** (`503`) | avatar upload, password change |
 | A session on any team, and a mail to an address the caller names | Fail **closed** (`503`) | team and workspace invitations, by username or by address |
 
 The last three rows are the ones that matter. The routes in the second are
@@ -72,8 +76,11 @@ reachable by anyone and most of them send mail to an address the caller never
 proved they own, so an unlimited one is a free mailer, and for `register`,
 unbounded account creation and an Argon2 CPU sink as well. The avatar upload
 needs a session, but any account will do, and it hands attacker-chosen bytes
-to an image decoder: an unmetered one is a CPU sink. An invitation needs no
-more than a team of one's own, and each one mails the invitee.
+to an image decoder: an unmetered one is a CPU sink. A password change has a
+password underneath, but behind a session: whoever holds a stolen one could
+otherwise guess the current password as fast as the server runs Argon2, and
+make it run Argon2 as often. An invitation needs no more than a team of one's
+own, and each one mails the invitee.
 
 The invitation limits are per flow (team or workspace, by username or by
 address), each with one window per author and one per team or workspace.
@@ -82,6 +89,32 @@ day, whoever sends them. That one never refuses the request, since a refusal
 would tell the author the address was being flooded: past it, or when it
 cannot be read, the invitation is created and answered as usual and only its
 mail is not sent. Its key holds the address hashed.
+
+A window keyed on something a victim owns, an identifier or an address,
+counts only the requests that got past the checks that justify it. Anyone
+could fill it otherwise, and lock the victim out of signing in or of
+resetting their password. So the IP window comes first, then Turnstile, then
+that window: a sign-in counts against its identifier only once Turnstile has
+passed and the password has failed, and a success clears the count; a reset
+request spends its address window after Turnstile; a resend checks its IP
+window before the ones kept per token.
+
+## An address is verified only from the mail sent to it
+
+`email/verify` accepts one thing: the link mailed to the address. A sign-in
+on an unverified address answers with a token of another kind,
+`email_verification_resend`, valid for an hour, which `email/resend` accepts
+and `email/verify` never does. Knowing the password proves nothing about the
+mailbox: an account registered with someone else's address would otherwise
+verify it, and receive what is addressed to it, invitations included. The
+page the link opens verifies on a click, not on load, so a mail scanner that
+follows links does not spend it.
+
+Every link that carries a token carries it in the fragment (`#token=`),
+which the browser never sends, so it stays out of every access log; a page
+that reads one drops it from the address bar. An account that verifies no address
+within seven days is deleted by the cleanup task, so an address registered
+by someone who does not own it is not held for good.
 
 ## The client IP is only as trustworthy as the proxy count
 
