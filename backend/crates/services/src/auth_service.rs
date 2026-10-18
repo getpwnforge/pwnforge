@@ -147,6 +147,13 @@ pub async fn register(
     )
     .await?;
 
+    // Closed until the setup wizard has run, whatever `allow_public_signup`
+    // says: it defaults to open, and an account registered first could take
+    // the username or the address meant for the administrator.
+    if settings.setup_completed_at.is_none() {
+        return Err(AuthError::PublicSignupDisabled);
+    }
+
     if !settings.allow_public_signup {
         return Err(AuthError::PublicSignupDisabled);
     }

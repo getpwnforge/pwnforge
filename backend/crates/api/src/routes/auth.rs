@@ -50,7 +50,7 @@ pub fn router() -> Router<AppState> {
     responses(
         (status = 201, description = "Account created", body = UserResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
-        (status = 403, description = "Public signup is disabled", body = SimpleErrorResponse),
+        (status = 403, description = "public_signup_disabled: public signup is disabled, or the instance is not set up yet", body = SimpleErrorResponse),
         (status = 409, description = "Username or email already taken, or username reserved", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
