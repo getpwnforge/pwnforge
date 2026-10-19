@@ -18,8 +18,11 @@ export type AuthContextValue = {
   status: AuthStatus;
   /** Resolves with the signed-in user, rejects with an `ApiError`. */
   login: (payload: LoginPayload) => Promise<User>;
-  /** Creates the account without signing in (email verification comes first). */
-  register: (payload: RegisterPayload) => Promise<User>;
+  /**
+   * Registers without signing in. Resolves the same whether the address was
+   * free or already had an account: the answer never says which.
+   */
+  register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
   /** Consumes an email verification token. Does not open a session. */
   confirmEmail: (token: string) => Promise<void>;

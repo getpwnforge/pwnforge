@@ -24,7 +24,6 @@ import { isApiError } from "@/lib/api-error";
 const FIELD_BY_CODE: Record<string, keyof AdminValues> = {
   username_taken: "admin_username",
   username_reserved: "admin_username",
-  email_taken: "admin_email",
   invalid_email: "admin_email",
   email_domain_not_allowed: "admin_email",
   password_compromised: "admin_password",

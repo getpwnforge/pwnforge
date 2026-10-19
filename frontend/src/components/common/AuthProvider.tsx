@@ -112,7 +112,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   );
 
   const register = useCallback(
-    (payload: RegisterPayload): Promise<User> => registerAsync(payload),
+    (payload: RegisterPayload): Promise<void> => registerAsync(payload),
     [registerAsync],
   );
 

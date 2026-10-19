@@ -27,12 +27,12 @@ import { TurnstileWidget } from "@/components/common/TurnstileWidget";
  * Which input a server rejection belongs under.
  *
  * These are the rules the client cannot check for itself: taken and reserved
- * usernames, blocked email domains, passwords found in a breach corpus.
+ * usernames, blocked email domains, passwords found in a breach corpus. A
+ * taken address is not one of them: registration never says.
  */
 const FIELD_BY_CODE: Record<string, keyof RegisterValues> = {
   username_taken: "username",
   username_reserved: "username",
-  email_taken: "email",
   invalid_email: "email",
   email_domain_not_allowed: "email",
   password_compromised: "password",
@@ -52,6 +52,11 @@ function RegistrationSuccess({ email }: Readonly<{ email: string }>) {
         </h1>
         <p className="text-sm text-muted-foreground">
           {t("auth:register.success.description", { email })}
+        </p>
+        {/* The same page whether the address was free or not: the answer
+            never says, and the mail sent to the address does. */}
+        <p className="text-sm text-muted-foreground">
+          {t("auth:register.success.existingAccount")}
         </p>
       </div>
       <Button asChild variant="secondary" size="lg" className="w-full">
@@ -89,7 +94,7 @@ export function RegisterPage() {
   const { register: createAccount } = useAuth();
 
   const [termsAccepted, setTermsAccepted] = useState(false);
-  // Set once the account exists; also the address the verification mail went to.
+  // Set once the registration is answered; also the address the mail went to.
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const turnstile = useTurnstile("register");
@@ -117,7 +122,7 @@ export function RegisterPage() {
   const submit = useMutation({
     mutationFn: (values: RegisterValues) =>
       createAccount({ ...values, legal: legalVersions!, turnstile_token: turnstile.token ?? "" }),
-    onSuccess: (_user, values) => setRegisteredEmail(values.email),
+    onSuccess: (_answer, values) => setRegisteredEmail(values.email),
     onError: (error) => {
       turnstile.reset();
 
