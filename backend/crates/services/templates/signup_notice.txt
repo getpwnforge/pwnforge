@@ -1,0 +1,18 @@
+{# templates/signup_notice.txt #}
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+{% if let Some(detail) = detail %}
+{{ detail }}
+{% endif %}
+{% for link in links %}
+{{ link.label }}: {{ link.href }}
+{% endfor %}
+{{ closing }}
+
+--
+{{ footer }}
+{{ footer_instance }} {{ public_url }}
+{{ footer_note }}

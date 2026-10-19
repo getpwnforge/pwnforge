@@ -379,3 +379,299 @@ pub(crate) async fn request_as(
 
     (status, value)
 }
+
+// ---- Throwaway databases ----------------------------------------------------
+
+/// Swaps the database name in a connection URL, keeping everything else.
+fn with_database(url: &str, database: &str) -> String {
+    let (prefix, _old) = url
+        .rsplit_once('/')
+        .expect("DATABASE_URL must contain a database name");
+    format!("{prefix}/{database}")
+}
+
+/// Runs `body` against a fresh database, migrated and with its setup marked
+/// as run, and drops it afterwards, even when an assertion fails. For the
+/// tests that need a state the shared database must not be put in, an
+/// instance open to registration among them. The same helper as the
+/// services tests' `common/scratch.rs`, which this crate cannot include.
+pub(crate) async fn in_scratch_database<F, Fut>(body: F)
+where
+    F: FnOnce(sea_orm::DatabaseConnection) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let base = env_or(
+        "DATABASE_URL",
+        "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge",
+    );
+    let admin = Database::connect(with_database(&base, "postgres"))
+        .await
+        .expect("a Postgres instance must be reachable");
+    // Unique per run, and a valid unquoted identifier.
+    let name = format!("pwnforge_scratch_test_{}", Uuid::now_v7().simple());
+    admin
+        .execute_unprepared(&format!("CREATE DATABASE {name}"))
+        .await
+        .expect("must be able to create a scratch database");
+
+    let db = Database::connect(with_database(&base, &name))
+        .await
+        .expect("the scratch database must be reachable");
+    migration::Migrator::up(&db, None)
+        .await
+        .expect("migrations must apply");
+    domain::entities::instance_settings::ActiveModel {
+        id: Set(services::instance_service::SETTINGS_ID),
+        setup_completed_at: Set(Some(chrono::Utc::now().into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .expect("the setup must be marked as run");
+
+    let outcome = tokio::spawn(body(db)).await;
+
+    // `WITH (FORCE)`: a pooled connection, or a mail task still running,
+    // can outlive the body by a moment.
+    admin
+        .execute_unprepared(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        .await
+        .expect("must be able to drop the scratch database");
+
+    if let Err(join_error) = outcome {
+        std::panic::resume_unwind(join_error.into_panic());
+    }
+}
+
+// ---- Mail -----------------------------------------------------------------
+
+/// One message as the SMTP server received it: its recipients, its subject
+/// and its text part, decoded.
+#[derive(Debug, Clone)]
+pub(crate) struct SentMail {
+    pub(crate) to: Vec<String>,
+    pub(crate) subject: String,
+    pub(crate) text: String,
+}
+
+/// A local SMTP server that accepts every message and keeps it, for the
+/// tests that need to know which mail went out, if any. It speaks just
+/// enough of the protocol for lettre, without TLS or authentication.
+pub(crate) struct MailSink {
+    port: u16,
+    mails: Arc<std::sync::Mutex<Vec<SentMail>>>,
+}
+
+impl MailSink {
+    pub(crate) async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port must be free");
+        let port = listener.local_addr().expect("an address").port();
+        let mails = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let store = Arc::clone(&mails);
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let store = Arc::clone(&store);
+                tokio::spawn(async move {
+                    let _ = serve_smtp(socket, store).await;
+                });
+            }
+        });
+        Self { port, mails }
+    }
+
+    /// The test configuration, with its mail going to this server.
+    pub(crate) fn config(&self) -> Config {
+        let mut config = config();
+        config.email_backend = EmailBackend::Smtp;
+        config.email_from = "noreply@ctf.example.test".to_owned();
+        config.smtp_host = "127.0.0.1".to_owned();
+        config.smtp_port = self.port;
+        config.smtp_tls = SmtpTls::None;
+        config
+    }
+
+    /// What arrived so far.
+    pub(crate) fn mails(&self) -> Vec<SentMail> {
+        self.mails.lock().expect("the sink lock").clone()
+    }
+
+    /// Waits for `count` messages, up to ten seconds, and returns what
+    /// arrived.
+    pub(crate) async fn wait_for(&self, count: usize) -> Vec<SentMail> {
+        for _ in 0..200 {
+            if self.mails().len() >= count {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        self.mails()
+    }
+
+    /// Lets the mail tasks of the requests sent so far finish, then returns
+    /// what arrived: for the tests asserting that a mail did not go out.
+    pub(crate) async fn settle(&self) -> Vec<SentMail> {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        self.mails()
+    }
+}
+
+async fn serve_smtp(
+    socket: tokio::net::TcpStream,
+    store: Arc<std::sync::Mutex<Vec<SentMail>>>,
+) -> std::io::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let (read, mut write) = socket.into_split();
+    let mut reader = BufReader::new(read);
+    write.write_all(b"220 sink ESMTP\r\n").await?;
+
+    let mut to = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await? == 0 {
+            return Ok(());
+        }
+        let command = line.trim_end().to_ascii_uppercase();
+        if command.starts_with("EHLO") || command.starts_with("HELO") {
+            write.write_all(b"250 sink\r\n").await?;
+        } else if command.starts_with("RCPT TO:") {
+            let address = line.trim_end()[8..].trim().trim_start_matches('<');
+            to.push(address.split('>').next().unwrap_or_default().to_owned());
+            write.write_all(b"250 OK\r\n").await?;
+        } else if command == "DATA" {
+            write.write_all(b"354 end with a dot\r\n").await?;
+            let mut raw = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).await? == 0 {
+                    return Ok(());
+                }
+                if line == ".\r\n" || line == ".\n" {
+                    break;
+                }
+                // Dot-stuffing (RFC 5321, 4.5.2).
+                raw.push_str(line.strip_prefix('.').unwrap_or(&line));
+            }
+            store
+                .lock()
+                .expect("the sink lock")
+                .push(parse_mail(std::mem::take(&mut to), &raw));
+            write.write_all(b"250 OK\r\n").await?;
+        } else if command == "QUIT" {
+            write.write_all(b"221 bye\r\n").await?;
+            return Ok(());
+        } else {
+            write.write_all(b"250 OK\r\n").await?;
+        }
+    }
+}
+
+/// The subject and the decoded text/plain part of a raw message.
+fn parse_mail(to: Vec<String>, raw: &str) -> SentMail {
+    let raw = raw.replace("\r\n", "\n");
+    let (headers, _) = raw.split_once("\n\n").unwrap_or((&raw, ""));
+    // Unfolded: a header continues on the lines that start with a space.
+    let headers = headers.replace("\n ", " ").replace("\n\t", " ");
+    let subject = headers
+        .lines()
+        .find_map(|line| line.strip_prefix("Subject: "))
+        .map(decode_encoded_words)
+        .unwrap_or_default();
+
+    let text =
+        raw.find("Content-Type: text/plain")
+            .map(|start| {
+                let part = &raw[start..];
+                let (part_headers, content) = part.split_once("\n\n").unwrap_or((part, ""));
+                let content = content
+                    .split("\n--")
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end_matches('\n');
+                let encoding = part_headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Content-Transfer-Encoding: "))
+                    .unwrap_or("7bit")
+                    .trim()
+                    .to_ascii_lowercase();
+                match encoding.as_str() {
+                    "base64" => String::from_utf8_lossy(&decode_base64(&content.replace('\n', "")))
+                        .into_owned(),
+                    "quoted-printable" => decode_quoted_printable(content),
+                    _ => content.to_owned(),
+                }
+            })
+            .unwrap_or_default();
+
+    SentMail { to, subject, text }
+}
+
+/// `=?utf-8?b?...?=` and `=?utf-8?q?...?=` words, as lettre writes a subject
+/// that is not ASCII. The space between two encoded words is dropped, every
+/// other one kept (RFC 2047, 6.2).
+fn decode_encoded_words(value: &str) -> String {
+    let mut out = String::new();
+    let mut previous_encoded = false;
+    for (i, word) in value.split(' ').enumerate() {
+        let decoded = word
+            .strip_prefix("=?")
+            .and_then(|w| w.strip_suffix("?="))
+            .and_then(|inner| {
+                let mut parts = inner.splitn(3, '?');
+                let (_charset, kind, data) = (parts.next(), parts.next(), parts.next()?);
+                match kind?.to_ascii_lowercase().as_str() {
+                    "b" => Some(String::from_utf8_lossy(&decode_base64(data)).into_owned()),
+                    "q" => Some(decode_quoted_printable(&data.replace('_', " "))),
+                    _ => None,
+                }
+            });
+        if i > 0 && !(previous_encoded && decoded.is_some()) {
+            out.push(' ');
+        }
+        previous_encoded = decoded.is_some();
+        out.push_str(&decoded.unwrap_or_else(|| word.to_owned()));
+    }
+    out
+}
+
+fn decode_base64(data: &str) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits = 0u32;
+    let mut count = 0;
+    let mut out = Vec::new();
+    for byte in data.bytes() {
+        let Some(value) = ALPHABET.iter().position(|&c| c == byte) else {
+            continue;
+        };
+        bits = (bits << 6) | value as u32;
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            out.push((bits >> count) as u8);
+        }
+    }
+    out
+}
+
+fn decode_quoted_printable(data: &str) -> String {
+    let joined = data.replace("=\n", "");
+    let bytes = joined.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'='
+            && let Some(hex) = joined.get(i + 1..i + 3)
+            && let Ok(value) = u8::from_str_radix(hex, 16)
+        {
+            out.push(value);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}

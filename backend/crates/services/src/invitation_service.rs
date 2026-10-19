@@ -170,7 +170,7 @@ pub async fn send_mail(
     to: &Recipient,
     mail: InvitationMail<'_>,
 ) -> MailOutcome {
-    match rate_limit_service::check_invitation_mail_to_address(redis, &to.email).await {
+    match rate_limit_service::check_unsolicited_mail_to_address(redis, &to.email).await {
         Ok(RateLimitDecision::Allowed) => {}
         Ok(RateLimitDecision::Limited { .. }) => {
             tracing::info!(kind = ?mail.kind, "invitation mail not sent: the address reached its daily cap");

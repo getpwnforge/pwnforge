@@ -37,21 +37,23 @@ pub fn router() -> Router<AppState> {
         .route("/email/resend", post(email_resend))
 }
 
-/// Creates an account without opening a session.
+/// Creates an account without opening a session, or does nothing visible.
 ///
-/// Returns 201 with the user, but no cookies: the address must be verified
-/// before the account can sign in. A verification mail is sent on a best
-/// effort basis, its failure does not undo the registration.
+/// Answers 202 with no body and no cookie, the same whether the address was
+/// free, held by a verified account or held by a registration nobody
+/// confirmed: registration never says whether an address has an account
+/// (see `auth_service::register`). The address gets the mail: the
+/// verification link of the new account, or a notice to its holder.
 #[utoipa::path(
     post,
     path = "/api/v1/auth/register",
     tag = "Auth",
     request_body = RegisterRequest,
     responses(
-        (status = 201, description = "Account created", body = UserResponse),
+        (status = 202, description = "Accepted, with no body: the same answer whether the address was free or already had an account"),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
         (status = 403, description = "public_signup_disabled: public signup is disabled, or the instance is not set up yet", body = SimpleErrorResponse),
-        (status = 409, description = "Username or email already taken, or username reserved", body = SimpleErrorResponse),
+        (status = 409, description = "username_taken or username_reserved, checked before anything about the address", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
@@ -64,7 +66,7 @@ async fn register(
     ClientIp(client_ip): ClientIp,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
     JsonBody(payload): JsonBody<RegisterRequest>,
-) -> Result<(StatusCode, Json<UserResponse>), AppError> {
+) -> Result<StatusCode, AppError> {
     payload.validate()?;
     legal_service::validate_input(&payload.legal)?;
 
@@ -92,9 +94,16 @@ async fn register(
     }
 
     let ctx = session_context(&headers, client_ip);
-    let registered =
-        auth_service::register(&state.db, &state.config, payload, ctx, rate_limit_ip).await?;
-    Ok((StatusCode::CREATED, Json(UserResponse::from(registered))))
+    auth_service::register(
+        &state.db,
+        &state.redis,
+        &state.config,
+        payload,
+        ctx,
+        rate_limit_ip,
+    )
+    .await?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 #[utoipa::path(
@@ -1106,5 +1115,399 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).expect("the body must be JSON");
         assert_eq!(value["error"], "turnstile_failed");
+    }
+
+    // ---- Registration ---------------------------------------------------
+
+    /// Registration never says whether an address has an account: the same
+    /// answer, the same work and the same timing whether the address is free,
+    /// held by a verified account or held by a registration nobody
+    /// confirmed, and only the address learns which, by mail. Every test runs
+    /// in a throwaway database: the shared one has not run its setup, and
+    /// registration is closed until it has.
+    mod registration {
+        use super::*;
+        use crate::test_support::{MailSink, SentMail, in_scratch_database};
+        use domain::legal::{CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION};
+        use sea_orm::PaginatorTrait;
+        use std::time::{Duration, Instant};
+
+        fn unique_name() -> String {
+            format!("r{}", &Uuid::now_v7().simple().to_string()[1..])
+        }
+
+        fn free_address() -> String {
+            format!("{}@example.test", unique_name())
+        }
+
+        fn registration(username: &str, email: &str) -> Value {
+            json!({
+                "username": username,
+                "email": email,
+                "password": PASSWORD,
+                "legal": {
+                    "terms_version": CURRENT_TERMS_VERSION,
+                    "privacy_version": CURRENT_PRIVACY_VERSION,
+                },
+                "turnstile_token": "",
+            })
+        }
+
+        /// The whole answer to a registration, from an IP of its own: status,
+        /// headers and the body as bytes.
+        async fn register(app: &axum::Router, body: Value) -> (StatusCode, HeaderMap, Vec<u8>) {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request must build");
+            request
+                .extensions_mut()
+                .insert(ConnectInfo(SocketAddr::new(fresh_ip(), 0)));
+            let response = app
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("router must answer");
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("the body must be readable");
+            (status, headers, body.to_vec())
+        }
+
+        async fn exists(db: &DatabaseConnection, username: &str) -> bool {
+            users::Entity::find()
+                .filter(users::Column::Username.eq(username))
+                .one(db)
+                .await
+                .expect("the lookup must succeed")
+                .is_some()
+        }
+
+        fn to<'a>(mails: &'a [SentMail], address: &str) -> Vec<&'a SentMail> {
+            mails
+                .iter()
+                .filter(|mail| mail.to.iter().any(|to| to == address))
+                .collect()
+        }
+
+        /// The key the shared cap on unsolicited mail counts an address
+        /// under, written out here so that a drift in its name shows.
+        fn cap_key(address: &str) -> String {
+            format!(
+                "ratelimit:mail:address:{}",
+                hash_opaque_token(&address.trim().to_lowercase())
+            )
+        }
+
+        /// The same status, headers and body, and no cookie, whether the
+        /// address is free, verified or pending; an account only for the
+        /// free one.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn the_answer_is_the_same_whether_the_address_is_free_or_taken() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let (_, _, verified) = account(&db, true).await;
+                let (_, _, pending) = account(&db, false).await;
+
+                let mut answers = Vec::new();
+                let mut usernames = Vec::new();
+                for address in [free_address(), verified, pending] {
+                    let username = unique_name();
+                    answers.push(register(&app, registration(&username, &address)).await);
+                    usernames.push(username);
+                }
+
+                let (status, headers, body) = &answers[0];
+                assert_eq!(*status, StatusCode::ACCEPTED);
+                assert!(body.is_empty(), "no body");
+                assert!(headers.get(header::SET_COOKIE).is_none(), "no cookie");
+                for answer in &answers[1..] {
+                    assert_eq!(answer, &answers[0], "the same answer whatever the address");
+                }
+
+                assert!(
+                    exists(&db, &usernames[0]).await,
+                    "a free address gets its account"
+                );
+                assert!(
+                    !exists(&db, &usernames[1]).await,
+                    "a verified address gets none"
+                );
+                assert!(
+                    !exists(&db, &usernames[2]).await,
+                    "a pending address gets none"
+                );
+
+                sink.wait_for(3).await;
+                db.close().await.ok();
+            })
+            .await;
+        }
+
+        /// The free address gets its verification link; a verified one, the
+        /// way back in; a pending one, the date it is freed, and never a link
+        /// that would confirm the account holding it.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn each_address_gets_its_own_mail_and_nothing_else() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let (verified_id, _, verified) = account(&db, true).await;
+                let (pending_id, _, pending) = account(&db, false).await;
+                let free = free_address();
+
+                for address in [&free, &verified, &pending] {
+                    register(&app, registration(&unique_name(), address)).await;
+                }
+                sink.wait_for(3).await;
+                let mails = sink.settle().await;
+                assert_eq!(mails.len(), 3, "one mail per registration, got {mails:#?}");
+
+                let [verification] = to(&mails, &free)[..] else {
+                    panic!("one mail to the free address, got {mails:#?}");
+                };
+                assert_eq!(verification.subject, "Confirm your email address");
+                assert!(
+                    verification
+                        .text
+                        .contains("http://localhost/auth/email/verify#token=")
+                );
+
+                let [notice] = to(&mails, &verified)[..] else {
+                    panic!("one mail to the verified address, got {mails:#?}");
+                };
+                assert_eq!(
+                    notice.subject,
+                    "Someone tried to create an account with your address"
+                );
+                assert!(notice.text.contains("http://localhost/login"));
+                assert!(notice.text.contains("http://localhost/forgot-password"));
+                assert!(!notice.text.contains("token"), "no token: {}", notice.text);
+
+                let created_at = users::Entity::find_by_id(pending_id)
+                    .one(&db)
+                    .await
+                    .expect("the lookup must succeed")
+                    .expect("the pending account is still there")
+                    .created_at;
+                let deleted_after = (created_at.with_timezone(&chrono::Utc)
+                    + chrono::Duration::days(7))
+                .format("%Y-%m-%d %H:%M UTC")
+                .to_string();
+                let [notice] = to(&mails, &pending)[..] else {
+                    panic!("one mail to the pending address, got {mails:#?}");
+                };
+                assert_eq!(notice.subject, "A pending registration uses your address");
+                assert!(
+                    notice.text.contains(&deleted_after),
+                    "the deletion date: {}",
+                    notice.text
+                );
+                assert!(!notice.text.contains("token"), "no token: {}", notice.text);
+                assert!(
+                    !notice.text.contains("/auth/"),
+                    "no auth link: {}",
+                    notice.text
+                );
+                assert!(
+                    !notice.text.contains("/login"),
+                    "no sign-in link: {}",
+                    notice.text
+                );
+
+                // Nothing was issued that could confirm, or open, either account.
+                for holder in [verified_id, pending_id] {
+                    let issued = auth_tokens::Entity::find()
+                        .filter(auth_tokens::Column::UserId.eq(holder))
+                        .count(&db)
+                        .await
+                        .expect("the count must succeed");
+                    assert_eq!(issued, 0, "no token for the holder of a taken address");
+                }
+
+                db.close().await.ok();
+            })
+            .await;
+        }
+
+        /// The notice goes under the daily cap on unsolicited mail to one
+        /// address, the one invitations count against: past it, or with the
+        /// limiter failing, the answer is the same and no mail goes out.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn the_daily_cap_holds_the_notice_back_and_fails_closed() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let (_, _, capped) = account(&db, true).await;
+                let (_, _, broken) = account(&db, true).await;
+                let (_, _, control) = account(&db, true).await;
+                let mut redis = super::redis().await;
+                let _: () = redis
+                    .set_ex(cap_key(&capped), 3, 3600)
+                    .await
+                    .expect("the cap must be filled");
+                // A value INCR refuses: the limiter answers with an error.
+                let _: () = redis
+                    .set_ex(cap_key(&broken), "not-a-number", 3600)
+                    .await
+                    .expect("the cap must be broken");
+
+                for address in [&capped, &broken, &control] {
+                    let (status, _, _) =
+                        register(&app, registration(&unique_name(), address)).await;
+                    assert_eq!(
+                        status,
+                        StatusCode::ACCEPTED,
+                        "the same answer for {address}"
+                    );
+                }
+                sink.wait_for(1).await;
+                let mails = sink.settle().await;
+
+                let recipients: Vec<&str> = mails
+                    .iter()
+                    .flat_map(|mail| mail.to.iter().map(String::as_str))
+                    .collect();
+                assert_eq!(
+                    recipients,
+                    [control.as_str()],
+                    "only the address under the cap gets mail"
+                );
+
+                db.close().await.ok();
+            })
+            .await;
+        }
+
+        /// A taken username is the one explicit refusal, and it comes first:
+        /// the same `username_taken` whether its address is taken or free.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_taken_username_is_refused_whatever_the_address() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let (_, username, address) = account(&db, true).await;
+
+                for email in [address, free_address()] {
+                    let (status, _, body) = register(&app, registration(&username, &email)).await;
+                    assert_eq!(status, StatusCode::CONFLICT, "for {email}");
+                    let body: Value = serde_json::from_slice(&body).expect("the body must be JSON");
+                    assert_eq!(body["error"], "username_taken", "for {email}");
+                }
+                assert!(
+                    sink.settle().await.is_empty(),
+                    "a refused registration mails nobody"
+                );
+
+                db.close().await.ok();
+            })
+            .await;
+        }
+
+        /// Two registrations racing for one free address: one account, and
+        /// the same answer to both, the loser's taken address included.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn two_registrations_racing_for_an_address_get_the_same_answer() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let address = free_address();
+                let (first, second) = (unique_name(), unique_name());
+
+                let (a, b) = tokio::join!(
+                    register(&app, registration(&first, &address)),
+                    register(&app, registration(&second, &address)),
+                );
+
+                assert_eq!(a.0, StatusCode::ACCEPTED);
+                assert_eq!(a, b, "the same answer to both");
+                let holders = user_emails::Entity::find()
+                    .filter(user_emails::Column::Email.eq(address.clone()))
+                    .count(&db)
+                    .await
+                    .expect("the count must succeed");
+                assert_eq!(holders, 1, "one account holds the address");
+                assert!(
+                    exists(&db, &first).await != exists(&db, &second).await,
+                    "one account in all"
+                );
+
+                sink.wait_for(2).await;
+                db.close().await.ok();
+            })
+            .await;
+        }
+
+        /// The mail goes out in a task of its own in every case: a mail server
+        /// that never answers holds no registration up.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn no_mail_holds_the_answer_up() {
+            in_scratch_database(|db| async move {
+                // Accepts the connection and never greets.
+                let silent =
+                    std::net::TcpListener::bind("127.0.0.1:0").expect("a port must be free");
+                let mut config = MailSink::start().await.config();
+                config.smtp_port = silent.local_addr().expect("an address").port();
+                let app = app_with_config(&db, config).await;
+                let (_, _, verified) = account(&db, true).await;
+                let (_, _, pending) = account(&db, false).await;
+
+                for address in [free_address(), verified, pending] {
+                    let (status, _, _) = tokio::time::timeout(
+                        Duration::from_secs(3),
+                        register(&app, registration(&unique_name(), &address)),
+                    )
+                    .await
+                    .expect("the answer must not wait for the mail");
+                    assert_eq!(status, StatusCode::ACCEPTED);
+                }
+
+                drop(silent);
+                db.close().await.ok();
+            })
+            .await;
+        }
+
+        /// The Argon2 hash runs whatever the address: an answer that came back
+        /// faster for a taken one would say it was taken.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_taken_address_takes_as_long_to_answer() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let (_, _, taken) = account(&db, true).await;
+
+                let mut free_times = Vec::new();
+                let mut taken_times = Vec::new();
+                for _ in 0..3 {
+                    let started = Instant::now();
+                    register(&app, registration(&unique_name(), &free_address())).await;
+                    free_times.push(started.elapsed());
+                    let started = Instant::now();
+                    register(&app, registration(&unique_name(), &taken)).await;
+                    taken_times.push(started.elapsed());
+                }
+                free_times.sort();
+                taken_times.sort();
+
+                // Generous: the hash dominates both, and a taken address that
+                // skipped it would answer several times faster.
+                assert!(
+                    taken_times[1] * 2 >= free_times[1],
+                    "a taken address answered in {:?}, a free one in {:?}",
+                    taken_times,
+                    free_times
+                );
+
+                sink.wait_for(6).await;
+                db.close().await.ok();
+            })
+            .await;
+        }
     }
 }

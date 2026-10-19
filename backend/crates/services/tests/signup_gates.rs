@@ -14,6 +14,7 @@ use domain::dto::legal::LegalAcceptanceInput;
 use domain::entities::{blocked_emails_domains, instance_settings, users};
 use domain::legal::{CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION};
 use migration::MigratorTrait;
+use redis::aio::ConnectionManager;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, PaginatorTrait, Set};
 use services::auth_service::{self, AuthError};
 use services::blocked_email_service::{self, BlockedEmailError};
@@ -47,12 +48,18 @@ fn registration(tag: &str) -> RegisterRequest {
     }
 }
 
-async fn register(
-    db: &DatabaseConnection,
-    request: RegisterRequest,
-) -> Result<domain::dto::auth::RegisteredUser, AuthError> {
+async fn register(db: &DatabaseConnection, request: RegisterRequest) -> Result<(), AuthError> {
+    let redis = redis::Client::open(
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_owned()),
+    )
+    .expect("REDIS_URL must be a valid Redis URL");
+    let redis = ConnectionManager::new(redis)
+        .await
+        .expect("a Redis instance must be reachable");
+
     auth_service::register(
         db,
+        &redis,
         &config(),
         request,
         SessionContext {
@@ -107,6 +114,14 @@ async fn registration_is_refused_until_the_setup_has_run() {
         register(&db, registration("early-admin"))
             .await
             .expect("the same registration must go through once the setup has run");
+        assert_eq!(
+            users::Entity::find()
+                .count(&db)
+                .await
+                .expect("the count must succeed"),
+            1,
+            "the account is created"
+        );
 
         db.close().await.ok();
     })

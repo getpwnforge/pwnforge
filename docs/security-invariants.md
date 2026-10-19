@@ -84,11 +84,12 @@ own, and each one mails the invitee.
 
 The invitation limits are per flow (team or workspace, by username or by
 address), each with one window per author and one per team or workspace.
-Under them sits one more, on the address mailed: three invitation mails a
-day, whoever sends them. That one never refuses the request, since a refusal
-would tell the author the address was being flooded: past it, or when it
-cannot be read, the invitation is created and answered as usual and only its
-mail is not sent. Its key holds the address hashed.
+Under them sits one more, on the address mailed: three unsolicited mails a
+day, whoever causes them, invitations and sign-up notices counted together.
+That one never refuses the request, since a refusal would tell the author
+the address was being flooded: past it, or when it cannot be read, the
+request is answered as usual and only its mail is not sent. Its key holds
+the address hashed.
 
 A window keyed on something a victim owns, an identifier or an address,
 counts only the requests that got past the checks that justify it. Anyone
@@ -115,6 +116,34 @@ which the browser never sends, so it stays out of every access log; a page
 that reads one drops it from the address bar. An account that verifies no address
 within seven days is deleted by the cleanup task, so an address registered
 by someone who does not own it is not held for good.
+
+## Registration never says whether an address has an account
+
+`auth/register` answers `202` with no body and no cookie in three cases that
+must not be told apart: the address is free, it belongs to a verified
+account, or it is held by a registration nobody confirmed. The status, the
+headers, the body and the time it takes are the same. Only the username is
+an explicit refusal (`username_taken`), since usernames are public, and it
+is checked before anything about the address, so a taken username gets the
+same answer whatever address comes with it.
+
+The same work runs in every case: the Argon2 hash, then the inserts, where
+the unique constraint on the address decides. A free address commits, a
+taken one rolls the same statements back, and two registrations racing for
+one address end the way one finding it taken does. No address is looked up
+beforehand. The mail goes out afterwards in a task of its own, whatever the
+case, and only the address learns which case it was: a new account gets its
+verification link; a verified holder, a notice with plain links to sign in
+and to reset the password; a registration nobody confirmed, the date it is
+deleted and the address freed. That last notice never carries the pending
+account's verification link: whoever reads it owns the mailbox, not that
+account. Both notices count against the daily cap on unsolicited mail.
+
+Two places still tell. Inviting by address answers `AlreadyMember` when a
+member of the inviter's own team or workspace has that address verified,
+which tells the inviter which address one of their members holds. The setup
+wizard, behind its token and before any account can exist, fails on an
+address it cannot insert.
 
 ## The client IP is only as trustworthy as the proxy count
 

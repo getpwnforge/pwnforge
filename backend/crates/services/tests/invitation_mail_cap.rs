@@ -51,7 +51,7 @@ fn unique(prefix: &str) -> String {
 /// imported: a drift in its name would make the poison below miss.
 fn cap_key(address: &str) -> String {
     format!(
-        "ratelimit:invite:mail:address:{}",
+        "ratelimit:mail:address:{}",
         token_service::hash_opaque_token(&address.trim().to_lowercase())
     )
 }

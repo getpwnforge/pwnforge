@@ -103,12 +103,14 @@ const INVITE_BY_EMAIL_AUTHOR_LIMIT: isize = 10;
 const INVITE_BY_EMAIL_SCOPE_LIMIT: isize = 30;
 const INVITE_WINDOW_SECS: i64 = 60 * 60;
 
-// --- Invitation mail to one address ---
-// Across every team and every workspace, whoever sends it: the bound that
-// stops several teams from flooding one inbox. Past it the invitation is
-// still created, only its mail is not sent.
-const INVITE_MAIL_ADDRESS_LIMIT: isize = 3;
-const INVITE_MAIL_ADDRESS_WINDOW_SECS: i64 = 24 * 60 * 60;
+// --- Unsolicited mail to one address ---
+// Mail an address receives because someone else named it: an invitation,
+// from any team or workspace, or a notice that someone tried to register
+// with it. One budget for all of them, whoever sends them: the bound that
+// stops anyone from flooding one inbox. Past it the request is answered as
+// usual, only its mail is not sent.
+const UNSOLICITED_MAIL_ADDRESS_LIMIT: isize = 3;
+const UNSOLICITED_MAIL_ADDRESS_WINDOW_SECS: i64 = 24 * 60 * 60;
 
 pub enum RateLimitDecision {
     Allowed,
@@ -446,20 +448,22 @@ pub async fn check_workspace_invitation_by_email(
     .await
 }
 
-/// Whether one more invitation mail may go to `email` today, counted across
-/// every team and workspace. Unlike the others this never refuses a request:
-/// the caller creates the invitation either way and only skips the mail, so
-/// the answer is the same whether the address was flooded or not. A Redis
-/// failure is the caller's to treat as a refusal, which here means no mail.
-pub async fn check_invitation_mail_to_address(
+/// Whether one more unsolicited mail may go to `email` today: an invitation,
+/// from any team or workspace, or a sign-up notice (see
+/// `auth_service::register`), all counted together. Unlike the others this
+/// never refuses a request: the caller answers the same way either way and
+/// only skips the mail, so the answer never says whether the address was
+/// flooded. A Redis failure is the caller's to treat as a refusal, which
+/// here means no mail.
+pub async fn check_unsolicited_mail_to_address(
     redis: &mut ConnectionManager,
     email: &str,
 ) -> Result<RateLimitDecision, redis::RedisError> {
     check_window(
         redis,
-        &invite_mail_address_key(email),
-        INVITE_MAIL_ADDRESS_LIMIT,
-        INVITE_MAIL_ADDRESS_WINDOW_SECS,
+        &unsolicited_mail_address_key(email),
+        UNSOLICITED_MAIL_ADDRESS_LIMIT,
+        UNSOLICITED_MAIL_ADDRESS_WINDOW_SECS,
     )
     .await
 }
@@ -591,9 +595,9 @@ fn invite_scope_key(scope: &str, path: &str, scope_id: Uuid) -> String {
 /// Hashed, as the login and password-reset keys are: the address is PII.
 /// Trimmed and lowercased first, as the citext columns compare it, so
 /// changing its case does not buy a fresh budget.
-fn invite_mail_address_key(email: &str) -> String {
+fn unsolicited_mail_address_key(email: &str) -> String {
     format!(
-        "ratelimit:invite:mail:address:{}",
+        "ratelimit:mail:address:{}",
         hash_opaque_token(&email.trim().to_lowercase())
     )
 }

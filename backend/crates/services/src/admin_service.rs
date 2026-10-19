@@ -11,7 +11,7 @@ use crate::{
     team_service::{self, Succession, TeamError},
     workspace_service::{self, WorkspaceError},
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use domain::dto::workspace::WorkspaceMode;
 use domain::entities::{legal_acceptances, user_emails, users, workspaces};
 use domain::legal::AcceptanceMethod;
@@ -845,7 +845,19 @@ pub async fn purge_unverified_accounts(
 }
 
 /// The accounts `purge_unverified_accounts` deletes, on the database clock:
-/// - created more than `UNVERIFIED_ACCOUNT_DAYS` days ago;
+/// those of `awaiting_verification` created more than
+/// `UNVERIFIED_ACCOUNT_DAYS` days ago.
+fn never_verified() -> Select<users::Entity> {
+    awaiting_verification().filter(Expr::col((users::Entity, users::Column::CreatedAt)).lt(
+        Expr::cust_with_values(
+            "now() - make_interval(days => $1)",
+            [UNVERIFIED_ACCOUNT_DAYS],
+        ),
+    ))
+}
+
+/// Every criterion of the purge but the age: the accounts it deletes once
+/// they are old enough.
 /// - with none of their addresses verified, ever: an address is never
 ///   unverified once verified, so `verified_at` on each of them is the whole
 ///   history, and an address added but not verified yet counts as none;
@@ -853,14 +865,8 @@ pub async fn purge_unverified_accounts(
 /// - not the account the setup created: it alone holds the operator's
 ///   acceptance (`AcceptanceMethod::Operator`), which registration never
 ///   records. The admin CLI creates no account.
-fn never_verified() -> Select<users::Entity> {
+fn awaiting_verification() -> Select<users::Entity> {
     users::Entity::find()
-        .filter(
-            Expr::col((users::Entity, users::Column::CreatedAt)).lt(Expr::cust_with_values(
-                "now() - make_interval(days => $1)",
-                [UNVERIFIED_ACCOUNT_DAYS],
-            )),
-        )
         .filter(
             users::Column::Id.not_in_subquery(
                 Query::select()
@@ -882,6 +888,27 @@ fn never_verified() -> Select<users::Entity> {
                     .to_owned(),
             ),
         )
+}
+
+/// When `purge_unverified_accounts` deletes this account, or `None` if it
+/// never will: verified, an administrator, or the setup's account. The pass
+/// runs every hour, so the account is gone within the hour that follows.
+pub async fn unverified_deletion_date(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<Option<DateTime<Utc>>, DbErr> {
+    let created_at: Option<DateTimeWithTimeZone> = awaiting_verification()
+        .filter(users::Column::Id.eq(user_id))
+        .select_only()
+        .column(users::Column::CreatedAt)
+        .into_tuple()
+        .one(db)
+        .await?;
+
+    Ok(
+        created_at
+            .map(|at| at.with_timezone(&Utc) + Duration::days(UNVERIFIED_ACCOUNT_DAYS.into())),
+    )
 }
 
 /// Deletes, one by one, every account `selection` finds, walking by id past

@@ -347,3 +347,59 @@ email.test.title:
 email.test.preheader:
   en: "Transport check from your PwnForge setup wizard."
   fr: "Transport check from your PwnForge setup wizard."
+
+# --- Sign-up notice: someone registered with an address that is taken ---
+# Sent instead of an error, so that registration never says whether an
+# address has an account. Neither one carries a token or an action button.
+
+email.signup_notice.existing.subject:
+  en: "Someone tried to create an account with your address"
+  fr: "Quelqu'un a tenté de créer un compte avec votre adresse"
+
+email.signup_notice.existing.title:
+  en: "Someone tried to register with this address"
+  fr: "Tentative d'inscription avec votre adresse"
+
+email.signup_notice.existing.preheader:
+  en: "You already have an account on this instance."
+  fr: "Vous avez déjà un compte sur cette instance."
+
+email.signup_notice.existing.body:
+  en: "Someone just tried to create a PwnForge account with this address, which already belongs to an account. If it was you, sign in, or reset your password if you no longer know it."
+  fr: "Quelqu'un vient de tenter de créer un compte PwnForge avec cette adresse, qui appartient déjà à un compte. Si c'est vous, connectez-vous, ou réinitialisez votre mot de passe si vous ne le connaissez plus."
+
+email.signup_notice.existing.sign_in:
+  en: "Sign in"
+  fr: "Se connecter"
+
+email.signup_notice.existing.forgot_password:
+  en: "Reset your password"
+  fr: "Réinitialiser votre mot de passe"
+
+email.signup_notice.existing.closing:
+  en: "If it was not you, you can ignore this email: nothing was created, and nothing changed on your account."
+  fr: "Si ce n'est pas vous, ignorez ce message : rien n'a été créé, et rien n'a changé sur votre compte."
+
+email.signup_notice.pending.subject:
+  en: "A pending registration uses your address"
+  fr: "Une inscription en attente utilise votre adresse"
+
+email.signup_notice.pending.title:
+  en: "A pending registration uses this address"
+  fr: "Une inscription en attente utilise cette adresse"
+
+email.signup_notice.pending.preheader:
+  en: "It will be deleted automatically, and the address freed."
+  fr: "Elle sera supprimée automatiquement, et l'adresse libérée."
+
+email.signup_notice.pending.body:
+  en: "Someone just tried to create a PwnForge account with this address. It is already used by a registration that was never confirmed."
+  fr: "Quelqu'un vient de tenter de créer un compte PwnForge avec cette adresse. Elle est déjà utilisée par une inscription qui n'a jamais été confirmée."
+
+email.signup_notice.pending.detail:
+  en: "That registration will be deleted automatically on %{date}. The address will then be free to register again."
+  fr: "Cette inscription sera supprimée automatiquement le %{date}. L'adresse pourra ensuite servir à une nouvelle inscription."
+
+email.signup_notice.pending.closing:
+  en: "You do not need to do anything. Never confirm a registration you did not start yourself."
+  fr: "Vous n'avez rien à faire. Ne confirmez jamais une inscription que vous n'avez pas lancée vous-même."

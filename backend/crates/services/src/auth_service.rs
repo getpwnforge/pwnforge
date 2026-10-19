@@ -7,13 +7,14 @@ use crate::config::Config;
 use crate::rate_limit_service::{self, RateLimitDecision};
 use crate::turnstile_service::TurnstileAction;
 use crate::{
-    audit_service, auth_token_service, instance_service, legal_service, token_service,
-    turnstile_service,
+    admin_service, audit_service, auth_token_service, instance_service, legal_service,
+    token_service, turnstile_service,
 };
 use chrono::Utc;
 use domain::types::TokenKind;
 use domain::{
-    dto::auth::{LoggedInUser, LoginRequest, RegisterRequest, RegisteredUser, SessionContext},
+    dto::auth::{LoggedInUser, LoginRequest, RegisterRequest, SessionContext},
+    dto::legal::LegalAcceptanceInput,
     entities::{reserved_usernames, user_emails, users},
 };
 use jsonwebtoken::EncodingKey;
@@ -26,22 +27,11 @@ use sea_orm::{DbErr, SqlErr};
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Maps Postgres unique-violation errors to the matching domain error.
-/// This is the real uniqueness guarantee: the pre-checks in register() only
-/// exist to produce a clear message on the common path.
-fn map_unique_violation(err: DbErr) -> AuthError {
-    match err.sql_err() {
-        Some(SqlErr::UniqueConstraintViolation(detail)) => {
-            if detail.contains("users_username_key") {
-                AuthError::UsernameTaken
-            } else if detail.contains("user_emails_email_key") {
-                AuthError::EmailTaken
-            } else {
-                AuthError::Db(err)
-            }
-        }
-        _ => AuthError::Db(err),
-    }
+/// Whether `err` is a violation of the unique constraint `constraint`: the
+/// real uniqueness guarantee, which the advisory checks before an insert
+/// only anticipate.
+fn violates(err: &DbErr, constraint: &str) -> bool {
+    matches!(err.sql_err(), Some(SqlErr::UniqueConstraintViolation(detail)) if detail.contains(constraint))
 }
 
 #[derive(Debug, Error)]
@@ -64,9 +54,6 @@ pub enum AuthError {
 
     #[error("username is already taken")]
     UsernameTaken,
-
-    #[error("email is already registered")]
-    EmailTaken,
 
     #[error("username is reserved")]
     UsernameReserved,
@@ -129,13 +116,26 @@ pub enum AuthError {
     Db(#[from] sea_orm::DbErr),
 }
 
+/// Creates an account, or does nothing visible: the caller gets the same
+/// answer whether the address was free, held by a verified account or held
+/// by a registration nobody confirmed, so registration never says whether
+/// an address has an account. Only the username, which is public, is an
+/// explicit refusal, and it is checked before anything about the address.
+///
+/// The same work runs in every case, in the same order: the checks, the
+/// Argon2 hash, then the inserts, where the unique constraint on the address
+/// decides. A free address commits; a taken one rolls the same statements
+/// back. The mail goes out afterwards in a task of its own in every case:
+/// the verification link to a new account, or a notice to the holder of a
+/// taken address (see `notify_address_holder`).
 pub async fn register(
     db: &DatabaseConnection,
+    redis: &ConnectionManager,
     config: &Config,
     payload: RegisterRequest,
     ctx: SessionContext,
     client_ip: IpAddr,
-) -> Result<RegisteredUser, AuthError> {
+) -> Result<(), AuthError> {
     // Check if public signup is allowed.
     let settings = instance_service::settings(db).await?;
 
@@ -165,66 +165,200 @@ pub async fn register(
 
     validate_new_account(db, config, &username, &email, &payload.password).await?;
 
-    // Hash the password. Done last: Argon2 costs ~100ms with OWASP params,
-    // no point spending it on a registration that was going to fail.
+    // Whatever the address turns out to be: skipping it when the address is
+    // taken would make the answer a hundred milliseconds faster there.
     let password_hash = password_service::hash_password(payload.password).await?;
 
-    // Open the transaction. Both inserts must succeed together: a user with
-    // no primary email cannot log in.
+    let created = insert_account(
+        db,
+        username,
+        password_hash,
+        settings.default_locale,
+        &email,
+        &payload.legal,
+        &ctx,
+    )
+    .await?;
+
+    let db = db.clone();
+    let config = config.clone();
+    match created {
+        Some((user, email_row)) => {
+            tokio::spawn(async move {
+                deliver_verification_link(&db, &config, &user, &email_row).await;
+            });
+        }
+        None => {
+            let mut redis = redis.clone();
+            tokio::spawn(async move {
+                notify_address_holder(&db, &mut redis, &config, &email).await;
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// The account, its acceptance of the documents and its address, in one
+/// transaction. `None` when the address is taken, the inserts rolled back:
+/// the unique constraint decides, so two registrations racing for one
+/// address end the same way as one registration finding it taken.
+async fn insert_account(
+    db: &DatabaseConnection,
+    username: String,
+    password_hash: String,
+    locale: String,
+    email: &str,
+    legal: &LegalAcceptanceInput,
+    ctx: &SessionContext,
+) -> Result<Option<(users::Model, user_emails::Model)>, AuthError> {
     let txn = db.begin().await?;
 
+    // The username first: taken by a registration racing this one, it is
+    // the explicit answer, whatever the address.
     let user = users::ActiveModel {
         id: Set(Uuid::now_v7()),
         username: Set(username),
         password_hash: Set(password_hash),
-        locale: Set(settings.default_locale),
+        locale: Set(locale),
         ..Default::default()
     }
     .insert(&txn)
     .await
-    .map_err(map_unique_violation)?;
+    .map_err(|err| {
+        if violates(&err, "users_username_key") {
+            AuthError::UsernameTaken
+        } else {
+            AuthError::Db(err)
+        }
+    })?;
 
-    legal_service::record_both(&txn, user.id, &payload.legal, &ctx).await?;
+    legal_service::record_both(&txn, user.id, legal, ctx).await?;
 
-    // Insert the primary email.
-    let email = user_emails::ActiveModel {
+    let inserted = user_emails::ActiveModel {
         id: Set(Uuid::now_v7()),
         user_id: Set(user.id),
-        email: Set(email),
+        email: Set(email.to_owned()),
         is_primary: Set(true),
-
         ..Default::default()
     }
     .insert(&txn)
-    .await
-    .map_err(map_unique_violation)?;
+    .await;
 
-    txn.commit().await?;
+    match inserted {
+        Ok(email_row) => {
+            txn.commit().await?;
+            Ok(Some((user, email_row)))
+        }
+        Err(err) if violates(&err, "user_emails_email_key") => {
+            txn.rollback().await?;
+            Ok(None)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
 
-    // Send the verification email. Best effort: a mail failure must not undo a completed registration.
-    match auth_token_service::issue(
+/// Issues the verification link of a new account and mails it. Every
+/// failure is logged and swallowed: the caller answered long ago, and the
+/// same whatever happens here.
+async fn deliver_verification_link(
+    db: &DatabaseConnection,
+    config: &Config,
+    user: &users::Model,
+    email_row: &user_emails::Model,
+) {
+    let token = match auth_token_service::issue(
         db,
         user.id,
-        email.id,
-        domain::types::TokenKind::EmailVerification,
+        email_row.id,
+        TokenKind::EmailVerification,
     )
     .await
     {
-        Ok(token) => {
-            if let Err(err) =
-                email_service::send_email_verification(config, &email.email, &user.locale, &token)
-                    .await
-            {
-                tracing::error!(error = ?err, user_id = %user.id, "failed to send verification email");
-            }
-        }
+        Ok(token) => token,
         Err(err) => {
             tracing::error!(error = ?err, user_id = %user.id, "failed to issue verification token");
+            return;
+        }
+    };
+
+    if let Err(err) =
+        email_service::send_email_verification(config, &email_row.email, &user.locale, &token).await
+    {
+        tracing::error!(error = ?err, user_id = %user.id, "failed to send verification email");
+    }
+}
+
+/// Tells the holder of an address that someone just tried to register with
+/// it, in place of the error that registration no longer gives. A verified
+/// address gets the way back in (sign in, or reset the password); one held
+/// by a registration nobody confirmed gets the date it is deleted and the
+/// address freed, and never that registration's verification link: whoever
+/// reads the mail owns the mailbox, not the account.
+///
+/// Under the cap on unsolicited mail to one address, shared with the
+/// invitations: past it, or without the limiter, no mail goes out. Every
+/// failure is logged and swallowed, as in `deliver_verification_link`.
+async fn notify_address_holder(
+    db: &DatabaseConnection,
+    redis: &mut ConnectionManager,
+    config: &Config,
+    email: &str,
+) {
+    let found = match user_emails::Entity::find()
+        .filter(user_emails::Column::Email.eq(email))
+        .find_also_related(users::Entity)
+        .one(db)
+        .await
+    {
+        Ok(found) => found.and_then(|(address, user)| user.map(|user| (address, user))),
+        Err(err) => {
+            tracing::error!(error = ?err, "failed to look up the holder of a taken address");
+            return;
+        }
+    };
+    // Deleted between the insert that found it taken and here.
+    let Some((address, user)) = found else {
+        return;
+    };
+
+    let notice = if address.verified_at.is_some() {
+        email_service::SignupNotice::ExistingAccount
+    } else {
+        match admin_service::unverified_deletion_date(db, user.id).await {
+            Ok(Some(deleted_after)) => {
+                email_service::SignupNotice::PendingRegistration { deleted_after }
+            }
+            // Unverified, but an account the purge keeps: there is no date
+            // to give, and the way back in needs a verified address.
+            Ok(None) => {
+                tracing::info!(user_id = %user.id, "sign-up notice not sent: the account holding the address is never purged");
+                return;
+            }
+            Err(err) => {
+                tracing::error!(error = ?err, user_id = %user.id, "failed to read the deletion date of a pending registration");
+                return;
+            }
+        }
+    };
+
+    match rate_limit_service::check_unsolicited_mail_to_address(redis, &address.email).await {
+        Ok(RateLimitDecision::Allowed) => {}
+        Ok(RateLimitDecision::Limited { .. }) => {
+            tracing::info!(user_id = %user.id, "sign-up notice not sent: the address reached its daily cap");
+            return;
+        }
+        Err(err) => {
+            tracing::error!(error = ?err, user_id = %user.id, "sign-up notice limiter unavailable, mail not sent");
+            return;
         }
     }
 
-    // Return both rows so the caller does not have to read them back.
-    Ok(RegisteredUser { user, email })
+    if let Err(err) =
+        email_service::send_signup_notice(config, &address.email, &user.locale, notice).await
+    {
+        tracing::error!(error = ?err, user_id = %user.id, "failed to send the sign-up notice");
+    }
 }
 
 /// Signs in. The route has already counted the attempt against the IP
@@ -858,13 +992,12 @@ pub(crate) async fn validate_new_account(
 
     blocked_email_service::check_domain(db, domain, config.block_disposable_emails).await?;
 
-    // Advisory only: the UNIQUE CITEXT constraints are the real guarantee and
-    // also cover the window between these queries and the inserts.
+    // Advisory only: the UNIQUE CITEXT constraint is the real guarantee and
+    // also covers the window between this query and the insert. There is no
+    // such check on the address: whether it has an account is never an
+    // answer (see `register`).
     if username_exists(db, username).await? {
         return Err(AuthError::UsernameTaken);
-    }
-    if email_exists(db, email).await? {
-        return Err(AuthError::EmailTaken);
     }
 
     reject_if_compromised(config, password).await?;
@@ -891,14 +1024,6 @@ pub fn normalize_email(raw: &str) -> String {
 pub async fn username_exists(db: &DatabaseConnection, username: &str) -> Result<bool, DbErr> {
     users::Entity::find()
         .filter(users::Column::Username.eq(username))
-        .one(db)
-        .await
-        .map(|found| found.is_some())
-}
-
-pub async fn email_exists(db: &DatabaseConnection, email: &str) -> Result<bool, DbErr> {
-    user_emails::Entity::find()
-        .filter(user_emails::Column::Email.eq(email))
         .one(db)
         .await
         .map(|found| found.is_some())

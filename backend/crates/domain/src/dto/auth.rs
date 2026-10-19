@@ -34,11 +34,6 @@ pub(crate) fn password_composition(value: &str) -> Result<(), ValidationError> {
     }
 }
 
-pub struct RegisteredUser {
-    pub user: users::Model,
-    pub email: user_emails::Model,
-}
-
 pub struct LoggedInUser {
     pub user: users::Model,
     pub email: user_emails::Model,
@@ -88,18 +83,6 @@ pub struct UserResponse {
     pub email_verified: bool,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTimeUtc,
-}
-
-impl From<RegisteredUser> for UserResponse {
-    fn from(registered: RegisteredUser) -> Self {
-        Self {
-            id: registered.user.id,
-            username: registered.user.username,
-            email: registered.email.email,
-            email_verified: registered.email.verified_at.is_some(),
-            created_at: registered.user.created_at.into(),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]

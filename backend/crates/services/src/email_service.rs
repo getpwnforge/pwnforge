@@ -855,6 +855,152 @@ pub async fn send_account_notice(
     send(config, to, &subject, &html, &text, None).await
 }
 
+/// What a sign-up notice tells the holder of an address someone just tried
+/// to register with. Sent in place of an error, so that registration never
+/// says whether an address has an account (see `auth_service::register`).
+pub enum SignupNotice {
+    /// The address belongs to an account that verified it: sign in, or
+    /// reset the password.
+    ExistingAccount,
+    /// The address is held by a registration nobody confirmed, which the
+    /// cleanup task deletes after `deleted_after`. Never with that
+    /// registration's verification link: whoever reads this owns the
+    /// mailbox, not that account.
+    PendingRegistration {
+        deleted_after: chrono::DateTime<chrono::Utc>,
+    },
+}
+
+#[derive(Clone)]
+struct NoticeLink {
+    label: String,
+    href: String,
+}
+
+#[derive(Template)]
+#[template(path = "signup_notice.html.j2")]
+struct SignupNoticeHtml {
+    locale: String,
+    title: String,
+    preheader: String,
+    greeting: String,
+    body: String,
+    detail: Option<String>,
+    links: Vec<NoticeLink>,
+    closing: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "signup_notice.txt")]
+struct SignupNoticeText {
+    title: String,
+    greeting: String,
+    body: String,
+    detail: Option<String>,
+    links: Vec<NoticeLink>,
+    closing: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+/// Renders a sign-up notice: subject, HTML and text.
+fn render_signup_notice(
+    public_url: &str,
+    locale: &str,
+    notice: &SignupNotice,
+) -> Result<(String, String, String), EmailError> {
+    let key = match notice {
+        SignupNotice::ExistingAccount => "existing",
+        SignupNotice::PendingRegistration { .. } => "pending",
+    };
+    let text_of =
+        |name: &str| t!(format!("email.signup_notice.{key}.{name}"), locale = locale).to_string();
+
+    let (detail, links) = match notice {
+        SignupNotice::ExistingAccount => (
+            None,
+            vec![
+                NoticeLink {
+                    label: text_of("sign_in"),
+                    href: format!("{public_url}/login"),
+                },
+                NoticeLink {
+                    label: text_of("forgot_password"),
+                    href: format!("{public_url}/forgot-password"),
+                },
+            ],
+        ),
+        SignupNotice::PendingRegistration { deleted_after } => {
+            let date = deleted_after.format("%Y-%m-%d %H:%M UTC").to_string();
+            (
+                Some(
+                    t!(
+                        "email.signup_notice.pending.detail",
+                        locale = locale,
+                        date = date
+                    )
+                    .to_string(),
+                ),
+                Vec::new(),
+            )
+        }
+    };
+
+    let title = text_of("title");
+    let greeting = t!("email.common.greeting", locale = locale).to_string();
+    let body = text_of("body");
+    let closing = text_of("closing");
+    let footer = Footer::new(locale);
+
+    let html = SignupNoticeHtml {
+        locale: locale.to_owned(),
+        title: title.clone(),
+        preheader: text_of("preheader"),
+        greeting: greeting.clone(),
+        body: body.clone(),
+        detail: detail.clone(),
+        links: links.clone(),
+        closing: closing.clone(),
+        footer: footer.text.clone(),
+        footer_instance: footer.instance.clone(),
+        footer_note: footer.note.clone(),
+        public_url: public_url.to_owned(),
+    }
+    .render()?;
+
+    let text = SignupNoticeText {
+        title,
+        greeting,
+        body,
+        detail,
+        links,
+        closing,
+        footer: footer.text,
+        footer_instance: footer.instance,
+        footer_note: footer.note,
+        public_url: public_url.to_owned(),
+    }
+    .render()?;
+
+    Ok((text_of("subject"), html, text))
+}
+
+pub async fn send_signup_notice(
+    config: &Config,
+    to: &str,
+    locale: &str,
+    notice: SignupNotice,
+) -> Result<(), EmailError> {
+    let (subject, html, text) = render_signup_notice(&config.public_url, locale, &notice)?;
+    send(config, to, &subject, &html, &text, None).await
+}
+
 /// Untranslated on purpose: this only has to prove that the transport works,
 /// and the operator has not picked a locale yet. It still goes through the
 /// shared layout — it is the first email an instance ever sends, and the one
@@ -1301,6 +1447,72 @@ mod tests {
         ] {
             assert_eq!(link, format!("{PUBLIC_URL}{path}#token=tok123"));
             assert!(!link.contains('?'), "no query string in {link}");
+        }
+    }
+
+    /// Fails on a key with no translation: `t!` hands the key itself back.
+    fn assert_translated(rendered: &str, locale: &str) {
+        assert!(
+            !rendered.contains("email.signup_notice") && !rendered.contains("email.common"),
+            "untranslated key in {locale}: {rendered}"
+        );
+    }
+
+    /// The holder of a verified address is pointed at the sign-in and reset
+    /// pages, by plain links, and handed no token.
+    #[test]
+    fn a_signup_notice_to_an_account_links_to_sign_in_and_reset_only() {
+        for locale in ["en", "fr"] {
+            let (subject, html, text) =
+                render_signup_notice(PUBLIC_URL, locale, &SignupNotice::ExistingAccount)
+                    .expect("the notice must render");
+
+            assert_translated(&subject, locale);
+            for part in [&html, &text] {
+                assert_translated(part, locale);
+                assert!(
+                    part.contains(&format!("{PUBLIC_URL}/login")),
+                    "sign-in link in {locale}"
+                );
+                assert!(
+                    part.contains(&format!("{PUBLIC_URL}/forgot-password")),
+                    "reset link in {locale}"
+                );
+                assert!(!part.contains("token"), "no token in {locale}");
+            }
+        }
+    }
+
+    /// A registration nobody confirmed is announced with the date it goes,
+    /// and never with a link that could confirm it.
+    #[test]
+    fn a_signup_notice_to_a_pending_registration_gives_its_date_and_no_link() {
+        let deleted_after = "2026-10-26T12:00:00Z"
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .expect("a valid date");
+
+        for locale in ["en", "fr"] {
+            let (subject, html, text) = render_signup_notice(
+                PUBLIC_URL,
+                locale,
+                &SignupNotice::PendingRegistration { deleted_after },
+            )
+            .expect("the notice must render");
+
+            assert_translated(&subject, locale);
+            for part in [&html, &text] {
+                assert_translated(part, locale);
+                assert!(
+                    part.contains("2026-10-26 12:00 UTC"),
+                    "deletion date in {locale}"
+                );
+                assert!(!part.contains("token"), "no token in {locale}");
+                assert!(
+                    !part.contains("/auth/"),
+                    "no link to an auth page in {locale}"
+                );
+                assert!(!part.contains("/login"), "no sign-in link in {locale}");
+            }
         }
     }
 }

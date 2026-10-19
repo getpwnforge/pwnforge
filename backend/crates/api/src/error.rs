@@ -220,7 +220,6 @@ fn json_body_response(err: &JsonRejection) -> Response {
 fn auth_response(err: AuthError) -> Response {
     let (status, code) = match &err {
         AuthError::UsernameTaken => (StatusCode::CONFLICT, "username_taken"),
-        AuthError::EmailTaken => (StatusCode::CONFLICT, "email_taken"),
         AuthError::UsernameReserved => (StatusCode::CONFLICT, "username_reserved"),
         AuthError::InvalidEmail => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_email"),
         AuthError::BlockedEmail(BlockedEmailError::DomainNotAllowed) => {
@@ -397,7 +396,6 @@ fn setup_response(err: &SetupError) -> Response {
         SetupError::Auth(AuthError::UsernameReserved) => {
             (StatusCode::CONFLICT, "username_reserved")
         }
-        SetupError::Auth(AuthError::EmailTaken) => (StatusCode::CONFLICT, "email_taken"),
         SetupError::Auth(AuthError::PasswordCompromised) => {
             (StatusCode::UNPROCESSABLE_ENTITY, "password_compromised")
         }
