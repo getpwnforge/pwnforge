@@ -43,7 +43,7 @@ sets the same variables itself and calls `cargo test --all-features
 - New primary keys: Postgres-native `uuidv7()`, not app-side UUID generation.
 - Case-insensitive text (email, handle, slug): `CITEXT`, not `TEXT`.
 - User-facing strings go through `t()` (i18next) even though only `en.json` exists today.
-- API routes under `/api/v1/`; never break an existing v1 route.
+- API routes under `/api/v1/`; never break an existing v1 route. This holds from the first tagged release: before it, a route may change shape, provided the frontend and the OpenAPI spec follow in the same change.
 
 ## Testing instructions
 
