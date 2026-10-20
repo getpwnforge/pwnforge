@@ -2,6 +2,7 @@ use crate::{
     audit_service::{self, AuditContext, AuditError},
     auth_service,
     auth_token_service::{self, AuthTokenError},
+    background::Shutdown,
     config::Config,
     email_service::{self, EmailError},
     password_service::{self, PasswordError},
@@ -794,12 +795,14 @@ pub struct PurgeOutcome {
 pub async fn purge_scheduled_deletions(
     db: &DatabaseConnection,
     store: &ObjectStore,
+    shutdown: &Shutdown,
 ) -> Result<PurgeOutcome, AdminError> {
     let due = Utc::now();
 
     purge_each(
         db,
         store,
+        shutdown,
         users::Entity::find().filter(users::Column::PurgeScheduledAt.lte(due)),
         domain::types::AuditAction::UserPurged,
         // The request that scheduled it was a standard one.
@@ -833,10 +836,12 @@ pub const UNVERIFIED_ACCOUNT_DAYS: i32 = 7;
 pub async fn purge_unverified_accounts(
     db: &DatabaseConnection,
     store: &ObjectStore,
+    shutdown: &Shutdown,
 ) -> Result<PurgeOutcome, AdminError> {
     purge_each(
         db,
         store,
+        shutdown,
         never_verified(),
         domain::types::AuditAction::UserUnverifiedPurged,
         DeletionCause::NeverVerified,
@@ -912,10 +917,12 @@ pub async fn unverified_deletion_date(
 }
 
 /// Deletes, one by one, every account `selection` finds, walking by id past
-/// the failures (see `purge_scheduled_deletions`).
+/// the failures (see `purge_scheduled_deletions`), until `shutdown` is
+/// requested.
 async fn purge_each(
     db: &DatabaseConnection,
     store: &ObjectStore,
+    shutdown: &Shutdown,
     selection: Select<users::Entity>,
     action: domain::types::AuditAction,
     cause: DeletionCause,
@@ -932,6 +939,11 @@ async fn purge_each(
     };
 
     loop {
+        // A shutdown starts no new batch.
+        if shutdown.requested() {
+            break;
+        }
+
         let mut batch = selection
             .clone()
             .select_only()
@@ -948,6 +960,12 @@ async fn purge_each(
         };
 
         for user_id in ids {
+            // Nor a new account: each deletion is a transaction of its own,
+            // so the ones done so far stay done.
+            if shutdown.requested() {
+                return Ok(outcome);
+            }
+
             let record = DeletionRecord {
                 action,
                 ctx: &ctx,

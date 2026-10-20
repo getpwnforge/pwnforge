@@ -24,6 +24,7 @@ use domain::dto::workspace::{
 };
 use domain::entities::{team_members, workspace_invitations, workspace_members, workspaces};
 
+use crate::background::Shutdown;
 use crate::config::Config;
 use crate::email_service::InvitationKind;
 use crate::invitation_service::{self, CreatedInvitation, InvitationMail, MailOutcome};
@@ -707,14 +708,20 @@ pub async fn preview(
 }
 
 /// Records as expired every pending invitation past its date, erasing its
-/// address. Returns how many. Run by the cleanup task.
+/// address. Returns how many. Run by the cleanup task, which stops between
+/// two batches once `shutdown` is requested.
 pub async fn expire_stale(
     db: &DatabaseConnection,
     now: DateTime<Utc>,
+    shutdown: &Shutdown,
 ) -> std::result::Result<u64, DbErr> {
     let mut total = 0;
 
     loop {
+        // A shutdown starts no new batch; the one before it has finished.
+        if shutdown.requested() {
+            break;
+        }
         let ids: Vec<Uuid> = workspace_invitations::Entity::find()
             .select_only()
             .column(workspace_invitations::Column::Id)
@@ -754,15 +761,21 @@ pub async fn expire_stale(
 /// Deletes the invitations that stopped being pending more than
 /// `HISTORY_RETENTION_DAYS` ago. A pending one is never deleted, whatever
 /// its age: `expire_stale` closes it first, and the retention runs from
-/// then. Returns how many. Run by the cleanup task.
+/// then. Returns how many. Run by the cleanup task, which stops between two
+/// batches once `shutdown` is requested.
 pub async fn purge_history(
     db: &DatabaseConnection,
     now: DateTime<Utc>,
+    shutdown: &Shutdown,
 ) -> std::result::Result<u64, DbErr> {
     let cutoff = now - Duration::days(HISTORY_RETENTION_DAYS);
     let mut total = 0;
 
     loop {
+        // A shutdown starts no new batch; the one before it has finished.
+        if shutdown.requested() {
+            break;
+        }
         let ids: Vec<Uuid> = workspace_invitations::Entity::find()
             .select_only()
             .column(workspace_invitations::Column::Id)

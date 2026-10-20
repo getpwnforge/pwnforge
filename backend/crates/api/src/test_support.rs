@@ -12,6 +12,7 @@ use domain::types::AccentColor;
 use migration::MigratorTrait;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DbBackend, Set, Statement};
 use services::avatar_service;
+use services::background::BackgroundTasks;
 use services::config::{Config, EmailBackend, SmtpTls, StorageConfig};
 use services::storage_service::{
     AvatarKind, AvatarSize, Bucket, ObjectStore, S3Store, StorageError, avatar_key,
@@ -91,6 +92,7 @@ pub(crate) fn config() -> Config {
         public_url: "http://localhost".to_owned(),
         cors_origin: "http://localhost:5173".to_owned(),
         setup_token: None,
+        shutdown_grace_secs: 25,
         database_url: String::new(),
         database_max_connections: 5,
         redis_url: String::new(),
@@ -169,6 +171,16 @@ pub(crate) async fn app_with_config(
     db: &sea_orm::DatabaseConnection,
     config: Config,
 ) -> axum::Router {
+    app_with_background(db, config, BackgroundTasks::new()).await
+}
+
+/// `app_with_config`, its background tasks counted by `background`: for the
+/// tests that stop the server and wait for them.
+pub(crate) async fn app_with_background(
+    db: &sea_orm::DatabaseConnection,
+    config: Config,
+    background: BackgroundTasks,
+) -> axum::Router {
     let db = db.clone();
 
     let redis_url = env_or("REDIS_URL", "redis://127.0.0.1:6379");
@@ -206,6 +218,7 @@ pub(crate) async fn app_with_config(
         }),
         setup_token: None,
         storage: Arc::new(storage),
+        background,
     })
 }
 
@@ -464,6 +477,22 @@ pub(crate) struct MailSink {
 
 impl MailSink {
     pub(crate) async fn start() -> Self {
+        Self::greeting_after(Some(std::time::Duration::ZERO)).await
+    }
+
+    /// A server that keeps every client waiting `delay` for its greeting:
+    /// a mail takes at least that long to go out.
+    pub(crate) async fn slow(delay: std::time::Duration) -> Self {
+        Self::greeting_after(Some(delay)).await
+    }
+
+    /// A server that accepts the connection and never greets: a mail to it
+    /// hangs until the client gives up.
+    pub(crate) async fn silent() -> Self {
+        Self::greeting_after(None).await
+    }
+
+    async fn greeting_after(delay: Option<std::time::Duration>) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a port must be free");
@@ -474,6 +503,14 @@ impl MailSink {
             while let Ok((socket, _)) = listener.accept().await {
                 let store = Arc::clone(&store);
                 tokio::spawn(async move {
+                    match delay {
+                        Some(delay) => tokio::time::sleep(delay).await,
+                        // Held open, never answered.
+                        None => {
+                            let _socket = socket;
+                            return std::future::pending().await;
+                        }
+                    }
                     let _ = serve_smtp(socket, store).await;
                 });
             }

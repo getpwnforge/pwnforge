@@ -23,6 +23,7 @@ use sea_orm::{
 use services::audit_service::AuditContext;
 use services::auth_service::{self, AuthError};
 use services::auth_token_service::{self, AuthTokenError};
+use services::background::BackgroundTasks;
 use services::config::{EmailBackend, SmtpTls};
 use services::{admin_service, token_service};
 use uuid::Uuid;
@@ -310,6 +311,7 @@ async fn a_reset_request_answers_before_its_mail_is_sent() {
             &db,
             &mut redis,
             &config,
+            &BackgroundTasks::new(),
             &address,
             "",
             IpAddr::V4(Ipv4Addr::LOCALHOST),

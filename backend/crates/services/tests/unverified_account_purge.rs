@@ -20,6 +20,7 @@ use sea_orm::{
     QueryFilter, Set, Statement, TransactionTrait,
 };
 use services::admin_service::{self, PurgeOutcome};
+use services::background::Shutdown;
 use services::legal_service;
 use services::storage_service::{ObjectStore, S3Store};
 use uuid::Uuid;
@@ -110,6 +111,7 @@ async fn purge(db: &DatabaseConnection) -> PurgeOutcome {
     admin_service::purge_unverified_accounts(
         db,
         &ObjectStore::S3(S3Store::new(&storage::storage_config())),
+        &Shutdown::never(),
     )
     .await
     .expect("the purge pass must run")

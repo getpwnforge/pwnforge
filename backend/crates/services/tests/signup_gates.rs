@@ -17,6 +17,7 @@ use migration::MigratorTrait;
 use redis::aio::ConnectionManager;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, PaginatorTrait, Set};
 use services::auth_service::{self, AuthError};
+use services::background::BackgroundTasks;
 use services::blocked_email_service::{self, BlockedEmailError};
 use services::instance_service::SETTINGS_ID;
 use uuid::Uuid;
@@ -61,6 +62,7 @@ async fn register(db: &DatabaseConnection, request: RegisterRequest) -> Result<(
         db,
         &redis,
         &config(),
+        &BackgroundTasks::new(),
         request,
         SessionContext {
             user_agent: None,

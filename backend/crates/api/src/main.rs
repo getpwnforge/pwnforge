@@ -5,6 +5,7 @@ mod healthcheck;
 mod middleware;
 mod openapi;
 mod routes;
+mod shutdown;
 mod state;
 mod tasks;
 #[cfg(test)]
@@ -13,9 +14,10 @@ mod test_support;
 use migration::MigratorTrait;
 use services::config::Config;
 use state::AppState;
-use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use services::background::{BackgroundTasks, Shutdown};
 use services::setup_service;
 use services::storage_service::{ObjectStore, S3Store};
 
@@ -84,6 +86,14 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Instance not set up yet. Open /setup and use token: {token}");
     }
 
+    let grace = Duration::from_secs(config.shutdown_grace_secs);
+    // Installed before anything listens: as PID 1 in its container, the
+    // server drops a signal it has no handler for.
+    let stop = shutdown::signal_received()?;
+
+    let background = BackgroundTasks::new();
+    let (trigger, stopping) = Shutdown::channel();
+
     let state = AppState {
         db: db.clone(),
         redis,
@@ -91,20 +101,18 @@ async fn main() -> anyhow::Result<()> {
         jwt_keys: Arc::new(state::JwtKeys { encoding, decoding }),
         setup_token: setup_token.map(Arc::new),
         storage: Arc::new(storage),
+        background: background.clone(),
     };
 
-    // Background cleanup: runs hourly for the lifetime of the process.
-    tasks::cleanup::spawn(db, state.storage.clone());
+    // Background cleanup: runs hourly until the shutdown, which waits for
+    // the pass under way.
+    background.spawn(tasks::cleanup::run(db, state.storage.clone(), stopping));
 
     let app = app::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     ::tracing::info!("listening on {}", listener.local_addr()?);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    shutdown::serve(listener, app, &background, trigger, stop, grace).await?;
 
     Ok(())
 }

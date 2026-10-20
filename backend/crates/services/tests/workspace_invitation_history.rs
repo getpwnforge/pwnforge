@@ -19,6 +19,7 @@ use sea_orm::{
     ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, EntityTrait, Set,
     Statement, TransactionTrait,
 };
+use services::background::Shutdown;
 use services::workspace_invitation_service::{
     self as invitations, InvitationRef, WorkspaceInvitationError,
 };
@@ -291,7 +292,7 @@ async fn expiry_erases_the_address() {
     let expired_on = Utc::now() - Duration::hours(2);
     let (id, _) = pending(&db, &fixture, Target::Email(&address), expired_on).await;
 
-    invitations::expire_stale(&db, Utc::now())
+    invitations::expire_stale(&db, Utc::now(), &Shutdown::never())
         .await
         .expect("the cleanup runs");
 
@@ -328,7 +329,7 @@ async fn the_history_is_purged_after_ninety_days() {
         .expect("the fixture closes");
     }
 
-    invitations::purge_history(&db, Utc::now())
+    invitations::purge_history(&db, Utc::now(), &Shutdown::never())
         .await
         .expect("the purge runs");
 
@@ -355,10 +356,10 @@ async fn a_pending_invitation_is_never_purged() {
     .await
     .expect("the fixture ages");
 
-    invitations::expire_stale(&db, Utc::now())
+    invitations::expire_stale(&db, Utc::now(), &Shutdown::never())
         .await
         .expect("the cleanup runs");
-    invitations::purge_history(&db, Utc::now())
+    invitations::purge_history(&db, Utc::now(), &Shutdown::never())
         .await
         .expect("the purge runs");
 

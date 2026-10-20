@@ -2,6 +2,7 @@ use std::net::IpAddr;
 
 // crates/services/src/auth_service.rs
 use super::{blocked_email_service, email_service, jwt_service, password_service, session_service};
+use crate::background::BackgroundTasks;
 use crate::blocked_email_service::BlockedEmailError;
 use crate::config::Config;
 use crate::rate_limit_service::{self, RateLimitDecision};
@@ -132,6 +133,7 @@ pub async fn register(
     db: &DatabaseConnection,
     redis: &ConnectionManager,
     config: &Config,
+    background: &BackgroundTasks,
     payload: RegisterRequest,
     ctx: SessionContext,
     client_ip: IpAddr,
@@ -184,13 +186,13 @@ pub async fn register(
     let config = config.clone();
     match created {
         Some((user, email_row)) => {
-            tokio::spawn(async move {
+            background.spawn(async move {
                 deliver_verification_link(&db, &config, &user, &email_row).await;
             });
         }
         None => {
             let mut redis = redis.clone();
-            tokio::spawn(async move {
+            background.spawn(async move {
                 notify_address_holder(&db, &mut redis, &config, &email).await;
             });
         }
@@ -599,6 +601,7 @@ pub async fn password_forgot(
     db: &DatabaseConnection,
     redis: &mut ConnectionManager,
     config: &Config,
+    background: &BackgroundTasks,
     email: &str,
     turnstile_token: &str,
     client_ip: IpAddr,
@@ -647,7 +650,7 @@ pub async fn password_forgot(
 
             let db = db.clone();
             let config = config.clone();
-            tokio::spawn(async move {
+            background.spawn(async move {
                 deliver_reset_link(&db, &config, &user, &email_row).await;
             });
         }

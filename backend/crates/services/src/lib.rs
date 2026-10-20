@@ -4,6 +4,7 @@ pub mod audit_service;
 pub mod auth_service;
 pub mod auth_token_service;
 pub mod avatar_service;
+pub mod background;
 pub mod blocked_email_service;
 pub mod config;
 pub mod contact_service;

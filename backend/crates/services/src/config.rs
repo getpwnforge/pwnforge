@@ -122,6 +122,9 @@ pub struct Config {
     pub public_url: String,
     pub cors_origin: String,
     pub setup_token: Option<String>,
+    /// How long a shutdown waits for the requests under way and the
+    /// background tasks before stopping anyway (see `api::shutdown`).
+    pub shutdown_grace_secs: u64,
 
     // --- Datastores ---
     pub database_url: String,
@@ -180,6 +183,7 @@ impl fmt::Debug for Config {
             .field("public_url", &self.public_url)
             .field("cors_origin", &self.cors_origin)
             .field("setup_token", &"[redacted]")
+            .field("shutdown_grace_secs", &self.shutdown_grace_secs)
             .field("database_url", &"[redacted]")
             .field("database_max_connections", &self.database_max_connections)
             .field("redis_url", &"[redacted]")
@@ -209,6 +213,7 @@ impl Config {
             public_url: required("PUBLIC_URL")?,
             cors_origin: required("CORS_ORIGIN")?,
             setup_token: std::env::var("SETUP_TOKEN").ok(),
+            shutdown_grace_secs: parse_var("SHUTDOWN_GRACE_SECS", "25")?,
 
             // --- Datastores ---
             database_url: required("DATABASE_URL")?,
@@ -280,6 +285,7 @@ impl Config {
         }
 
         validate_cors_origin(&self.cors_origin)?;
+        validate_shutdown_grace(self.shutdown_grace_secs)?;
 
         // A zero-sized pool deadlocks on the first query instead of failing at
         // boot, and the API derives its concurrency limit from this, so a zero
@@ -330,6 +336,23 @@ impl Config {
     pub fn public_url_is_https(&self) -> bool {
         is_https(&self.public_url)
     }
+}
+
+/// The shortest and the longest a shutdown may wait, in seconds. Zero would
+/// abandon every mail under way; past five minutes, an operator stopping the
+/// instance is better served by Docker's own kill, and the compose files'
+/// `stop_grace_period` has to stay above this value anyway.
+const SHUTDOWN_GRACE_RANGE: std::ops::RangeInclusive<u64> = 1..=300;
+
+fn validate_shutdown_grace(secs: u64) -> Result<()> {
+    if !SHUTDOWN_GRACE_RANGE.contains(&secs) {
+        anyhow::bail!(
+            "SHUTDOWN_GRACE_SECS must be between {} and {} (got {secs})",
+            SHUTDOWN_GRACE_RANGE.start(),
+            SHUTDOWN_GRACE_RANGE.end()
+        );
+    }
+    Ok(())
 }
 
 fn is_https(url: &str) -> bool {
@@ -590,6 +613,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default and the bounds pass; zero and anything past five minutes
+    /// do not.
+    #[test]
+    fn the_shutdown_grace_is_bounded() {
+        for secs in [1, 25, 300] {
+            assert!(validate_shutdown_grace(secs).is_ok(), "{secs} is accepted");
+        }
+        for secs in [0, 301, u64::MAX] {
+            assert!(validate_shutdown_grace(secs).is_err(), "{secs} is refused");
+        }
+    }
 
     /// An `https://` address in any case passes; plain HTTP, a missing
     /// scheme or an empty value do not.

@@ -82,6 +82,12 @@ Do it before opening `/setup`. That page sends the setup token and the administr
 
 The backend must be able to reach `challenges.cloudflare.com` over HTTPS. Verification fails closed: if it cannot, every protected form is refused, so an instance without outbound Internet access must leave Turnstile off.
 
+### Stop, update and restart
+
+`docker compose stop`, `docker compose down` and the recreation `docker compose up -d` does after a `docker compose pull` all send the backend SIGTERM. It then stops accepting connections, answers the requests already under way, and waits for the work they left running: the verification and password reset mails sent after the answer, and the cleanup pass if one is running, which finishes its current batch and starts no other. It gives all of it `SHUTDOWN_GRACE_SECS` (25 seconds by default, see `.env.example`), then exits anyway and logs how many tasks it abandoned. Docker waits 30 seconds (`stop_grace_period` in `docker-compose.yml`) before it kills the process, so keep `SHUTDOWN_GRACE_SECS` below that. The logs show each step: the signal received, the number of tasks waited for, and `shutdown complete`.
+
+A stop with no notice is not covered: a crash, `docker kill`, the kernel's out-of-memory killer or a power loss end the process at once. The database stays consistent, as Postgres rolls back any transaction left open, but a mail under way is not sent: whoever was waiting for it asks for a new link.
+
 > **Important**: `docker-compose.yml` is the **production** configuration. It pulls pre-built images from GHCR and does not reflect local source changes. If you're contributing code or want hot-reload, use `docker-compose.dev.yml` instead (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Self-hosted or cloud

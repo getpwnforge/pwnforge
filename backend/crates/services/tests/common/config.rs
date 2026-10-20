@@ -13,6 +13,7 @@ pub fn config() -> Config {
         public_url: "http://localhost".to_owned(),
         cors_origin: "http://localhost:5173".to_owned(),
         setup_token: None,
+        shutdown_grace_secs: 25,
         database_url: String::new(),
         database_max_connections: 1,
         redis_url: String::new(),

@@ -24,6 +24,7 @@ use sea_orm::{
 use services::admin_service::{self, AdminError, DeletionKind, DeletionRequest, PurgeOutcome};
 use services::audit_service::AuditContext;
 use services::avatar_service;
+use services::background::Shutdown;
 use services::storage_service::{
     AvatarKind, AvatarSize, Bucket, ObjectStore, ObjectsToPurge, S3Store, StorageError, avatar_key,
 };
@@ -204,7 +205,7 @@ async fn workspace_exists(db: &DatabaseConnection, id: Uuid) -> bool {
 }
 
 async fn purge(db: &DatabaseConnection, store: &ObjectStore) -> PurgeOutcome {
-    admin_service::purge_scheduled_deletions(db, store)
+    admin_service::purge_scheduled_deletions(db, store, &Shutdown::never())
         .await
         .expect("the purge pass must run")
 }
