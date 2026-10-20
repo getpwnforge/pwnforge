@@ -139,6 +139,11 @@ deleted and the address freed. That last notice never carries the pending
 account's verification link: whoever reads it owns the mailbox, not that
 account. Both notices count against the daily cap on unsolicited mail.
 
+An address no mail can go to (`a..b@example.test`) is refused before all of
+it, with the answer a malformed address gets: `validation_failed`, from its
+form alone. That check never looks the address up, so it answers a taken
+one and a free one the same.
+
 Two places still tell. Inviting by address answers `AlreadyMember` when a
 member of the inviter's own team or workspace has that address verified,
 which tells the inviter which address one of their members holds. The setup

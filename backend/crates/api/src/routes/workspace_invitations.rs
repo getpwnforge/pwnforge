@@ -18,7 +18,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use crate::middleware::workspace::{WorkspaceMember, role};
-use crate::middleware::{auth::AuthUser, json::JsonBody};
+use crate::middleware::{address::require_mailbox, auth::AuthUser, json::JsonBody};
 use crate::routes::enforce_invitation_limit;
 use crate::{error::AppError, state::AppState};
 use domain::dto::error_responses::{
@@ -112,7 +112,7 @@ fn to_response(
         (status = 404, description = "Workspace not found, or no access to it. invited_user_not_found: no account has this username", body = SimpleErrorResponse),
         (status = 409, description = "workspace_is_solo, workspace_archived, already_member (on the team or a guest, by account or by an account holding the address verified), or invitation_already_pending", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed (invitee_required, invitee_named_twice, or a malformed username or address), or invalid_body (a role other than member or viewer)", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed (invitee_required, invitee_named_twice, or a malformed username or address), or invalid_body (a role other than member or viewer); an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "rate_limited: by username 20 an hour per author and 50 per workspace, by address 10 and 30", body = RateLimitedErrorResponse),
         (status = 503, description = "service_unavailable: the rate limiter cannot be reached", body = SimpleErrorResponse),
     )
@@ -123,6 +123,9 @@ async fn create_invitation(
     JsonBody(input): JsonBody<CreateWorkspaceInvitationRequest>,
 ) -> Result<(StatusCode, Json<WorkspaceInvitationResponse>), AppError> {
     input.validate()?;
+    if let Some(address) = &input.invited_email {
+        require_mailbox("invited_email", address)?;
+    }
 
     // After authorization, so nobody spends a workspace's budget without
     // being allowed to invite into it; before the service, so a refused
@@ -1343,5 +1346,40 @@ mod tests {
             list(&app, &f, f.captain, "").await.is_empty(),
             "nothing was created"
         );
+    }
+
+    /// An address no mail can go to is refused as a malformed one, and no
+    /// invitation is written.
+    #[tokio::test]
+    async fn an_address_no_mail_can_go_to_invites_nobody() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+
+        for address in ["a..b@example.test", "a@[127.0.0.1]"] {
+            let (status, body) = invite(
+                &app,
+                &f,
+                f.captain,
+                json!({ "role": "member", "invited_email": address }),
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{address}: {body}"
+            );
+            assert_eq!(
+                body,
+                json!({ "error": "validation_failed", "fields": { "invited_email": ["email"] } }),
+                "{address}"
+            );
+        }
+        let written = workspace_invitations::Entity::find()
+            .filter(workspace_invitations::Column::WorkspaceId.eq(f.workspace.id))
+            .all(&db)
+            .await
+            .expect("the lookup must succeed");
+        assert!(written.is_empty(), "no invitation is written");
     }
 }

@@ -14,7 +14,7 @@ use validator::Validate;
 
 use crate::{
     error::AppError,
-    middleware::{client_ip::ClientIp, json::JsonBody},
+    middleware::{address::require_mailbox, client_ip::ClientIp, json::JsonBody},
     state::AppState,
 };
 
@@ -35,7 +35,7 @@ pub fn router() -> Router<AppState> {
         (status = 204, description = "Contact request submitted"),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body; an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limit exceeded", body = RateLimitedErrorResponse),
         (status = 502, description = "email_send_failed: the mail service did not take the message (unreachable, down or refusing it); nothing was sent", body = SimpleErrorResponse),
         (status = 503, description = "service_unavailable: the rate limiter is unreachable, and the route fails closed", body = SimpleErrorResponse),
@@ -48,6 +48,8 @@ async fn submit(
     JsonBody(payload): JsonBody<ContactRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
+    // The notification's Reply-To.
+    require_mailbox("email", &payload.email)?;
 
     let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
 
@@ -138,6 +140,30 @@ mod tests {
                 .any(|mail| mail.to == ["noreply@ctf.example.test"]),
             "{mails:?}"
         );
+    }
+
+    /// An address the request's validator takes and no mail can go to was a
+    /// 500: the visitor's input, so refused as a malformed address, and
+    /// nothing is sent.
+    #[tokio::test]
+    async fn an_address_no_mail_can_go_to_is_refused_as_malformed() {
+        let sink = MailSink::start().await;
+
+        for address in ["a..b@example.test", "a@[127.0.0.1]"] {
+            let (status, body) = contact(sink.config(), address).await;
+
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{address}: {body}"
+            );
+            assert_eq!(
+                body,
+                json!({ "error": "validation_failed", "fields": { "email": ["email"] } }),
+                "{address}"
+            );
+        }
+        assert!(sink.settle().await.is_empty(), "no mail went out");
     }
 
     /// A mail server that does not answer was a 500: the dependency's

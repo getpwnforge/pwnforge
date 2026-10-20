@@ -45,12 +45,24 @@ describe("ContactPage", () => {
   });
 
   it.each([
-    ["a mail service that did not take the message", 502, "email_send_failed", "public:contact.sendFailed"],
-    ["a failed bot check", 400, "turnstile_failed", "errors:api.turnstile_failed"],
-    ["a failure of the server's own", 500, "internal_error", "public:contact.error"],
-    ["a code this page does not know", 409, "constructor", "public:contact.error"],
-  ])("says so for %s", async (_case, status, code, message) => {
-    const sent = renderPage(answer(status, { error: code }));
+    [
+      "an address no mail can go to",
+      422,
+      { error: "validation_failed", fields: { email: ["email"] } },
+      "errors:api.invalid_email",
+    ],
+    [
+      "another field refused",
+      422,
+      { error: "validation_failed", fields: { message: ["length"] } },
+      "public:contact.error",
+    ],
+    ["a mail service that did not take the message", 502, { error: "email_send_failed" }, "public:contact.sendFailed"],
+    ["a failed bot check", 400, { error: "turnstile_failed" }, "errors:api.turnstile_failed"],
+    ["a failure of the server's own", 500, { error: "internal_error" }, "public:contact.error"],
+    ["a code this page does not know", 409, { error: "constructor" }, "public:contact.error"],
+  ])("says so for %s", async (_case, status, body, message) => {
+    const sent = renderPage(answer(status, body));
 
     await send();
 

@@ -16,8 +16,15 @@ const MESSAGE_BY_CODE = new Map<string, string>([
   ["email_send_failed", "contact.sendFailed"],
 ]);
 
-function messageFor(code: unknown): string {
-  return (typeof code === "string" ? MESSAGE_BY_CODE.get(code) : undefined) ?? "contact.error";
+function messageFor(body: unknown): string {
+  if (typeof body !== "object" || body === null) return "contact.error";
+  const { error, fields } = body as { error?: unknown; fields?: unknown };
+  // The browser's own check takes addresses no mail can go to
+  // (a..b@example.test), which the API refuses as malformed.
+  if (error === "validation_failed" && typeof fields === "object" && fields !== null && "email" in fields) {
+    return "errors:api.invalid_email";
+  }
+  return (typeof error === "string" ? MESSAGE_BY_CODE.get(error) : undefined) ?? "contact.error";
 }
 
 export function ContactPage() {
@@ -53,9 +60,7 @@ export function ContactPage() {
       if (!res.ok) {
         turnstile.reset();
         const body: unknown = await res.json().catch(() => null);
-        const code =
-          typeof body === "object" && body !== null && "error" in body ? body.error : null;
-        setErrorKey(messageFor(code));
+        setErrorKey(messageFor(body));
         setStatus("error");
         return;
       }

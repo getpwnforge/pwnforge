@@ -9,7 +9,7 @@ use axum::{
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::middleware::{auth::AuthUser, json::JsonBody};
+use crate::middleware::{address::require_mailbox, auth::AuthUser, json::JsonBody};
 use crate::routes::enforce_invitation_limit;
 use crate::{error::AppError, state::AppState};
 use domain::dto::error_responses::{
@@ -356,7 +356,7 @@ async fn list_invitations(
         (status = 404, description = "Team not found or not a member. invited_user_not_found: no account has this username", body = SimpleErrorResponse),
         (status = 409, description = "already_invited, or already_member: the account, or a member holding the address verified, is on the team. captain_must_transfer: an invitation cannot grant Captain, the role moves only by transfer", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed, invalid_body, or invitation_expiry_too_far: expires_at more than 30 days out (7 days when absent)", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, or invitation_expiry_too_far: expires_at more than 30 days out (7 days when absent); an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "rate_limited: by username 20 an hour per author and 50 per team, by address 10 and 30. Generic links are not limited", body = RateLimitedErrorResponse),
         (status = 503, description = "service_unavailable: the rate limiter cannot be reached", body = SimpleErrorResponse),
     )
@@ -368,6 +368,9 @@ async fn create_invitation(
     JsonBody(payload): JsonBody<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreatedTeamInvitation>), AppError> {
     payload.validate()?;
+    if let Some(address) = &payload.invited_email {
+        require_mailbox("invited_email", address)?;
+    }
 
     let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
     team_service::require_role(my_role, TeamRole::Admin)?;
@@ -1680,5 +1683,42 @@ mod tests {
                     .expect("DEL must answer");
             }
         }
+    }
+
+    /// An address no mail can go to is refused as a malformed one, and no
+    /// invitation is written.
+    #[tokio::test]
+    async fn an_address_no_mail_can_go_to_invites_nobody() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+
+        for address in ["a..b@example.test", "a@[127.0.0.1]"] {
+            let (status, body) = invite(
+                &app,
+                &db,
+                team_id,
+                captain,
+                json!({ "default_role": "member", "invited_email": address }),
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{address}: {body}"
+            );
+            assert_eq!(
+                body,
+                json!({ "error": "validation_failed", "fields": { "invited_email": ["email"] } }),
+                "{address}"
+            );
+        }
+        let written = domain::entities::team_invitations::Entity::find()
+            .filter(domain::entities::team_invitations::Column::TeamId.eq(team_id))
+            .all(&db)
+            .await
+            .expect("the lookup must succeed");
+        assert!(written.is_empty(), "no invitation is written");
     }
 }

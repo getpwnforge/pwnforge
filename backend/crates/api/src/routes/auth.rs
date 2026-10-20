@@ -1,5 +1,7 @@
 // crates/api/src/routes/auth.rs
-use crate::middleware::{auth::AuthUser, client_ip::ClientIp, json::JsonBody, session_context};
+use crate::middleware::{
+    address::require_mailbox, auth::AuthUser, client_ip::ClientIp, json::JsonBody, session_context,
+};
 use crate::{error::AppError, state::AppState};
 use axum::{
     Json, Router, extract::ConnectInfo, extract::State, http::HeaderMap, http::StatusCode,
@@ -55,7 +57,7 @@ pub fn router() -> Router<AppState> {
         (status = 403, description = "public_signup_disabled: public signup is disabled, or the instance is not set up yet", body = SimpleErrorResponse),
         (status = 409, description = "username_taken or username_reserved, checked before anything about the address", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised; an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )
@@ -68,6 +70,9 @@ async fn register(
     JsonBody(payload): JsonBody<RegisterRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
+    // On the form alone, before anything looks the address up: the answer
+    // is the same whether an account holds it or not.
+    require_mailbox("email", &payload.email)?;
     legal_service::validate_input(&payload.legal)?;
 
     // Same reasoning as login: a malformed X-Forwarded-For must not strip the
@@ -272,7 +277,7 @@ async fn me(State(state): State<AppState>, user: AuthUser) -> Result<Json<UserRe
         (status = 202, description = "Password reset email sent"),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read; or turnstile_failed", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body; an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited: per IP first, then, past Turnstile, per address", body = RateLimitedErrorResponse),
         (status = 503, description = "service_unavailable: a rate limiter cannot be reached", body = SimpleErrorResponse),
     )
@@ -284,6 +289,8 @@ async fn password_forgot(
     JsonBody(payload): JsonBody<PasswordForgotRequest>,
 ) -> Result<StatusCode, AppError> {
     payload.validate()?;
+    // On the form alone, as at registration.
+    require_mailbox("email", &payload.email)?;
 
     let rate_limit_ip = ip.unwrap_or_else(|| remote.ip());
     let mut redis = state.redis.clone();
@@ -586,7 +593,7 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::test_support::{app, app_with_config, config, cookie_for, db, env_or};
+    use crate::test_support::{app, app_with_config, config, cookie_for, db, env_or, unique};
 
     const PASSWORD: &str = "a-long-test-password-1!";
 
@@ -645,6 +652,38 @@ mod tests {
         .await
         .expect("the fixture address must insert");
         (id, username, address)
+    }
+
+    /// An account, verified, holding `address`: one registered before an
+    /// address had to make a mailbox.
+    async fn account_holding(db: &DatabaseConnection, address: &str) -> Uuid {
+        let (id, _, _) = account(db, true).await;
+        user_emails::Entity::update_many()
+            .col_expr(
+                user_emails::Column::Email,
+                sea_orm::sea_query::Expr::value(address),
+            )
+            .filter(user_emails::Column::UserId.eq(id))
+            .exec(db)
+            .await
+            .expect("the address must be set");
+        id
+    }
+
+    /// Two shapes of address the request's `email` rule takes and no mail
+    /// can be addressed to, each made unique by `tag`: an empty atom, and a
+    /// domain literal, which the mailbox parser refuses.
+    fn undeliverable(tag: &str) -> [String; 2] {
+        [
+            format!("{tag}..b@example.test"),
+            format!("{tag}@[127.0.0.1]"),
+        ]
+    }
+
+    fn refused_as_malformed(field: &str) -> Value {
+        let mut fields = serde_json::Map::new();
+        fields.insert(field.to_owned(), json!(["email"]));
+        json!({ "error": "validation_failed", "fields": fields })
     }
 
     async fn post(
@@ -969,6 +1008,46 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     }
 
+    /// A reset request for an address no mail can go to is refused on its
+    /// form alone: the same answer whether an account holds it or not, and
+    /// no link is issued.
+    #[tokio::test]
+    async fn a_reset_request_for_an_address_no_mail_can_go_to_is_refused_on_its_form() {
+        let db = db().await;
+        let app = app(&db).await;
+        let held = undeliverable(&unique("held"));
+        let free = undeliverable(&unique("free"));
+
+        for (held, free) in held.iter().zip(&free) {
+            let holder = account_holding(&db, held).await;
+            let mut answers = Vec::new();
+            for address in [held, free] {
+                let (status, _, body) = post(
+                    &app,
+                    "/api/v1/auth/password/forgot",
+                    json!({ "email": address, "turnstile_token": "" }),
+                    fresh_ip(),
+                    None,
+                )
+                .await;
+                assert_eq!(
+                    status,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "{address}: {body}"
+                );
+                answers.push(body);
+            }
+            assert_eq!(answers[0], refused_as_malformed("email"), "{held}");
+            assert_eq!(answers[0], answers[1], "the same answer, taken or free");
+            let links = auth_tokens::Entity::find()
+                .filter(auth_tokens::Column::UserId.eq(holder))
+                .all(&db)
+                .await
+                .expect("the lookup must succeed");
+            assert!(links.is_empty(), "no link is issued");
+        }
+    }
+
     /// A made-up reset token is refused before the breach check runs: a
     /// compromised password with an unknown token is answered `token_invalid`.
     #[tokio::test]
@@ -1178,6 +1257,40 @@ mod tests {
                 .await
                 .expect("the body must be readable");
             (status, headers, body.to_vec())
+        }
+
+        /// An address no mail can go to is refused on its form alone, before
+        /// anything else runs: the same status, headers and body whether an
+        /// account holds it or not, and no account, no mail.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn an_address_no_mail_can_go_to_is_refused_whether_taken_or_free() {
+            in_scratch_database(|db| async move {
+                let sink = MailSink::start().await;
+                let app = app_with_config(&db, sink.config()).await;
+                let held = undeliverable(&unique_name());
+                let free = undeliverable(&unique_name());
+
+                for (held, free) in held.iter().zip(&free) {
+                    account_holding(&db, held).await;
+                    let mut answers = Vec::new();
+                    for address in [held, free] {
+                        let username = unique_name();
+                        let (status, mut headers, body) =
+                            register(&app, registration(&username, address)).await;
+                        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{address}");
+                        assert!(!exists(&db, &username).await, "{address}: no account");
+                        headers.remove(header::DATE);
+                        answers.push((headers, body));
+                    }
+                    let body: Value =
+                        serde_json::from_slice(&answers[0].1).expect("the body must be JSON");
+                    assert_eq!(body, refused_as_malformed("email"), "{held}");
+                    assert_eq!(answers[0], answers[1], "the same answer, taken or free");
+                    assert!(answers[0].0.get(header::SET_COOKIE).is_none(), "no cookie");
+                }
+                assert!(sink.settle().await.is_empty(), "no mail went out");
+            })
+            .await;
         }
 
         async fn exists(db: &DatabaseConnection, username: &str) -> bool {

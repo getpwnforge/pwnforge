@@ -1,7 +1,9 @@
 // crates/api/src/routes/setup.rs
 use crate::{
     error::AppError,
-    middleware::{client_ip::ClientIp, json::JsonBody, setup::SetupToken},
+    middleware::{
+        address::require_mailbox, client_ip::ClientIp, json::JsonBody, setup::SetupToken,
+    },
     state::AppState,
 };
 use axum::{
@@ -94,7 +96,7 @@ async fn email_config(
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed or invalid_body; an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 502, description = "Email send failed", body = SimpleErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
@@ -110,6 +112,7 @@ async fn test_email(
     ensure_pending(&state).await?;
 
     payload.validate()?;
+    require_mailbox("to", &payload.to)?;
 
     let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
 
@@ -156,7 +159,7 @@ async fn test_email(
         (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
         (status = 409, description = "username_taken, username_reserved or admin_email_taken: the username or the address is already an account's", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_email, email_domain_not_allowed or password_compromised; an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )
@@ -171,6 +174,7 @@ async fn validate_admin(
     ensure_pending(&state).await?;
 
     payload.validate()?;
+    require_mailbox("admin_email", &payload.admin_email)?;
 
     let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
 
@@ -208,7 +212,7 @@ async fn validate_admin(
         (status = 404, description = "Setup already completed", body = SimpleErrorResponse),
         (status = 409, description = "username_taken, username_reserved or admin_email_taken: the username or the address is already an account's", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed, invalid_body, invalid_timezone, invalid_email, email_domain_not_allowed or password_compromised", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_timezone, invalid_email, email_domain_not_allowed or password_compromised; an address no mail can go to (a..b@example.test, a@[127.0.0.1]) is validation_failed, as a malformed one", body = UnprocessableErrorResponse),
         (status = 429, description = "Rate limited", body = RateLimitedErrorResponse),
         (status = 503, description = "Rate limit unavailable", body = SimpleErrorResponse),
     )
@@ -222,6 +226,7 @@ async fn complete(
     JsonBody(payload): JsonBody<SetupRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), AppError> {
     payload.validate()?;
+    require_mailbox("admin_email", &payload.admin_email)?;
 
     let rate_limit_ip = client_ip.unwrap_or_else(|| remote.ip());
 
@@ -407,6 +412,42 @@ mod tests {
                 let (status, body) = post(&app, uri, body).await;
                 assert_eq!(status, StatusCode::CONFLICT, "{uri}: {body}");
                 assert_eq!(body, json!({ "error": "admin_email_taken" }), "{uri}");
+            }
+            assert!(!setup_done(&db).await, "the setup is still to run");
+        })
+        .await;
+    }
+
+    /// An address no mail can go to is refused on every setup route that
+    /// takes one, as a malformed one, and the setup stays to run.
+    #[tokio::test]
+    async fn an_address_no_mail_can_go_to_is_refused_on_every_setup_route() {
+        in_database_before_setup(|db| async move {
+            let app = app_with_setup_token(&db, TOKEN).await;
+
+            for address in ["a..b@example.test", "a@[127.0.0.1]"] {
+                for (uri, body, field) in [
+                    ("/api/v1/setup/test-email", json!({ "to": address }), "to"),
+                    (
+                        "/api/v1/setup/validate-admin",
+                        admin(&name(), address),
+                        "admin_email",
+                    ),
+                    ("/api/v1/setup", setup(&name(), address), "admin_email"),
+                ] {
+                    let (status, body) = post(&app, uri, body).await;
+                    assert_eq!(
+                        status,
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "{uri} {address}: {body}"
+                    );
+                    assert_eq!(body["error"], "validation_failed", "{uri} {address}");
+                    assert_eq!(
+                        body["fields"],
+                        json!({ field: ["email"] }),
+                        "{uri} {address}"
+                    );
+                }
             }
             assert!(!setup_done(&db).await, "the setup is still to run");
         })
