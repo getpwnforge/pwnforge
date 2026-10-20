@@ -31,7 +31,7 @@ use uuid::Uuid;
 /// Whether `err` is a violation of the unique constraint `constraint`: the
 /// real uniqueness guarantee, which the advisory checks before an insert
 /// only anticipate.
-fn violates(err: &DbErr, constraint: &str) -> bool {
+pub(crate) fn violates(err: &DbErr, constraint: &str) -> bool {
     matches!(err.sql_err(), Some(SqlErr::UniqueConstraintViolation(detail)) if detail.contains(constraint))
 }
 

@@ -3,6 +3,7 @@
     "validation_failed": "Some fields are invalid",
     "username_taken": "This username is already taken",
     "username_reserved": "This username is not available",
+    "admin_email_taken": "An account already uses this address. Choose another one for the administrator.",
     "invalid_email": "Invalid email address",
     "email_domain_not_allowed": "This email cannot be used to sign up. Use a valid personal address.",
     "public_signup_disabled": "Sign-ups are closed on this instance",

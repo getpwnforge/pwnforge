@@ -6,6 +6,19 @@ import { TurnstileWidget } from "@/components/common/TurnstileWidget";
 
 type Category = "general" | "self_hosting" | "billing" | "press" | "other";
 
+/**
+ * The message for a refused submission, by the code the API answers with:
+ * the faults the visitor can act on get their own, the bot check's the same
+ * as on the other protected forms. Anything else keeps the generic one.
+ */
+const MESSAGE_BY_CODE = new Map<string, string>([
+  ["turnstile_failed", "errors:api.turnstile_failed"],
+  ["email_send_failed", "contact.sendFailed"],
+]);
+
+function messageFor(code: unknown): string {
+  return (typeof code === "string" ? MESSAGE_BY_CODE.get(code) : undefined) ?? "contact.error";
+}
 
 export function ContactPage() {
   const { t, i18n } = useTranslation(["public", "errors"]);
@@ -13,9 +26,9 @@ export function ContactPage() {
   const [email, setEmail] = useState("");
   const [category, setCategory] = useState<Category>("general");
   const [message, setMessage] = useState("");
-  const [status, setStatus] = useState<
-    "idle" | "submitting" | "success" | "error" | "turnstile_failed"
-  >("idle");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  // What the last refusal says, a key for `t()`.
+  const [errorKey, setErrorKey] = useState("contact.error");
   const turnstile = useTurnstile("contact");
   const canSubmit = status !== "submitting" && turnstile.isReady;
 
@@ -39,17 +52,17 @@ export function ContactPage() {
       });
       if (!res.ok) {
         turnstile.reset();
-        // Same message as the other protected forms when the bot check is
-        // what failed; anything else keeps the generic one.
         const body: unknown = await res.json().catch(() => null);
         const code =
           typeof body === "object" && body !== null && "error" in body ? body.error : null;
-        setStatus(code === "turnstile_failed" ? "turnstile_failed" : "error");
+        setErrorKey(messageFor(code));
+        setStatus("error");
         return;
       }
       setStatus("success");
     } catch {
       turnstile.reset();
+      setErrorKey("contact.error");
       setStatus("error");
     }
   }
@@ -110,10 +123,7 @@ export function ContactPage() {
           onExpire={turnstile.onExpire}
         />
 
-        {status === "error" && <p className="text-sm text-danger-text">{t("contact.error")}</p>}
-        {status === "turnstile_failed" && (
-          <p className="text-sm text-danger-text">{t("errors:api.turnstile_failed")}</p>
-        )}
+        {status === "error" && <p className="text-sm text-danger-text">{t(errorKey)}</p>}
 
         <Button type="submit" disabled={!canSubmit}>
           {status === "submitting" ? t("contact.sending") : t("contact.submit")}

@@ -64,6 +64,21 @@ pub enum EmailError {
     Address(#[from] lettre::address::AddressError),
 }
 
+impl EmailError {
+    /// The mail service did not take the message: unreachable, down or
+    /// refusing it. Not a message that could not be built, which is a bug.
+    pub fn is_delivery_failure(&self) -> bool {
+        matches!(self, Self::Transport(_) | Self::Smtp(_) | Self::Rejected(_))
+    }
+}
+
+/// Whether `address` makes a mailbox, parsed as `send` parses every address
+/// it is given. Stricter than the `email` validator on the request bodies:
+/// `a..b@example.test` and `a@[127.0.0.1]` pass that one and fail this.
+pub fn is_valid_mailbox(address: &str) -> bool {
+    address.parse::<lettre::message::Mailbox>().is_ok()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum AlertKind {
     PasswordChanged,
@@ -1243,6 +1258,43 @@ mod tests {
     use super::*;
 
     const PUBLIC_URL: &str = "https://ctf.example.test";
+
+    /// A bare address and one with a display name make a mailbox; an empty
+    /// atom, which the request validator lets through, does not.
+    #[test]
+    fn a_mailbox_is_parsed_as_the_smtp_path_parses_it() {
+        for address in [
+            "visitor@example.test",
+            "PwnForge <noreply@ctf.example.test>",
+        ] {
+            assert!(is_valid_mailbox(address), "{address} is a mailbox");
+        }
+        for address in [
+            "a..b@example.test",
+            ".a@example.test",
+            "a@[127.0.0.1]",
+            "no-at-sign",
+            "",
+        ] {
+            assert!(!is_valid_mailbox(address), "{address:?} is not a mailbox");
+        }
+    }
+
+    /// A refusal by the provider is a delivery failure; a message that could
+    /// not be built, or an address that does not parse, is not.
+    #[test]
+    fn only_the_mail_service_failing_counts_as_a_delivery_failure() {
+        assert!(EmailError::Rejected("refused".to_owned()).is_delivery_failure());
+
+        let unbuilt = EmailError::Message(lettre::error::Error::MissingFrom);
+        assert!(!unbuilt.is_delivery_failure());
+        let unparsed = EmailError::Address(
+            "a..b@example.test"
+                .parse::<lettre::Address>()
+                .expect_err("an empty atom does not parse"),
+        );
+        assert!(!unparsed.is_delivery_failure());
+    }
 
     fn password_reset_html(locale: &str, link: &str) -> PasswordResetHtml {
         let footer = Footer::new(locale);

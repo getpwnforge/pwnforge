@@ -9,6 +9,7 @@
     "submit": "Envoyer",
     "sending": "Envoi...",
     "error": "Une erreur est survenue. Réessayez.",
+    "sendFailed": "Votre message n'a pas pu être transmis pour le moment. Réessayez dans quelques minutes.",
     "successTitle": "Message envoyé",
     "successBody": "Merci de nous avoir contactés, nous revenons vers vous bientôt.",
     "securityNotice": "Vous avez trouvé une faille de sécurité ? Écrivez à",

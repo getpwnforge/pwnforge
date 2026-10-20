@@ -3,6 +3,7 @@
     "validation_failed": "Certains champs sont invalides",
     "username_taken": "Ce nom d'utilisateur est déjà pris",
     "username_reserved": "Ce nom d'utilisateur n'est pas disponible",
+    "admin_email_taken": "Un compte utilise déjà cette adresse. Choisissez-en une autre pour l'administrateur.",
     "invalid_email": "Adresse email invalide",
     "email_domain_not_allowed": "Cet email ne peut pas être utilisé pour l'inscription. Utilisez une adresse personnelle valide.",
     "public_signup_disabled": "Les inscriptions sont fermées sur cette instance",

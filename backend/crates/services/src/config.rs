@@ -237,7 +237,10 @@ impl Config {
             // --- Email ---
             email_backend: parse_var("EMAIL_BACKEND", "console")?,
             email_from: optional("EMAIL_FROM"),
-            support_email: std::env::var("SUPPORT_EMAIL").ok(),
+            // Blank counts as unset: the compose files pass an unset
+            // SUPPORT_EMAIL as an empty one, which would replace EMAIL_FROM
+            // as the contact form's recipient with no address at all.
+            support_email: non_empty("SUPPORT_EMAIL"),
 
             // --- Email: SMTP ---
             smtp_host: optional("SMTP_HOST"),
@@ -282,6 +285,16 @@ impl Config {
 
         if self.email_backend != EmailBackend::Console && self.email_from.is_empty() {
             anyhow::bail!("EMAIL_FROM must be set unless EMAIL_BACKEND is 'console'");
+        }
+
+        // The SMTP backend parses both at every send: one it refuses fails
+        // every mail, the contact form's included, with nothing the visitor
+        // did wrong.
+        if self.email_backend == EmailBackend::Smtp {
+            validate_mailbox("EMAIL_FROM", &self.email_from)?;
+            if let Some(support) = &self.support_email {
+                validate_mailbox("SUPPORT_EMAIL", support)?;
+            }
         }
 
         validate_cors_origin(&self.cors_origin)?;
@@ -350,6 +363,15 @@ fn validate_shutdown_grace(secs: u64) -> Result<()> {
             "SHUTDOWN_GRACE_SECS must be between {} and {} (got {secs})",
             SHUTDOWN_GRACE_RANGE.start(),
             SHUTDOWN_GRACE_RANGE.end()
+        );
+    }
+    Ok(())
+}
+
+fn validate_mailbox(key: &str, value: &str) -> Result<()> {
+    if !crate::email_service::is_valid_mailbox(value) {
+        anyhow::bail!(
+            "{key} must be an address, or a name and an address as \"Name <address>\" (got {value:?})"
         );
     }
     Ok(())
@@ -623,6 +645,87 @@ mod tests {
         }
         for secs in [0, 301, u64::MAX] {
             assert!(validate_shutdown_grace(secs).is_err(), "{secs} is refused");
+        }
+    }
+
+    /// A configuration `validate` accepts, on the SMTP backend.
+    fn smtp(email_from: &str, support_email: Option<&str>) -> Config {
+        Config {
+            port: 0,
+            public_url: "https://ctf.example.test".to_owned(),
+            cors_origin: "https://ctf.example.test".to_owned(),
+            setup_token: None,
+            shutdown_grace_secs: 25,
+            database_url: String::new(),
+            database_max_connections: 1,
+            redis_url: String::new(),
+            jwt_secret: "x".repeat(32),
+            encryption_key: "x".repeat(32),
+            turnstile_site_key: None,
+            turnstile_secret_key: None,
+            cookie_secure: true,
+            trusted_proxy_count: 1,
+            block_disposable_emails: true,
+            check_pwned_passwords: true,
+            email_backend: EmailBackend::Smtp,
+            email_from: email_from.to_owned(),
+            support_email: support_email.map(str::to_owned),
+            smtp_host: "smtp.example.test".to_owned(),
+            smtp_port: 587,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            smtp_tls: SmtpTls::StartTls,
+            resend_api_key: String::new(),
+            storage: StorageConfig {
+                endpoint: None,
+                region: "unused".to_owned(),
+                access_key_id: "unused".to_owned(),
+                secret_access_key: "unused".to_owned(),
+                force_path_style: true,
+                bucket_attachments: "unused".to_owned(),
+                bucket_avatars: "unused".to_owned(),
+                key_prefix: None,
+                public_base_url: None,
+            },
+        }
+    }
+
+    /// The boot check runs both addresses through it on the SMTP backend:
+    /// either one that makes no mailbox stops the boot.
+    #[test]
+    fn the_smtp_backend_refuses_to_boot_on_an_unusable_address() {
+        let from = "PwnForge <noreply@ctf.example.test>";
+        assert!(smtp(from, None).validate().is_ok());
+        assert!(
+            smtp(from, Some("support@ctf.example.test"))
+                .validate()
+                .is_ok()
+        );
+
+        let err = smtp("a..b@ctf.example.test", None)
+            .validate()
+            .expect_err("refused");
+        assert!(err.to_string().starts_with("EMAIL_FROM "), "{err}");
+        let err = smtp(from, Some("support")).validate().expect_err("refused");
+        assert!(err.to_string().starts_with("SUPPORT_EMAIL "), "{err}");
+    }
+
+    /// What the SMTP backend can send from and to passes; an empty atom and
+    /// a name without an address do not, and the message names the variable.
+    #[test]
+    fn a_mail_address_setting_must_make_a_mailbox() {
+        for value in [
+            "noreply@ctf.example.test",
+            "PwnForge <noreply@ctf.example.test>",
+        ] {
+            assert!(
+                validate_mailbox("EMAIL_FROM", value).is_ok(),
+                "{value} is accepted"
+            );
+        }
+        for value in ["a..b@ctf.example.test", "PwnForge", "PwnForge <>"] {
+            let err = validate_mailbox("SUPPORT_EMAIL", value).expect_err("refused");
+            assert!(err.to_string().starts_with("SUPPORT_EMAIL "), "{err}");
         }
     }
 

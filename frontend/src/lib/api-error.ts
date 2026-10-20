@@ -16,6 +16,7 @@ export const API_ERROR_CODES = [
   "validation_failed",
   "username_taken",
   "username_reserved",
+  "admin_email_taken",
   "invalid_email",
   "email_domain_not_allowed",
   "public_signup_disabled",

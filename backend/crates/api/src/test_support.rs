@@ -181,6 +181,29 @@ pub(crate) async fn app_with_background(
     config: Config,
     background: BackgroundTasks,
 ) -> axum::Router {
+    build_app(db, config, background, None).await
+}
+
+/// `app`, on an instance whose setup still runs and takes `token`.
+pub(crate) async fn app_with_setup_token(
+    db: &sea_orm::DatabaseConnection,
+    token: &str,
+) -> axum::Router {
+    build_app(
+        db,
+        config(),
+        BackgroundTasks::new(),
+        Some(Arc::new(token.to_owned())),
+    )
+    .await
+}
+
+async fn build_app(
+    db: &sea_orm::DatabaseConnection,
+    config: Config,
+    background: BackgroundTasks,
+    setup_token: Option<Arc<String>>,
+) -> axum::Router {
     let db = db.clone();
 
     let redis_url = env_or("REDIS_URL", "redis://127.0.0.1:6379");
@@ -216,7 +239,7 @@ pub(crate) async fn app_with_background(
             encoding: jsonwebtoken::EncodingKey::from_secret(JWT_SECRET.as_bytes()),
             decoding: jsonwebtoken::DecodingKey::from_secret(JWT_SECRET.as_bytes()),
         }),
-        setup_token: None,
+        setup_token,
         storage: Arc::new(storage),
         background,
     })
@@ -413,6 +436,24 @@ where
     F: FnOnce(sea_orm::DatabaseConnection) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
+    in_fresh_database(true, body).await;
+}
+
+/// `in_scratch_database`, with the setup still to run: for the tests of the
+/// setup itself.
+pub(crate) async fn in_database_before_setup<F, Fut>(body: F)
+where
+    F: FnOnce(sea_orm::DatabaseConnection) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    in_fresh_database(false, body).await;
+}
+
+async fn in_fresh_database<F, Fut>(set_up: bool, body: F)
+where
+    F: FnOnce(sea_orm::DatabaseConnection) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
     let base = env_or(
         "DATABASE_URL",
         "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge",
@@ -433,14 +474,16 @@ where
     migration::Migrator::up(&db, None)
         .await
         .expect("migrations must apply");
-    domain::entities::instance_settings::ActiveModel {
-        id: Set(services::instance_service::SETTINGS_ID),
-        setup_completed_at: Set(Some(chrono::Utc::now().into())),
-        ..Default::default()
+    if set_up {
+        domain::entities::instance_settings::ActiveModel {
+            id: Set(services::instance_service::SETTINGS_ID),
+            setup_completed_at: Set(Some(chrono::Utc::now().into())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the setup must be marked as run");
     }
-    .update(&db)
-    .await
-    .expect("the setup must be marked as run");
 
     let outcome = tokio::spawn(body(db)).await;
 

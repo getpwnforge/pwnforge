@@ -142,8 +142,8 @@ account. Both notices count against the daily cap on unsolicited mail.
 Two places still tell. Inviting by address answers `AlreadyMember` when a
 member of the inviter's own team or workspace has that address verified,
 which tells the inviter which address one of their members holds. The setup
-wizard, behind its token and before any account can exist, fails on an
-address it cannot insert.
+wizard, behind its token and before any account can exist, names a taken
+address (`admin_email_taken`).
 
 ## The client IP is only as trustworthy as the proxy count
 

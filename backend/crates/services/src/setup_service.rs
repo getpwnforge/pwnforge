@@ -19,7 +19,8 @@ use domain::{
     types::AuditAction,
 };
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter,
+    QuerySelect, Set, TransactionTrait,
 };
 use std::str::FromStr;
 use subtle::ConstantTimeEq;
@@ -39,6 +40,12 @@ pub enum SetupError {
 
     #[error("invalid timezone")]
     InvalidTimezone,
+
+    /// The administrator's address already belongs to an account. Said
+    /// outright, unlike at registration: only the holder of the setup token
+    /// gets this far, on an instance that has no administrator yet.
+    #[error("the administrator's address is already taken")]
+    AdminEmailTaken,
 
     #[error(transparent)]
     Email(#[from] EmailError),
@@ -160,6 +167,23 @@ pub async fn validate_admin(
 
     auth_service::validate_new_account(db, config, username, &email, &payload.admin_password)
         .await?;
+    ensure_address_free(db, &email).await?;
+
+    Ok(())
+}
+
+/// Advisory, as the username check is: the unique constraint on the address
+/// decides, and `complete` maps it to the same answer.
+async fn ensure_address_free(db: &DatabaseConnection, email: &str) -> Result<(), SetupError> {
+    let taken = user_emails::Entity::find()
+        .filter(user_emails::Column::Email.eq(email))
+        .one(db)
+        .await?
+        .is_some();
+
+    if taken {
+        return Err(SetupError::AdminEmailTaken);
+    }
 
     Ok(())
 }
@@ -182,6 +206,7 @@ pub async fn complete(
     // any other account.
     auth_service::validate_new_account(db, config, &username, &email, &payload.admin_password)
         .await?;
+    ensure_address_free(db, &email).await?;
 
     let password_hash = password_service::hash_password(payload.admin_password).await?;
 
@@ -208,7 +233,15 @@ pub async fn complete(
         ..Default::default()
     }
     .insert(&txn)
-    .await?;
+    .await
+    // Taken between the check above and here.
+    .map_err(|err| {
+        if auth_service::violates(&err, "users_username_key") {
+            SetupError::Auth(AuthError::UsernameTaken)
+        } else {
+            err.into()
+        }
+    })?;
 
     let email_row = user_emails::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -219,7 +252,14 @@ pub async fn complete(
         ..Default::default()
     }
     .insert(&txn)
-    .await?;
+    .await
+    .map_err(|err| {
+        if auth_service::violates(&err, "user_emails_email_key") {
+            SetupError::AdminEmailTaken
+        } else {
+            err.into()
+        }
+    })?;
 
     let legal_ctx = SessionContext {
         user_agent: ctx.user_agent.clone(),

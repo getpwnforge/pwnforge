@@ -385,6 +385,7 @@ fn setup_response(err: &SetupError) -> Response {
             (StatusCode::NOT_FOUND, "not_found")
         }
         SetupError::InvalidTimezone => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_timezone"),
+        SetupError::AdminEmailTaken => (StatusCode::CONFLICT, "admin_email_taken"),
         SetupError::Email(_) => {
             tracing::error!(error = ?err, "setup email send failed");
             (StatusCode::BAD_GATEWAY, "email_send_failed")
@@ -470,6 +471,18 @@ fn contact_response(err: &ContactError) -> Response {
             )
                 .into_response()
         }
+        // The mail service did not take the notification: the request was
+        // fine, and retrying later is the right advice.
+        ContactError::Email(email) if email.is_delivery_failure() => {
+            tracing::error!(error = ?err, "contact notification not delivered");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "email_send_failed" })),
+            )
+                .into_response()
+        }
+        // A message that could not be built: neither the visitor's address,
+        // checked on the way in, nor the mail service.
         ContactError::Email(_) => {
             tracing::error!(error = ?err, "contact notification failed");
             (
@@ -795,15 +808,16 @@ mod tests {
         assert_eq!(body_of(response).await["error"], "service_unavailable");
     }
 
-    /// Control: a failed notification mail keeps its 500.
+    /// A notification the mail provider refuses is the provider's answer,
+    /// not a crash: 502, as for the setup's test mail.
     #[tokio::test]
-    async fn a_failed_contact_mail_stays_500_internal_error() {
+    async fn a_refused_contact_mail_is_502_email_send_failed() {
         let rejected = services::email_service::EmailError::Rejected("refused".to_owned());
 
         let response = AppError::Contact(ContactError::Email(rejected)).into_response();
 
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(body_of(response).await["error"], "internal_error");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(body_of(response).await["error"], "email_send_failed");
     }
 
     /// The contact form's 429 carries the same Retry-After header as every
