@@ -440,6 +440,176 @@ impl PartialSchema for Membership {
 /// Default name() gives "Membership"; no referenced schemas to collect.
 impl ToSchema for Membership {}
 
+/// The role a workspace invitation grants: a guest holds at most `member`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum GuestRole {
+    Member,
+    Viewer,
+}
+
+impl GuestRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GuestRole::Member => "member",
+            GuestRole::Viewer => "viewer",
+        }
+    }
+
+    /// Mirrors `as_str()`, and `ck_workspace_invitations_role`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "member" => Some(Self::Member),
+            "viewer" => Some(Self::Viewer),
+            _ => None,
+        }
+    }
+}
+
+impl From<GuestRole> for TeamRole {
+    fn from(role: GuestRole) -> Self {
+        match role {
+            GuestRole::Member => TeamRole::Member,
+            GuestRole::Viewer => TeamRole::Viewer,
+        }
+    }
+}
+
+/// Names the invitee exactly once: a workspace invitation is always for one
+/// account or one address, never a shareable link.
+fn names_one_invitee(request: &CreateWorkspaceInvitationRequest) -> Result<(), ValidationError> {
+    match (&request.username, &request.invited_email) {
+        (Some(_), Some(_)) => Err(ValidationError::new("invitee_named_twice")),
+        (None, None) => Err(ValidationError::new("invitee_required")),
+        _ => Ok(()),
+    }
+}
+
+/// Payload for POST /workspaces/{slug}/invitations. The expiry is not the
+/// author's to choose: every workspace invitation lasts seven days.
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[validate(schema(function = names_one_invitee))]
+pub struct CreateWorkspaceInvitationRequest {
+    /// `member` or `viewer`; anything above is refused (422 `invalid_body`).
+    pub role: GuestRole,
+    /// The account invited, by username. Same bounds as
+    /// `CreateInvitationRequest::username`.
+    #[validate(length(min = 3, max = 32), regex(path = *crate::dto::auth::USERNAME_RE))]
+    pub username: Option<String>,
+    /// The address invited. The answer is the same whether an account holds
+    /// it or not; an account that has it verified sees the invitation among
+    /// its pending ones.
+    #[validate(email)]
+    pub invited_email: Option<String>,
+}
+
+/// Where an invitation stands. `expired` is also what a pending one past its
+/// date reads as, before the cleanup records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum InvitationStatus {
+    Pending,
+    Accepted,
+    Declined,
+    Cancelled,
+    Expired,
+}
+
+impl InvitationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InvitationStatus::Pending => "pending",
+            InvitationStatus::Accepted => "accepted",
+            InvitationStatus::Declined => "declined",
+            InvitationStatus::Cancelled => "cancelled",
+            InvitationStatus::Expired => "expired",
+        }
+    }
+
+    /// Mirrors `as_str()`, and `ck_workspace_invitations_status`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "accepted" => Some(Self::Accepted),
+            "declined" => Some(Self::Declined),
+            "cancelled" => Some(Self::Cancelled),
+            "expired" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+}
+
+/// Why a cancelled invitation was cancelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelReason {
+    /// The Captain, an Admin or the author withdrew it.
+    Revoked,
+    /// The workspace was archived while it was pending.
+    WorkspaceArchived,
+}
+
+impl CancelReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CancelReason::Revoked => "revoked",
+            CancelReason::WorkspaceArchived => "workspace_archived",
+        }
+    }
+
+    /// Mirrors `as_str()`, and `ck_workspace_invitations_cancel_reason`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "revoked" => Some(Self::Revoked),
+            "workspace_archived" => Some(Self::WorkspaceArchived),
+            _ => None,
+        }
+    }
+}
+
+/// One workspace invitation, as its creation, the workspace's lists and the
+/// invitee's own list show it. Never with its token: that goes to the
+/// invitee's mail alone, and only its hash is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct WorkspaceInvitationResponse {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+    pub status: InvitationStatus,
+    pub role: GuestRole,
+    /// `username` or `email`: a workspace has no generic link.
+    pub target: InvitationTarget,
+    /// The account named by username. `null` for an invitation by address,
+    /// whether or not an account holds it.
+    pub invited_user_id: Option<Uuid>,
+    pub invited_username: Option<String>,
+    /// Only while the invitation is pending: the address is erased as soon
+    /// as it is accepted, declined, cancelled or expired.
+    pub invited_email: Option<String>,
+    /// Once accepted, the account that did.
+    pub accepted_by: Option<Uuid>,
+    pub accepted_username: Option<String>,
+    /// The author, `null` once their account is gone.
+    pub invited_by: Option<Uuid>,
+    pub invited_by_username: Option<String>,
+    pub cancel_reason: Option<CancelReason>,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    /// When it stopped being pending.
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
+/// What the invitee sees before accepting by the link: enough for the
+/// confirmation screen, and nothing about anyone else.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WorkspaceInvitationPreview {
+    pub workspace_name: String,
+    pub invited_by_username: Option<String>,
+    pub role: GuestRole,
+    pub expires_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,174 +847,4 @@ mod tests {
             assert!(!values.contains(&absent), "{absent} must not be served");
         }
     }
-}
-
-/// The role a workspace invitation grants: a guest holds at most `member`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum GuestRole {
-    Member,
-    Viewer,
-}
-
-impl GuestRole {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            GuestRole::Member => "member",
-            GuestRole::Viewer => "viewer",
-        }
-    }
-
-    /// Mirrors `as_str()`, and `ck_workspace_invitations_role`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "member" => Some(Self::Member),
-            "viewer" => Some(Self::Viewer),
-            _ => None,
-        }
-    }
-}
-
-impl From<GuestRole> for TeamRole {
-    fn from(role: GuestRole) -> Self {
-        match role {
-            GuestRole::Member => TeamRole::Member,
-            GuestRole::Viewer => TeamRole::Viewer,
-        }
-    }
-}
-
-/// Names the invitee exactly once: a workspace invitation is always for one
-/// account or one address, never a shareable link.
-fn names_one_invitee(request: &CreateWorkspaceInvitationRequest) -> Result<(), ValidationError> {
-    match (&request.username, &request.invited_email) {
-        (Some(_), Some(_)) => Err(ValidationError::new("invitee_named_twice")),
-        (None, None) => Err(ValidationError::new("invitee_required")),
-        _ => Ok(()),
-    }
-}
-
-/// Payload for POST /workspaces/{slug}/invitations. The expiry is not the
-/// author's to choose: every workspace invitation lasts seven days.
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-#[serde(deny_unknown_fields)]
-#[validate(schema(function = names_one_invitee))]
-pub struct CreateWorkspaceInvitationRequest {
-    /// `member` or `viewer`; anything above is refused (422 `invalid_body`).
-    pub role: GuestRole,
-    /// The account invited, by username. Same bounds as
-    /// `CreateInvitationRequest::username`.
-    #[validate(length(min = 3, max = 32), regex(path = *crate::dto::auth::USERNAME_RE))]
-    pub username: Option<String>,
-    /// The address invited. The answer is the same whether an account holds
-    /// it or not; an account that has it verified sees the invitation among
-    /// its pending ones.
-    #[validate(email)]
-    pub invited_email: Option<String>,
-}
-
-/// Where an invitation stands. `expired` is also what a pending one past its
-/// date reads as, before the cleanup records it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum InvitationStatus {
-    Pending,
-    Accepted,
-    Declined,
-    Cancelled,
-    Expired,
-}
-
-impl InvitationStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            InvitationStatus::Pending => "pending",
-            InvitationStatus::Accepted => "accepted",
-            InvitationStatus::Declined => "declined",
-            InvitationStatus::Cancelled => "cancelled",
-            InvitationStatus::Expired => "expired",
-        }
-    }
-
-    /// Mirrors `as_str()`, and `ck_workspace_invitations_status`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "pending" => Some(Self::Pending),
-            "accepted" => Some(Self::Accepted),
-            "declined" => Some(Self::Declined),
-            "cancelled" => Some(Self::Cancelled),
-            "expired" => Some(Self::Expired),
-            _ => None,
-        }
-    }
-}
-
-/// Why a cancelled invitation was cancelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CancelReason {
-    /// The Captain, an Admin or the author withdrew it.
-    Revoked,
-    /// The workspace was archived while it was pending.
-    WorkspaceArchived,
-}
-
-impl CancelReason {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CancelReason::Revoked => "revoked",
-            CancelReason::WorkspaceArchived => "workspace_archived",
-        }
-    }
-
-    /// Mirrors `as_str()`, and `ck_workspace_invitations_cancel_reason`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "revoked" => Some(Self::Revoked),
-            "workspace_archived" => Some(Self::WorkspaceArchived),
-            _ => None,
-        }
-    }
-}
-
-/// One workspace invitation, as its creation, the workspace's lists and the
-/// invitee's own list show it. Never with its token: that goes to the
-/// invitee's mail alone, and only its hash is stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub struct WorkspaceInvitationResponse {
-    pub id: Uuid,
-    pub workspace_id: Uuid,
-    pub workspace_name: String,
-    pub status: InvitationStatus,
-    pub role: GuestRole,
-    /// `username` or `email`: a workspace has no generic link.
-    pub target: InvitationTarget,
-    /// The account named by username. `null` for an invitation by address,
-    /// whether or not an account holds it.
-    pub invited_user_id: Option<Uuid>,
-    pub invited_username: Option<String>,
-    /// Only while the invitation is pending: the address is erased as soon
-    /// as it is accepted, declined, cancelled or expired.
-    pub invited_email: Option<String>,
-    /// Once accepted, the account that did.
-    pub accepted_by: Option<Uuid>,
-    pub accepted_username: Option<String>,
-    /// The author, `null` once their account is gone.
-    pub invited_by: Option<Uuid>,
-    pub invited_by_username: Option<String>,
-    pub cancel_reason: Option<CancelReason>,
-    pub expires_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-    /// When it stopped being pending.
-    pub resolved_at: Option<DateTime<Utc>>,
-}
-
-/// What the invitee sees before accepting by the link: enough for the
-/// confirmation screen, and nothing about anyone else.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct WorkspaceInvitationPreview {
-    pub workspace_name: String,
-    pub invited_by_username: Option<String>,
-    pub role: GuestRole,
-    pub expires_at: DateTime<Utc>,
 }
