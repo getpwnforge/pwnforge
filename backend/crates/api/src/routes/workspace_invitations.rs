@@ -101,6 +101,7 @@ fn to_response(
     post,
     path = "/api/v1/workspaces/{slug}/invitations",
     tag = "Workspaces",
+    operation_id = "create_workspace_invitation",
     params(("slug" = String, Path, description = "Workspace slug")),
     request_body = CreateWorkspaceInvitationRequest,
     security(("access_token" = [])),
@@ -165,6 +166,7 @@ async fn create_invitation(
     get,
     path = "/api/v1/workspaces/{slug}/invitations",
     tag = "Workspaces",
+    operation_id = "list_workspace_invitations",
     params(
         ("slug" = String, Path, description = "Workspace slug"),
         ("invited_by" = Option<Uuid>, Query, description = "Only the invitations this account created"),
@@ -222,6 +224,7 @@ async fn cancel_invitation(
     get,
     path = "/api/v1/workspaces/invitations/pending",
     tag = "Workspaces",
+    operation_id = "list_pending_workspace_invitations",
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Pending workspace invitations for the current user: those naming the account, and those sent to an address it has verified. None is ever accepted on its behalf", body = [WorkspaceInvitationResponse]),
@@ -240,6 +243,7 @@ async fn list_pending_invitations(
     post,
     path = "/api/v1/workspaces/invitations/preview",
     tag = "Workspaces",
+    operation_id = "preview_workspace_invitation",
     request_body = InvitationTokenRequest,
     security(("access_token" = [])),
     responses(
@@ -265,6 +269,7 @@ async fn preview_invitation(
     post,
     path = "/api/v1/workspaces/join",
     tag = "Workspaces",
+    operation_id = "accept_workspace_invitation_by_token",
     request_body = InvitationTokenRequest,
     security(("access_token" = [])),
     responses(
@@ -292,6 +297,7 @@ async fn accept_invitation_by_token(
     post,
     path = "/api/v1/workspaces/invitations/{id}/accept",
     tag = "Workspaces",
+    operation_id = "accept_workspace_invitation_by_id",
     params(("id" = Uuid, Path, description = "The invitation")),
     security(("access_token" = [])),
     responses(
@@ -316,6 +322,7 @@ async fn accept_invitation_by_id(
     post,
     path = "/api/v1/workspaces/invitations/{id}/reject",
     tag = "Workspaces",
+    operation_id = "reject_workspace_invitation_by_id",
     params(("id" = Uuid, Path, description = "The invitation")),
     security(("access_token" = [])),
     responses(

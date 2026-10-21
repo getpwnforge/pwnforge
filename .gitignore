@@ -2,7 +2,6 @@
 target/
 **/*.rs.bk
 Cargo.lock.bak
-openapi.json
 
 # Node / Vite
 node_modules/

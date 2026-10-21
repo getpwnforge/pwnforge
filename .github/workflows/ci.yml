@@ -96,6 +96,15 @@ jobs:
         working-directory: backend
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      # backend/openapi.json is committed, and the frontend types are generated
+      # from it: it has to be what this code exports. Fails when a route
+      # annotation or a DTO changed without `make api-types`.
+      - name: Check the committed OpenAPI spec
+        working-directory: backend
+        run: |
+          cargo test --locked --all-features -p api openapi::tests::export -- --ignored --exact
+          git diff --exit-code -- openapi.json
+
       # Garage cannot be a `services:` container: it needs a config file, and
       # services start before the repository is checked out, so there is
       # nothing to mount. It is started here instead, after checkout.

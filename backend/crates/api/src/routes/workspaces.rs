@@ -254,6 +254,7 @@ async fn remove_favorite(
     get,
     path = "/api/v1/workspaces/{slug}/members",
     tag = "Workspaces",
+    operation_id = "list_workspace_members",
     params(
         ("slug" = String, Path, description = "Workspace slug"),
         ("invited_by" = Option<Uuid>, Query, description = "Only the guests who joined by an invitation from this account"),

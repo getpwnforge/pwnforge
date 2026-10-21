@@ -176,6 +176,7 @@ async fn delete_team(
     get,
     path = "/api/v1/teams/{slug}/members",
     tag = "Teams",
+    operation_id = "list_team_members",
     params(
         ("slug" = String, Path, description = "Team slug"),
         ("invited_by" = Option<Uuid>, Query, description = "Only the members who joined by an invitation from this account"),
@@ -314,6 +315,7 @@ async fn transfer_captaincy(
     get,
     path = "/api/v1/teams/{slug}/invitations",
     tag = "Teams",
+    operation_id = "list_team_invitations",
     params(
         ("slug" = String, Path, description = "Team slug"),
         ("invited_by" = Option<Uuid>, Query, description = "Only the invitations this account created, whatever they name"),
@@ -347,6 +349,7 @@ async fn list_invitations(
     post,
     path = "/api/v1/teams/{slug}/invitations",
     tag = "Teams",
+    operation_id = "create_team_invitation",
     request_body = CreateInvitationRequest,
     security(("access_token" = [])),
     responses(
@@ -438,6 +441,7 @@ async fn revoke_invitation(
     post,
     path = "/api/v1/teams/join",
     tag = "Teams",
+    operation_id = "accept_team_invitation_by_token",
     request_body = JoinTeamRequest,
     security(("access_token" = [])),
     responses(
@@ -465,6 +469,7 @@ async fn accept_invitation_by_token(
     get,
     path = "/api/v1/teams/invitations/pending",
     tag = "Teams",
+    operation_id = "list_pending_team_invitations",
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Pending invitations for the current user: those naming the account, and those sent to an address it has verified. None is ever accepted on its behalf", body = [TeamInvitationResponse]),
@@ -483,6 +488,7 @@ async fn list_pending_invitations(
     post,
     path = "/api/v1/teams/invitations/preview",
     tag = "Teams",
+    operation_id = "preview_team_invitation",
     request_body = InvitationTokenRequest,
     security(("access_token" = [])),
     responses(
@@ -509,6 +515,7 @@ async fn preview_invitation(
     post,
     path = "/api/v1/teams/invitations/{id}/accept",
     tag = "Teams",
+    operation_id = "accept_team_invitation_by_id",
     security(("access_token" = [])),
     responses(
         (status = 200, description = "Invitation accepted", body = TeamResponse),
@@ -530,6 +537,7 @@ async fn accept_invitation_by_id(
     post,
     path = "/api/v1/teams/invitations/{id}/reject",
     tag = "Teams",
+    operation_id = "reject_team_invitation_by_id",
     security(("access_token" = [])),
     responses(
         (status = 204, description = "Invitation rejected"),

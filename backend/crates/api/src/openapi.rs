@@ -198,6 +198,31 @@ pub struct ApiDoc;
 mod tests {
     use super::*;
 
+    /// Every operation has its own `operationId`, as OpenAPI requires.
+    ///
+    /// utoipa names an operation after its handler unless told otherwise, and
+    /// the team and workspace routes share handler names (`list_members`,
+    /// `create_invitation`, ...). Two operations with one id break the
+    /// frontend types generated from the spec: openapi-typescript keys its
+    /// `operations` interface by id, and the duplicate keys fail `tsc`.
+    #[test]
+    fn operation_ids_are_unique() {
+        let spec = serde_json::to_value(ApiDoc::openapi()).expect("the spec must serialize");
+        let mut seen = std::collections::BTreeMap::new();
+
+        for (path, item) in spec["paths"].as_object().expect("the spec must have paths") {
+            for (method, operation) in item.as_object().expect("a path item is an object") {
+                let Some(id) = operation.get("operationId").and_then(|id| id.as_str()) else {
+                    continue;
+                };
+                let route = format!("{} {path}", method.to_uppercase());
+                if let Some(first) = seen.insert(id.to_owned(), route.clone()) {
+                    panic!("operationId {id:?} is used by {first} and {route}");
+                }
+            }
+        }
+    }
+
     /// Not a real test: writes the spec to disk on demand.
     /// Run with: cargo test -p api openapi::tests::export -- --ignored
     #[test]
