@@ -1,5 +1,5 @@
 # Makefile for PwnForge project
-.PHONY: help up down migrate seed reset-db reset-storage test test-backend lint prod-check clean
+.PHONY: help up down migrate seed reset-db reset-storage test test-backend lint api-types prod-check clean
 
 # Set the default goal to 'help' if no target is specified
 .DEFAULT_GOAL := help
@@ -102,6 +102,18 @@ lint:
 	cd backend && cargo clippy --all-targets --all-features -- -D warnings
 	@echo "Running frontend linting..."
 	cd frontend && pnpm lint && pnpm tsc --noEmit
+
+## api-types: Export the OpenAPI spec and regenerate the frontend types from it
+#
+# Both outputs are committed: backend/openapi.json, written by the ignored
+# `openapi::tests::export` test, and frontend/src/lib/api/schema.gen.ts,
+# generated from it by openapi-typescript. CI regenerates each and fails when
+# it differs from the committed file, so run this after any change to a route
+# annotation or a DTO, and commit the two files with that change. The export
+# needs no service and no `.env`: it only serializes the spec.
+api-types:
+	cd backend && cargo test -p api openapi::tests::export -- --ignored --exact
+	cd frontend && pnpm gen:api
 
 
 ## prod-check: Run the production compose from local images in a throwaway project

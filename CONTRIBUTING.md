@@ -119,6 +119,31 @@ reads none of that and fails on a missing variable, which reads like a bad
 value rather than a file nothing opened. `make test` runs this plus the
 frontend half.
 
+## API types
+
+The frontend's API types are generated from the backend's OpenAPI spec, and
+both are committed:
+
+- `backend/openapi.json`, written by the ignored `openapi::tests::export` test
+  from the `#[utoipa::path]` annotations and the DTOs listed in
+  `crates/api/src/openapi.rs`;
+- `frontend/src/lib/api/schema.gen.ts`, generated from it by
+  [openapi-typescript](https://openapi-ts.dev) (`pnpm gen:api`).
+
+When you change a route or a DTO:
+
+1. make the change, and list any new handler or DTO in `openapi.rs`;
+2. run `make api-types`, which exports the spec and regenerates the types;
+3. commit both files in the same commit as the change.
+
+CI runs each step again and fails when the result differs from what is
+committed, so a spec left behind by a DTO, or a `schema.gen.ts` edited by
+hand, does not get through. Never edit `schema.gen.ts`: import the named
+aliases in `frontend/src/lib/api/types.ts` instead, and add one there when a
+page needs another schema. Every operation needs its own `operationId`; when
+two handlers share a name, set `operation_id` on both (a backend test checks
+it).
+
 ## Before opening a PR
 
 - [ ] Commits are signed off (`-s`)
@@ -126,6 +151,7 @@ frontend half.
 - [ ] `cargo audit` and `pnpm audit` are clean (or documented if not)
 - [ ] New auth/permissions logic includes tests for the relevant role transitions
 - [ ] Lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) are committed if dependencies changed
+- [ ] `make api-types` was run and both generated files are committed if a route or a DTO changed
 
 ### Audit exceptions
 
