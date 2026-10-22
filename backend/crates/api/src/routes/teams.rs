@@ -1856,7 +1856,7 @@ mod tests {
         let db = db().await;
         let user = create_user(&db).await;
         let queries = Arc::new(AtomicUsize::new(0));
-        let mut metered = crate::test_support::another_connection().await;
+        let mut metered = crate::test_support::db().await;
         let counter = queries.clone();
         metered.set_metric_callback(move |_| {
             counter.fetch_add(1, Ordering::SeqCst);

@@ -10,7 +10,8 @@ use domain::dto::team::TeamRole;
 use domain::entities::{team_members, teams, users, workspaces};
 use domain::types::AccentColor;
 use migration::MigratorTrait;
-use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DbBackend, Set, Statement};
+use sea_orm::sqlx::{self, Connection, PgConnection};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, Set};
 use services::avatar_service;
 use services::background::BackgroundTasks;
 use services::config::{Config, EmailBackend, SmtpTls, StorageConfig};
@@ -158,45 +159,41 @@ pub(crate) const MIGRATION_LOCK_KEY: i64 = 0x7077_6e66_6f72_6761;
 /// advisory lock serialises it - across runtimes and across processes,
 /// which a Rust-side mutex could not do.
 pub(crate) async fn db() -> sea_orm::DatabaseConnection {
-    let db = Database::connect(env_or(
+    let url = env_or(
         "DATABASE_URL",
         "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge",
-    ))
-    .await
-    .expect("a Postgres instance must be reachable");
+    );
+    let db = Database::connect(&url)
+        .await
+        .expect("a Postgres instance must be reachable");
 
-    db.execute_raw(advisory_lock_statement("SELECT pg_advisory_lock($1)"))
+    // On a connection of its own, not one of the pool: a session lock
+    // belongs to the connection that took it, and through the pool its
+    // release could land on another one. It then stayed held by an idle
+    // pooled connection for as long as the pool lived, and a second `db()`
+    // in the same test waited on it for good. The key travels as a bound
+    // parameter, never spliced into the SQL text.
+    let mut lock = PgConnection::connect(&url)
+        .await
+        .expect("a Postgres instance must be reachable");
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut lock)
         .await
         .expect("advisory lock must be acquirable");
 
     let migrated = migration::Migrator::up(&db, None).await;
 
-    db.execute_raw(advisory_lock_statement("SELECT pg_advisory_unlock($1)"))
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut lock)
         .await
         .expect("advisory lock must be releasable");
+    lock.close().await.expect("the lock connection must close");
 
     migrated.expect("migrations must apply");
 
     db
-}
-
-/// Another connection to the database `db()` migrated, for a test that needs
-/// one of its own, to meter its queries for one. Not `db()` again: the
-/// migration lock can still be held by an idle connection of the test's
-/// first pool, since the lock and the unlock may run on different pooled
-/// connections, and a second `db()` would then wait on it for good.
-pub(crate) async fn another_connection() -> sea_orm::DatabaseConnection {
-    Database::connect(env_or(
-        "DATABASE_URL",
-        "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge",
-    ))
-    .await
-    .expect("a Postgres instance must be reachable")
-}
-
-/// The key travels as a bound parameter, never spliced into the SQL text.
-fn advisory_lock_statement(sql: &str) -> Statement {
-    Statement::from_sql_and_values(DbBackend::Postgres, sql, [MIGRATION_LOCK_KEY.into()])
 }
 
 pub(crate) async fn app(db: &sea_orm::DatabaseConnection) -> axum::Router {
@@ -791,4 +788,31 @@ fn decode_quoted_printable(data: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Two `db()` in one test both come back: the first one left the
+    /// migration lock free. The second call is bounded, so a lock left held
+    /// fails this test within seconds instead of hanging the suite. The lock
+    /// used to go through the pool, and stayed held only on the runs where
+    /// its release landed on another pooled connection than the one holding
+    /// it.
+    #[tokio::test]
+    async fn db_can_be_called_twice_in_one_test() {
+        let first = db().await;
+        let second = tokio::time::timeout(Duration::from_secs(5), db())
+            .await
+            .expect("a second db() must not wait on a lock the first one left held");
+
+        for connection in [&first, &second] {
+            connection
+                .ping()
+                .await
+                .expect("both connections must answer");
+        }
+    }
 }
