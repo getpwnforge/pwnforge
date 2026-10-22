@@ -797,6 +797,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{slug}/exclusions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The extractor's `Admin` is the gate `write_member` puts on lifting an
+         *     exclusion, the Captain or an Admin, so whoever may lift one reads them
+         *     all; which ones an Admin may then lift is the write's to say. Refused in
+         *     the order of the member writes, and kept readable once archived.
+         */
+        get: operations["list_exclusions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{slug}/favorite": {
         parameters: {
             query?: never;
@@ -1098,6 +1120,8 @@ export interface components {
             joined_at: string;
             last_name: string;
             role: components["schemas"]["Membership"];
+            /** @description Where `role` comes from, resolved with it. */
+            role_source: components["schemas"]["RoleSource"];
             /** Format: uuid */
             user_id: string;
         };
@@ -1131,6 +1155,22 @@ export interface components {
         };
         EmailVerifyRequest: {
             token: string;
+        };
+        /**
+         * @description A member of the team excluded from one workspace, as the list of
+         *     exclusions shows them.
+         */
+        ExcludedMember: {
+            /**
+             * Format: uuid
+             * @description Same contract as `EffectiveMember.avatar_version`.
+             */
+            avatar_version?: string | null;
+            first_name: string;
+            handle: string;
+            last_name: string;
+            /** Format: uuid */
+            user_id: string;
         };
         /**
          * @description The role a workspace invitation grants: a guest holds at most `member`.
@@ -1270,6 +1310,12 @@ export interface components {
             turnstile_token: string;
             username: string;
         };
+        /**
+         * @description Where an active role on a workspace comes from. Computed with the role
+         *     itself, by `permissions_service::resolve`.
+         * @enum {string}
+         */
+        RoleSource: "owner" | "team" | "override" | "guest";
         /**
          * @description Payload for PATCH /workspaces/{slug}/members/{user_id}. `captain`, or any
          *     value not listed, is refused at deserialization (422 `invalid_body`).
@@ -4592,6 +4638,65 @@ export interface operations {
             };
             /** @description Workspace not found, or no access to it */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimpleErrorResponse"];
+                };
+            };
+        };
+    };
+    list_exclusions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace slug */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The team members excluded from this workspace, by handle. Read by the Captain and the Admins, an archived workspace included */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExcludedMember"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimpleErrorResponse"];
+                };
+            };
+            /** @description insufficient_role: below Admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimpleErrorResponse"];
+                };
+            };
+            /** @description Workspace not found, or no access to it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimpleErrorResponse"];
+                };
+            };
+            /** @description workspace_is_solo */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

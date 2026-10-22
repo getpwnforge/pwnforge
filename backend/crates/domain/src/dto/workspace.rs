@@ -218,6 +218,8 @@ pub struct EffectiveMember {
     /// `/api/v1/avatars/users/{user_id}/{avatar_version}/64.webp`.
     pub avatar_version: Option<Uuid>,
     pub role: Membership,
+    /// Where `role` comes from, resolved with it.
+    pub role_source: RoleSource,
     pub is_guest: bool,
     /// When this person gained access to *this workspace*, which is not the
     /// same date as joining the team: a guest's admission to the workspace, a
@@ -229,6 +231,22 @@ pub struct EffectiveMember {
     /// For a guest, the author of the invitation they accepted; `null` for
     /// everyone else, and once the author's account is gone.
     pub invited_by: Option<Uuid>,
+}
+
+/// A member of the team excluded from one workspace, as the list of
+/// exclusions shows them.
+//
+// No date: the table keeps none. `workspace_members.joined_at` is when the
+// row was first written, which is an override's creation when one came
+// before the exclusion.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExcludedMember {
+    pub user_id: Uuid,
+    pub handle: String,
+    pub first_name: String,
+    pub last_name: String,
+    /// Same contract as `EffectiveMember.avatar_version`.
+    pub avatar_version: Option<Uuid>,
 }
 
 /// A role a member can be given on one workspace: every team role but

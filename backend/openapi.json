@@ -3674,6 +3674,86 @@
         ]
       }
     },
+    "/api/v1/workspaces/{slug}/exclusions": {
+      "get": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "The extractor's `Admin` is the gate `write_member` puts on lifting an\nexclusion, the Captain or an Admin, so whoever may lift one reads them\nall; which ones an Admin may then lift is the write's to say. Refused in\nthe order of the member writes, and kept readable once archived.",
+        "operationId": "list_exclusions",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Workspace slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The team members excluded from this workspace, by handle. Read by the Captain and the Admins, an archived workspace included",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExcludedMember"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimpleErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_role: below Admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimpleErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found, or no access to it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimpleErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "workspace_is_solo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimpleErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "access_token": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{slug}/favorite": {
       "post": {
         "tags": [
@@ -5001,6 +5081,7 @@
           "first_name",
           "last_name",
           "role",
+          "role_source",
           "is_guest",
           "joined_at"
         ],
@@ -5040,6 +5121,10 @@
           },
           "role": {
             "$ref": "#/components/schemas/Membership"
+          },
+          "role_source": {
+            "$ref": "#/components/schemas/RoleSource",
+            "description": "Where `role` comes from, resolved with it."
           },
           "user_id": {
             "type": "string",
@@ -5137,6 +5222,39 @@
           }
         },
         "additionalProperties": false
+      },
+      "ExcludedMember": {
+        "type": "object",
+        "description": "A member of the team excluded from one workspace, as the list of\nexclusions shows them.",
+        "required": [
+          "user_id",
+          "handle",
+          "first_name",
+          "last_name"
+        ],
+        "properties": {
+          "avatar_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Same contract as `EffectiveMember.avatar_version`."
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "GuestRole": {
         "type": "string",
@@ -5505,6 +5623,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "RoleSource": {
+        "type": "string",
+        "description": "Where an active role on a workspace comes from. Computed with the role\nitself, by `permissions_service::resolve`.",
+        "enum": [
+          "owner",
+          "team",
+          "override",
+          "guest"
+        ]
       },
       "SetMemberRoleRequest": {
         "type": "object",

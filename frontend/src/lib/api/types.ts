@@ -16,6 +16,10 @@ export type WorkspaceResponse = Schemas["WorkspaceResponse"];
 export type CreateWorkspaceInput = Schemas["CreateWorkspaceInput"];
 export type UpdateWorkspaceInput = Schemas["UpdateWorkspaceInput"];
 export type EffectiveMember = Schemas["EffectiveMember"];
+/** Where a member's role comes from: owner, team, override or guest. */
+export type RoleSource = Schemas["RoleSource"];
+/** A team member excluded from one workspace. */
+export type ExcludedMember = Schemas["ExcludedMember"];
 export type WorkspaceType = Schemas["WorkspaceType"];
 export type WorkspaceMode = Schemas["WorkspaceMode"];
 export type Platform = Schemas["Platform"];

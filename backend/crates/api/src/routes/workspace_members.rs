@@ -4,15 +4,15 @@
 // exclusion from it, a guest's removal. Every rule on who may do what to whom
 // is in `workspace_service::write_member`; these handlers only name the
 // write. Guests are not added here: they arrive through an accepted
-// invitation.
+// invitation. Also the list of exclusions, read by whoever may lift one.
 
 use std::collections::HashMap;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{FromRequestParts, Path, State},
     http::{StatusCode, request::Parts},
-    routing::{delete, patch, post},
+    routing::{delete, get, patch, post},
 };
 use uuid::Uuid;
 
@@ -20,11 +20,12 @@ use crate::middleware::json::JsonBody;
 use crate::middleware::workspace::{WorkspaceMember, role};
 use crate::{error::AppError, state::AppState};
 use domain::dto::error_responses::{SimpleErrorResponse, UnprocessableErrorResponse};
-use domain::dto::workspace::SetMemberRoleRequest;
+use domain::dto::workspace::{ExcludedMember, SetMemberRoleRequest};
 use services::workspace_service::{self, MemberWrite};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/workspaces/{slug}/exclusions", get(list_exclusions))
         .route("/workspaces/{slug}/members/{user_id}", patch(set_role))
         .route(
             "/workspaces/{slug}/members/{user_id}/role-override",
@@ -83,6 +84,32 @@ async fn write(
     .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The extractor's `Admin` is the gate `write_member` puts on lifting an
+/// exclusion, the Captain or an Admin, so whoever may lift one reads them
+/// all; which ones an Admin may then lift is the write's to say. Refused in
+/// the order of the member writes, and kept readable once archived.
+#[utoipa::path(
+    get,
+    path = "/api/v1/workspaces/{slug}/exclusions",
+    tag = "Workspaces",
+    params(("slug" = String, Path, description = "Workspace slug")),
+    security(("access_token" = [])),
+    responses(
+        (status = 200, description = "The team members excluded from this workspace, by handle. Read by the Captain and the Admins, an archived workspace included", body = [ExcludedMember]),
+        (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
+        (status = 403, description = "insufficient_role: below Admin", body = SimpleErrorResponse),
+        (status = 404, description = "Workspace not found, or no access to it", body = SimpleErrorResponse),
+        (status = 409, description = "workspace_is_solo", body = SimpleErrorResponse),
+    )
+)]
+async fn list_exclusions(
+    State(state): State<AppState>,
+    member: WorkspaceMember<role::Admin>,
+) -> Result<Json<Vec<ExcludedMember>>, AppError> {
+    let excluded = workspace_service::list_exclusions(&state.db, &member.workspace).await?;
+    Ok(Json(excluded))
 }
 
 #[utoipa::path(
@@ -249,12 +276,12 @@ async fn leave(
 mod tests {
     use crate::test_support::{
         add_team_member, app, create_solo_workspace, create_team, create_team_workspace,
-        create_user, db, request_as,
+        create_user, db, request_as, unique,
     };
     use axum::http::StatusCode;
     use domain::dto::team::TeamRole;
-    use domain::entities::workspaces;
-    use sea_orm::DatabaseConnection;
+    use domain::entities::{users, workspaces};
+    use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
     use serde_json::{Value, json};
     use services::workspace_service;
     use uuid::Uuid;
@@ -959,5 +986,286 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "workspace_is_solo");
+    }
+
+    fn team_of(f: &Fixture) -> Uuid {
+        f.workspace.team_id.expect("a team workspace")
+    }
+
+    /// GET /members as `caller`, each entry as (role, role_source, is_guest)
+    /// by user id.
+    async fn sources(
+        app: &axum::Router,
+        slug: &str,
+        caller: Uuid,
+    ) -> std::collections::HashMap<String, (String, String, bool)> {
+        let (status, body) = send(
+            app,
+            "GET",
+            &format!("/api/v1/workspaces/{slug}/members"),
+            caller,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body.as_array()
+            .expect("the roster is a list")
+            .iter()
+            .map(|entry| {
+                (
+                    entry["user_id"].as_str().expect("an id").to_owned(),
+                    (
+                        entry["role"].as_str().expect("a role").to_owned(),
+                        entry["role_source"].as_str().expect("a source").to_owned(),
+                        entry["is_guest"].as_bool().expect("a guest flag"),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    fn entry(role: &str, source: &str, is_guest: bool) -> (String, String, bool) {
+        (role.to_owned(), source.to_owned(), is_guest)
+    }
+
+    /// Where each role comes from: the team for the Captain, an Admin and a
+    /// Viewer, an override for a member whose role was set here, a guest,
+    /// and the owner of a solo workspace. Someone admitted as a guest who
+    /// then joined the team is a team member whose role was set here.
+    #[tokio::test]
+    async fn the_roster_says_where_each_role_comes_from() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        workspace_service::set_member_override(
+            &db,
+            f.workspace.id,
+            f.member,
+            TeamRole::Viewer,
+            false,
+        )
+        .await
+        .expect("the override must be written");
+        let joined = admit_guest(&db, &f.workspace).await;
+        add_team_member(&db, team_of(&f), joined, TeamRole::Viewer).await;
+
+        let roster = sources(&app, &f.workspace.slug, f.viewer).await;
+        let expected = [
+            (f.captain, entry("captain", "team", false)),
+            (f.admin, entry("admin", "team", false)),
+            (f.other_admin, entry("admin", "team", false)),
+            (f.member, entry("viewer", "override", false)),
+            (f.viewer, entry("viewer", "team", false)),
+            (f.guest, entry("member", "guest", true)),
+            (joined, entry("member", "override", false)),
+        ];
+        assert_eq!(roster.len(), expected.len(), "{roster:?}");
+        for (user, want) in expected {
+            assert_eq!(roster.get(&user.to_string()), Some(&want), "{user}");
+        }
+
+        let owner = create_user(&db).await;
+        let solo = create_solo_workspace(&db, owner, "Solo").await;
+        let roster = sources(&app, &solo.slug, owner).await;
+        assert_eq!(
+            roster.into_iter().collect::<Vec<_>>(),
+            vec![(owner.to_string(), entry("owner", "owner", false))]
+        );
+    }
+
+    fn exclusions_uri(slug: &str) -> String {
+        format!("/api/v1/workspaces/{slug}/exclusions")
+    }
+
+    /// Exactly whoever may lift an exclusion reads them: for each caller,
+    /// the list answers 200 when lifting a Viewer's exclusion goes through,
+    /// and the lift's own 403 when it does not. An Admin held to Member on
+    /// this workspace is refused both; a Member raised to Admin here gets
+    /// both.
+    #[tokio::test]
+    async fn the_exclusions_are_read_by_exactly_who_may_lift_one() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        let team_id = team_of(&f);
+        let held = create_user(&db).await;
+        add_team_member(&db, team_id, held, TeamRole::Admin).await;
+        workspace_service::set_member_override(&db, f.workspace.id, held, TeamRole::Member, false)
+            .await
+            .expect("the Admin must be held to Member");
+        let raised = create_user(&db).await;
+        add_team_member(&db, team_id, raised, TeamRole::Member).await;
+        workspace_service::set_member_override(&db, f.workspace.id, raised, TeamRole::Admin, false)
+            .await
+            .expect("the Member must be raised to Admin");
+        let target = create_user(&db).await;
+        add_team_member(&db, team_id, target, TeamRole::Viewer).await;
+
+        for (caller, who, may) in [
+            (f.captain, "the Captain", true),
+            (f.admin, "an Admin", true),
+            (raised, "a Member raised to Admin", true),
+            (held, "an Admin held to Member", false),
+            (f.member, "a Member", false),
+            (f.viewer, "a Viewer", false),
+            (f.guest, "a guest", false),
+        ] {
+            workspace_service::exclude_member(&db, f.workspace.id, target)
+                .await
+                .expect("the target must be excluded");
+            let (read, body) = send(&app, "GET", &exclusions_uri(&f.workspace.slug), caller).await;
+            let (lift, _) = send(
+                &app,
+                "DELETE",
+                &member_uri(&f, target, "/exclusion"),
+                caller,
+            )
+            .await;
+
+            if may {
+                assert_eq!(read, StatusCode::OK, "{who} reads: {body}");
+                assert_eq!(lift, StatusCode::NO_CONTENT, "{who} lifts");
+            } else {
+                assert_eq!(read, StatusCode::FORBIDDEN, "{who} reads");
+                assert_eq!(body["error"], "insufficient_role", "{who}");
+                assert_eq!(lift, StatusCode::FORBIDDEN, "{who} lifts");
+            }
+        }
+    }
+
+    /// The excluded team members, by handle, each with what the roster shows
+    /// of a person, and nobody else: not a member, not a guest.
+    #[tokio::test]
+    async fn the_exclusions_list_the_excluded_members_only() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        let avatar = Uuid::now_v7();
+        users::ActiveModel {
+            id: Set(f.viewer),
+            first_name: Set(Some("Grace".to_owned())),
+            last_name: Set(Some("Hopper".to_owned())),
+            avatar_version: Set(Some(avatar)),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the profile must be set");
+        for excluded in [f.viewer, f.member] {
+            workspace_service::exclude_member(&db, f.workspace.id, excluded)
+                .await
+                .expect("the exclusion must be written");
+        }
+
+        let mut expected = Vec::new();
+        for user in [f.viewer, f.member] {
+            let row = users::Entity::find_by_id(user)
+                .one(&db)
+                .await
+                .expect("the lookup must succeed")
+                .expect("the user exists");
+            expected.push(json!({
+                "user_id": user,
+                "handle": row.username,
+                "first_name": row.first_name.unwrap_or_default(),
+                "last_name": row.last_name.unwrap_or_default(),
+                "avatar_version": row.avatar_version,
+            }));
+        }
+        expected.sort_by_key(|entry| entry["handle"].as_str().unwrap().to_lowercase());
+
+        let (status, body) = send(&app, "GET", &exclusions_uri(&f.workspace.slug), f.captain).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, Value::Array(expected));
+    }
+
+    /// Solo: the owner gets the 409 of every member route, anyone else the
+    /// 404 of a workspace they cannot see. Archived: still read.
+    #[tokio::test]
+    async fn the_exclusions_of_a_solo_or_an_archived_workspace() {
+        let db = db().await;
+        let app = app(&db).await;
+        let owner = create_user(&db).await;
+        let solo = create_solo_workspace(&db, owner, "Solo").await;
+        let stranger = create_user(&db).await;
+
+        let (status, body) = send(&app, "GET", &exclusions_uri(&solo.slug), owner).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "workspace_is_solo");
+        let (status, body) = send(&app, "GET", &exclusions_uri(&solo.slug), stranger).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "workspace_not_found");
+
+        let f = fixture(&db).await;
+        workspace_service::exclude_member(&db, f.workspace.id, f.viewer)
+            .await
+            .expect("the exclusion must be written");
+        workspace_service::archive_workspace(&db, f.workspace.id)
+            .await
+            .expect("the workspace must archive");
+        for caller in [f.captain, f.admin] {
+            let (status, body) =
+                send(&app, "GET", &exclusions_uri(&f.workspace.slug), caller).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body[0]["user_id"], f.viewer.to_string());
+        }
+    }
+
+    /// An excluded account, an Admin of the team at that, and a stranger get
+    /// the 404 a slug that never existed gets, byte for byte.
+    #[tokio::test]
+    async fn an_excluded_account_or_a_stranger_gets_the_404_of_a_missing_workspace() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        workspace_service::exclude_member(&db, f.workspace.id, f.admin)
+            .await
+            .expect("the exclusion must be written");
+        let stranger = create_user(&db).await;
+
+        let missing = send(&app, "GET", &exclusions_uri(&unique("no-such")), f.admin).await;
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        for (caller, who) in [(f.admin, "the excluded Admin"), (stranger, "a stranger")] {
+            let answer = send(&app, "GET", &exclusions_uri(&f.workspace.slug), caller).await;
+            assert_eq!(answer, missing, "{who}");
+        }
+        // Control: the other Admin reads it.
+        let (status, _) = send(
+            &app,
+            "GET",
+            &exclusions_uri(&f.workspace.slug),
+            f.other_admin,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    /// The order of the member writes: no session, then no access, then a
+    /// role below Admin, then a solo workspace. An excluded Viewer is a
+    /// stranger here, not a member below Admin.
+    #[tokio::test]
+    async fn the_exclusions_refusals_come_in_order() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        let owner = create_user(&db).await;
+        let solo = create_solo_workspace(&db, owner, "Solo").await;
+        let stranger = create_user(&db).await;
+
+        for slug in [&solo.slug, &f.workspace.slug] {
+            let (status, _) = request_as(&app, "GET", &exclusions_uri(slug), None, None).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{slug}");
+            let (status, _) = send(&app, "GET", &exclusions_uri(slug), stranger).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{slug}");
+        }
+        let (status, _) = send(&app, "GET", &exclusions_uri(&f.workspace.slug), f.viewer).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = send(&app, "GET", &exclusions_uri(&solo.slug), owner).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        workspace_service::exclude_member(&db, f.workspace.id, f.viewer)
+            .await
+            .expect("the exclusion must be written");
+        let (status, _) = send(&app, "GET", &exclusions_uri(&f.workspace.slug), f.viewer).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "excluded: 404, not 403");
     }
 }

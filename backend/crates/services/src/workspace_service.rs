@@ -2,8 +2,8 @@
 
 use domain::dto::team::{TeamRole, TeamSummary};
 use domain::dto::workspace::{
-    CreateWorkspaceInput, EffectiveMember, Membership, Platform, UpdateWorkspaceInput,
-    WorkspaceMode, WorkspaceSummary, WorkspaceType, WriteupVisibility,
+    CreateWorkspaceInput, EffectiveMember, ExcludedMember, Membership, Platform,
+    UpdateWorkspaceInput, WorkspaceMode, WorkspaceSummary, WorkspaceType, WriteupVisibility,
 };
 use domain::entities::{
     team_members, teams, users, workspace_favorites, workspace_members, workspaces,
@@ -598,7 +598,8 @@ pub async fn remove_favorite(
     Ok(())
 }
 
-/// Everyone with access to `workspace`, with their effective role resolved.
+/// Everyone with access to `workspace`, with their effective role resolved
+/// and where it comes from.
 ///
 /// Solo: a single entry for the owner, `Membership::Owner` rather than
 /// `Active(Captain)`. `Membership` has an `Owner` tier where `TeamRole` does
@@ -609,6 +610,9 @@ pub async fn remove_favorite(
 /// Team: every team member, minus anyone a `workspace_members` row excludes,
 /// with an override role taking precedence over the inherited team one, plus
 /// every guest, who has no team membership behind them at all.
+///
+/// Each person is resolved by `permissions_service::resolve`, the rule
+/// `effective_role` applies, on the rows read here in bulk.
 ///
 /// A member whose `users` row has gone is dropped rather than failing the
 /// whole listing, matching `team_service::list_team_members`.
@@ -628,15 +632,18 @@ pub async fn list_effective_members(
             .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
 
         let owner = users::Entity::find_by_id(owner_id).one(db).await?;
+        let access = permissions_service::resolve(workspace, owner_id, None, None);
 
         return Ok(owner
-            .map(|owner| EffectiveMember {
+            .zip(access.source)
+            .map(|(owner, role_source)| EffectiveMember {
                 user_id: owner_id,
                 handle: owner.username,
                 first_name: owner.first_name.unwrap_or_default(),
                 last_name: owner.last_name.unwrap_or_default(),
                 avatar_version: owner.avatar_version,
-                role: Membership::Owner,
+                role: access.membership,
+                role_source,
                 is_guest: false,
                 // No membership row stands behind sole ownership, so the
                 // workspace's own creation is the date the owner got access.
@@ -681,17 +688,20 @@ pub async fn list_effective_members(
         // Removed rather than read, so what is left in `overrides` after this
         // loop is exactly the set of rows with no team membership behind
         // them: the guests.
-        let override_role = overrides
+        let row = overrides
             .remove(&team_member.user_id)
-            .and_then(|(member, _)| member.role);
+            .map(|(member, _)| member);
+        let team_role = TeamRole::from_str(&team_member.role).unwrap_or(TeamRole::Viewer);
+        let access = permissions_service::resolve(
+            workspace,
+            team_member.user_id,
+            row.as_ref(),
+            Some(team_role),
+        );
 
-        let role = match override_role.as_deref() {
-            Some(role) if role == Membership::Excluded.as_str() => continue,
-            Some(role) => TeamRole::from_str(role).unwrap_or(TeamRole::Viewer),
-            // A row with no role overrides nothing and falls through to the
-            // team role, the same way `permissions_service::effective_role`
-            // treats it.
-            None => TeamRole::from_str(&team_member.role).unwrap_or(TeamRole::Viewer),
+        // No source is no access: an exclusion, which is not listed.
+        let Some(role_source) = access.source else {
+            continue;
         };
 
         members.push(EffectiveMember {
@@ -700,7 +710,8 @@ pub async fn list_effective_members(
             first_name: user.first_name.unwrap_or_default(),
             last_name: user.last_name.unwrap_or_default(),
             avatar_version: user.avatar_version,
-            role: Membership::Active(role),
+            role: access.membership,
+            role_source,
             is_guest: false,
             // The team_members date, not the override's: an override
             // changes what they may do here, not when they gained access.
@@ -734,12 +745,12 @@ pub async fn list_effective_members(
         // `ck_workspace_members_guest_has_role` makes a role-less guest
         // unreachable. Unlike the orphan above, this one really is
         // unreachable rather than merely unhandled, so there is nothing to
-        // fix upstream and dropping the row is only defensive.
-        let Some(role) = member.role else { continue };
-
-        if role == Membership::Excluded.as_str() {
+        // fix upstream and dropping the row (no source, no access) is only
+        // defensive.
+        let access = permissions_service::resolve(workspace, member.user_id, Some(&member), None);
+        let Some(role_source) = access.source else {
             continue;
-        }
+        };
 
         members.push(EffectiveMember {
             user_id: member.user_id,
@@ -747,7 +758,8 @@ pub async fn list_effective_members(
             first_name: user.first_name.unwrap_or_default(),
             last_name: user.last_name.unwrap_or_default(),
             avatar_version: user.avatar_version,
-            role: Membership::Active(TeamRole::from_str(&role).unwrap_or(TeamRole::Viewer)),
+            role: access.membership,
+            role_source,
             is_guest: true,
             joined_at: member.joined_at.into(),
             invited_by: member.invited_by,
@@ -770,6 +782,46 @@ pub async fn list_effective_members(
     });
 
     Ok(members)
+}
+
+/// The team members excluded from `workspace`, by handle then id. Refused on
+/// a solo workspace, which has no team to exclude anyone from, as every
+/// member route refuses it; an archived one is still read.
+///
+/// One query. Only team members carry the exclusion: `exclude_member`
+/// refuses anyone else, and `team_service::remove_member` deletes a member's
+/// rows with their membership.
+pub async fn list_exclusions(
+    db: &DatabaseConnection,
+    workspace: &workspaces::Model,
+) -> Result<Vec<ExcludedMember>, WorkspaceError> {
+    if workspace.team_id.is_none() {
+        return Err(WorkspaceError::SoloWorkspace);
+    }
+
+    let mut excluded: Vec<ExcludedMember> = workspace_members::Entity::find()
+        .filter(workspace_members::Column::WorkspaceId.eq(workspace.id))
+        .filter(workspace_members::Column::Role.eq(Membership::Excluded.as_str()))
+        .find_also_related(users::Entity)
+        .all(db)
+        .await?
+        .into_iter()
+        .filter_map(|(row, user)| {
+            user.map(|user| ExcludedMember {
+                user_id: row.user_id,
+                handle: user.username,
+                first_name: user.first_name.unwrap_or_default(),
+                last_name: user.last_name.unwrap_or_default(),
+                avatar_version: user.avatar_version,
+            })
+        })
+        .collect();
+
+    // Same order as the members roster within a rank, for the same reason:
+    // a CITEXT column, and an id to settle equal handles.
+    excluded.sort_by_cached_key(|member| (member.handle.to_lowercase(), member.user_id));
+
+    Ok(excluded)
 }
 
 /// Grants `target_user_id` a workspace-level role, overriding whatever they
