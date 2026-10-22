@@ -5742,6 +5742,7 @@
           "id",
           "team_id",
           "team_name",
+          "team_color",
           "default_role",
           "target",
           "expires_at",
@@ -5807,6 +5808,18 @@
           },
           "target": {
             "$ref": "#/components/schemas/InvitationTarget"
+          },
+          "team_avatar_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Same contract as `TeamResponse.avatar_version`, and `null` as well\nfor a reader who is not on the team: the avatar is served to its\nmembers only, so an invitee is announced none until they join."
+          },
+          "team_color": {
+            "$ref": "#/components/schemas/AccentColor",
+            "description": "The team's colour, for its monogram next to `team_name`."
           },
           "team_id": {
             "type": "string",
@@ -6219,6 +6232,8 @@
           "id",
           "workspace_id",
           "workspace_name",
+          "workspace_color",
+          "team_name",
           "status",
           "role",
           "target",
@@ -6314,6 +6329,22 @@
           "target": {
             "$ref": "#/components/schemas/InvitationTarget",
             "description": "`username` or `email`: a workspace has no generic link."
+          },
+          "team_name": {
+            "type": "string",
+            "description": "The workspace's team: a workspace invitation is only ever for a team\nworkspace."
+          },
+          "workspace_avatar_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Same contract as `WorkspaceSummary.avatar_version`, and `null` as\nwell for a reader with no access to the workspace: the avatar is\nserved to those with access only, so an invitee is announced none."
+          },
+          "workspace_color": {
+            "$ref": "#/components/schemas/AccentColor",
+            "description": "The workspace's colour, for its monogram next to `workspace_name`."
           },
           "workspace_id": {
             "type": "string",

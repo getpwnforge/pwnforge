@@ -22,7 +22,7 @@ use domain::dto::workspace::{
     CancelReason, CreateWorkspaceInvitationRequest, GuestRole, InvitationStatus, Membership,
     WorkspaceInvitationPreview, WorkspaceInvitationResponse,
 };
-use domain::entities::{team_members, workspace_invitations, workspace_members, workspaces};
+use domain::entities::{team_members, teams, workspace_invitations, workspace_members, workspaces};
 
 use crate::background::Shutdown;
 use crate::config::Config;
@@ -116,9 +116,13 @@ fn effective_status(row: &workspace_invitations::Model, now: DateTime<Utc>) -> I
     stored
 }
 
+/// `with_access` says whether the reader has access to the workspace, the
+/// only readers its avatar is served to: anyone else is announced none.
 fn to_response(
     row: workspace_invitations::Model,
-    workspace_name: String,
+    workspace: workspaces::Model,
+    with_access: bool,
+    team_name: String,
     usernames: &HashMap<Uuid, String>,
     now: DateTime<Utc>,
 ) -> WorkspaceInvitationResponse {
@@ -128,7 +132,10 @@ fn to_response(
     WorkspaceInvitationResponse {
         id: row.id,
         workspace_id: row.workspace_id,
-        workspace_name,
+        workspace_name: workspace.name,
+        workspace_color: workspace.color.parse().unwrap_or_default(),
+        workspace_avatar_version: workspace.avatar_version.filter(|_| with_access),
+        team_name,
         status,
         role: GuestRole::parse(&row.role).unwrap_or(GuestRole::Viewer),
         // Not from the address: it is erased once the invitation is closed,
@@ -162,25 +169,54 @@ fn to_response(
     }
 }
 
+/// The rows with their workspace and whether the reader has access to it,
+/// as answers: the names they show read in two queries, the accounts and the
+/// teams, however many rows there are.
 async fn responses<C: ConnectionTrait>(
     conn: &C,
-    rows: Vec<(workspace_invitations::Model, String)>,
+    rows: Vec<(workspace_invitations::Model, workspaces::Model, bool)>,
 ) -> Result<Vec<WorkspaceInvitationResponse>> {
     let usernames = invitation_service::usernames(
         conn,
-        rows.iter().flat_map(|(row, _)| {
+        rows.iter().flat_map(|(row, _, _)| {
             [row.invited_user_id, row.accepted_by, row.invited_by]
                 .into_iter()
                 .flatten()
         }),
     )
     .await?;
+    let team_ids: Vec<Uuid> = rows.iter().filter_map(|(_, w, _)| w.team_id).collect();
+    let team_names: HashMap<Uuid, String> = if team_ids.is_empty() {
+        HashMap::new()
+    } else {
+        teams::Entity::find()
+            .filter(teams::Column::Id.is_in(team_ids))
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|team| (team.id, team.name))
+            .collect()
+    };
     let now = Utc::now();
 
-    Ok(rows
-        .into_iter()
-        .map(|(row, name)| to_response(row, name, &usernames, now))
-        .collect())
+    rows.into_iter()
+        .map(|(row, workspace, with_access)| {
+            // Only a team workspace takes invitations (`team_of`), and its
+            // team goes only with it.
+            let team_name = workspace
+                .team_id
+                .and_then(|id| team_names.get(&id).cloned())
+                .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+            Ok(to_response(
+                row,
+                workspace,
+                with_access,
+                team_name,
+                &usernames,
+                now,
+            ))
+        })
+        .collect()
 }
 
 /// Whether `user_id` already has a place in the workspace: on its team, or
@@ -392,7 +428,8 @@ pub async fn create_invitation(
 
     // The token went to the invitee's mail, and goes nowhere else: the
     // author holding it would hold the invitee's link.
-    let invitation = responses(db, vec![(row, workspace.name)])
+    // The author has access: `require_inviter` saw to it.
+    let invitation = responses(db, vec![(row, workspace, true)])
         .await?
         .pop()
         .ok_or(WorkspaceInvitationError::InvitationNotFound)?;
@@ -424,8 +461,9 @@ pub async fn list_invitations(
     let rows = query.all(db).await?;
     responses(
         db,
+        // Read by those who may invite, all with access.
         rows.into_iter()
-            .map(|row| (row, workspace.name.clone()))
+            .map(|row| (row, workspace.clone(), true))
             .collect(),
     )
     .await
@@ -548,13 +586,64 @@ pub async fn list_pending_for_user(
         .all(db)
         .await?;
 
-    responses(
-        db,
-        rows.into_iter()
-            .filter_map(|(row, workspace)| workspace.map(|workspace| (row, workspace.name)))
-            .collect(),
-    )
-    .await
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter_map(|(row, workspace)| workspace.map(|workspace| (row, workspace)))
+        .collect();
+
+    // Whether the invitee can already reach each workspace, resolved as every
+    // route resolves access, on their rows read in two queries: an invitation
+    // stays pending when its invitee joins the team meanwhile.
+    let workspace_ids: Vec<Uuid> = rows.iter().map(|(_, w)| w.id).collect();
+    let own_rows: HashMap<Uuid, workspace_members::Model> = if workspace_ids.is_empty() {
+        HashMap::new()
+    } else {
+        workspace_members::Entity::find()
+            .filter(workspace_members::Column::UserId.eq(user_id))
+            .filter(workspace_members::Column::WorkspaceId.is_in(workspace_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|member| (member.workspace_id, member))
+            .collect()
+    };
+    let team_ids: Vec<Uuid> = rows.iter().filter_map(|(_, w)| w.team_id).collect();
+    let team_roles: HashMap<Uuid, TeamRole> = if team_ids.is_empty() {
+        HashMap::new()
+    } else {
+        team_members::Entity::find()
+            .filter(team_members::Column::UserId.eq(user_id))
+            .filter(team_members::Column::TeamId.is_in(team_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|member| {
+                (
+                    member.team_id,
+                    member.role.parse().unwrap_or(TeamRole::Viewer),
+                )
+            })
+            .collect()
+    };
+
+    let rows = rows
+        .into_iter()
+        .map(|(row, workspace)| {
+            let team_role = workspace
+                .team_id
+                .and_then(|id| team_roles.get(&id).copied());
+            let access = permissions_service::resolve(
+                &workspace,
+                user_id,
+                own_rows.get(&workspace.id),
+                team_role,
+            );
+            let with_access = access.membership.satisfies(TeamRole::Viewer);
+            (row, workspace, with_access)
+        })
+        .collect();
+
+    responses(db, rows).await
 }
 
 /// How an invitee names the invitation they answer.

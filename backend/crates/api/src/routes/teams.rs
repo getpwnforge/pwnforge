@@ -558,8 +558,8 @@ async fn reject_invitation_by_id(
 #[cfg(test)]
 mod tests {
     use crate::test_support::{
-        add_team_member, app, avatar_stored, create_team, create_team_workspace, create_user, db,
-        request_as, upload_avatar,
+        add_team_member, app, avatar_status, avatar_stored, create_team, create_team_workspace,
+        create_user, db, request_as, upload_avatar,
     };
     use axum::http::StatusCode;
     use domain::dto::team::TeamRole;
@@ -1881,5 +1881,134 @@ mod tests {
 
         assert!(costs.iter().all(|cost| *cost == costs[0]), "{costs:?}");
         assert_eq!(costs[0], 2, "{costs:?}");
+    }
+
+    /// The invitee's pending list carries the team's colour next to its
+    /// name, and nothing else than before: the same fields, two added. The
+    /// avatar version goes only to a reader the team's avatar is served to:
+    /// the author's answer and the Admins' list carry it, an invitee off the
+    /// team gets `null`, and the same invitee once on the team gets it.
+    #[tokio::test]
+    async fn a_pending_team_invitation_announces_only_an_avatar_its_reader_can_load() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, _) = team_with(&db, captain, &[]).await;
+        teams::ActiveModel {
+            id: sea_orm::Set(team_id),
+            color: sea_orm::Set("amber".to_owned()),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the team must be updated");
+        let avatar = upload_avatar(&db, AvatarKind::Team, team_id).await;
+        let invitee = create_user(&db).await;
+
+        let (status, created) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "member", "username": username_of(&db, invitee).await }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let (status, listed) = request_as(
+            &app,
+            "GET",
+            &format!("/api/v1/teams/{}/invitations", slug_of(&db, team_id).await),
+            Some(captain),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let listed = listed
+            .as_array()
+            .expect("a list")
+            .iter()
+            .find(|entry| entry["id"] == created["id"])
+            .expect("listed for the Captain")
+            .clone();
+        for answer in [&created, &listed] {
+            assert_eq!(answer["team_name"], "Test Team", "{answer}");
+            assert_eq!(answer["team_color"], "amber", "{answer}");
+            assert_eq!(answer["team_avatar_version"], json!(avatar), "{answer}");
+        }
+        assert_eq!(
+            avatar_status(&app, captain, "teams", team_id, avatar).await,
+            StatusCode::OK,
+            "the Captain loads the avatar announced"
+        );
+
+        let pending = |user: Uuid| {
+            let app = app.clone();
+            let id = created["id"].clone();
+            async move {
+                let (status, pending) = request_as(
+                    &app,
+                    "GET",
+                    "/api/v1/teams/invitations/pending",
+                    Some(user),
+                    None,
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK);
+                pending
+                    .as_array()
+                    .expect("a list")
+                    .iter()
+                    .find(|entry| entry["id"] == id)
+                    .expect("the invitation is pending for its invitee")
+                    .clone()
+            }
+        };
+
+        let entry = pending(invitee).await;
+        assert_eq!(entry["team_name"], "Test Team");
+        assert_eq!(entry["team_color"], "amber");
+        assert_eq!(entry["team_avatar_version"], serde_json::Value::Null);
+        assert_eq!(
+            avatar_status(&app, invitee, "teams", team_id, avatar).await,
+            StatusCode::NOT_FOUND,
+            "the version withheld is one the invitee could not load"
+        );
+        let fields: std::collections::BTreeSet<&str> = entry
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let expected: std::collections::BTreeSet<&str> = [
+            "id",
+            "team_id",
+            "team_name",
+            "team_color",
+            "team_avatar_version",
+            "default_role",
+            "target",
+            "invited_user_id",
+            "invited_username",
+            "invited_email",
+            "invited_by",
+            "invited_by_username",
+            "expires_at",
+            "max_uses",
+            "uses",
+            "created_at",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(fields, expected);
+
+        // Joined by another way, the invitation still pending: now a member,
+        // the invitee is announced the avatar, and loads it.
+        add_team_member(&db, team_id, invitee, TeamRole::Viewer).await;
+        let entry = pending(invitee).await;
+        assert_eq!(entry["team_avatar_version"], json!(avatar));
+        assert_eq!(
+            avatar_status(&app, invitee, "teams", team_id, avatar).await,
+            StatusCode::OK
+        );
     }
 }

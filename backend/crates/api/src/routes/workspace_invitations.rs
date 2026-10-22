@@ -345,8 +345,8 @@ async fn reject_invitation_by_id(
 #[cfg(test)]
 mod tests {
     use crate::test_support::{
-        add_team_member, app, create_solo_workspace, create_team, create_team_workspace,
-        create_user, db, env_or, request_as, unique,
+        add_team_member, app, avatar_status, create_solo_workspace, create_team,
+        create_team_workspace, create_user, db, env_or, request_as, unique, upload_avatar,
     };
     use axum::http::StatusCode;
     use chrono::{Duration, Utc};
@@ -357,6 +357,7 @@ mod tests {
         ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
     };
     use serde_json::{Value, json};
+    use services::storage_service::AvatarKind;
     use services::{auth_service, auth_token_service, token_service, workspace_service};
     use uuid::Uuid;
 
@@ -1388,5 +1389,132 @@ mod tests {
             .await
             .expect("the lookup must succeed");
         assert!(written.is_empty(), "no invitation is written");
+    }
+
+    /// The invitee's pending list carries what a monogram and its context
+    /// need, the workspace's name and colour and its team's name, and
+    /// nothing else than before: the same fields, three added. The avatar
+    /// version goes only to a reader the workspace's avatar is served to: the
+    /// author's answer and the list of those who may invite carry it, an
+    /// invitee with no access gets `null`, and the same invitee once on the
+    /// team gets it.
+    #[tokio::test]
+    async fn a_pending_invitation_announces_only_an_avatar_its_reader_can_load() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = fixture(&db).await;
+        workspaces::ActiveModel {
+            id: Set(f.workspace.id),
+            color: Set("rose".to_owned()),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the workspace must be updated");
+        let avatar = upload_avatar(&db, AvatarKind::Workspace, f.workspace.id).await;
+        let invitee = create_user(&db).await;
+
+        let created = invite_username(&app, &db, &f, f.admin, invitee, "viewer").await;
+        let (status, listed) =
+            request_as(&app, "GET", &uri(&f, "/invitations"), Some(f.admin), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let listed = listed
+            .as_array()
+            .expect("a list")
+            .iter()
+            .find(|entry| entry["id"] == created["id"])
+            .expect("listed for the Admin")
+            .clone();
+        for answer in [&created, &listed] {
+            assert_eq!(answer["workspace_name"], "Invitations", "{answer}");
+            assert_eq!(answer["workspace_color"], "rose", "{answer}");
+            assert_eq!(
+                answer["workspace_avatar_version"],
+                json!(avatar),
+                "{answer}"
+            );
+            assert_eq!(answer["team_name"], "Test Team", "{answer}");
+        }
+        assert_eq!(
+            avatar_status(&app, f.admin, "workspaces", f.workspace.id, avatar).await,
+            StatusCode::OK,
+            "the Admin loads the avatar announced"
+        );
+
+        let pending = |user: Uuid| {
+            let app = app.clone();
+            let id = created["id"].clone();
+            async move {
+                let (status, pending) = request_as(
+                    &app,
+                    "GET",
+                    "/api/v1/workspaces/invitations/pending",
+                    Some(user),
+                    None,
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK);
+                pending
+                    .as_array()
+                    .expect("a list")
+                    .iter()
+                    .find(|entry| entry["id"] == id)
+                    .expect("the invitation is pending for its invitee")
+                    .clone()
+            }
+        };
+
+        let entry = pending(invitee).await;
+        assert_eq!(entry["workspace_name"], "Invitations");
+        assert_eq!(entry["workspace_color"], "rose");
+        assert_eq!(entry["team_name"], "Test Team");
+        assert_eq!(entry["workspace_avatar_version"], Value::Null);
+        assert_eq!(
+            avatar_status(&app, invitee, "workspaces", f.workspace.id, avatar).await,
+            StatusCode::NOT_FOUND,
+            "the version withheld is one the invitee could not load"
+        );
+        let fields: std::collections::BTreeSet<&str> = entry
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let expected: std::collections::BTreeSet<&str> = [
+            "id",
+            "workspace_id",
+            "workspace_name",
+            "workspace_color",
+            "workspace_avatar_version",
+            "team_name",
+            "status",
+            "role",
+            "target",
+            "invited_user_id",
+            "invited_username",
+            "invited_email",
+            "accepted_by",
+            "accepted_username",
+            "invited_by",
+            "invited_by_username",
+            "cancel_reason",
+            "expires_at",
+            "created_at",
+            "resolved_at",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(fields, expected);
+
+        // On the team now, the invitation still pending: the invitee has
+        // access, is announced the avatar, and loads it.
+        let team_id = f.workspace.team_id.expect("a team workspace");
+        add_team_member(&db, team_id, invitee, TeamRole::Viewer).await;
+        let entry = pending(invitee).await;
+        assert_eq!(entry["workspace_avatar_version"], json!(avatar));
+        assert_eq!(
+            avatar_status(&app, invitee, "workspaces", f.workspace.id, avatar).await,
+            StatusCode::OK
+        );
     }
 }

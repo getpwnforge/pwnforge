@@ -266,6 +266,12 @@ pub struct TeamInvitationResponse {
     pub id: Uuid,
     pub team_id: Uuid,
     pub team_name: String,
+    /// The team's colour, for its monogram next to `team_name`.
+    pub team_color: AccentColor,
+    /// Same contract as `TeamResponse.avatar_version`, and `null` as well
+    /// for a reader who is not on the team: the avatar is served to its
+    /// members only, so an invitee is announced none until they join.
+    pub team_avatar_version: Option<Uuid>,
     pub default_role: TeamRole,
     pub target: InvitationTarget,
     /// The account named by username. `null` for an invitation by address,

@@ -1152,6 +1152,9 @@ pub async fn create_invitation(
     let response = TeamInvitationResponse {
         id: invitation.id,
         team_id,
+        team_color: team.color.parse().unwrap_or_default(),
+        // The author is an Admin of the team, to whom its avatar is served.
+        team_avatar_version: team.avatar_version,
         team_name: team.name,
         default_role: payload.default_role,
         target: InvitationTarget::of(invited_user_id, invited_email.as_deref()),
@@ -1183,15 +1186,21 @@ pub async fn create_invitation(
 
 /// The listing shape of a row. Never with its token: only a generic link's
 /// creation answers one (see `create_invitation`).
+///
+/// `on_team` says whether the reader is a member of the team, the only
+/// readers its avatar is served to: anyone else is announced none.
 fn invitation_response(
     invitation: team_invitations::Model,
-    team_name: String,
+    team: &teams::Model,
+    on_team: bool,
     usernames: &HashMap<Uuid, String>,
 ) -> TeamInvitationResponse {
     TeamInvitationResponse {
         id: invitation.id,
         team_id: invitation.team_id,
-        team_name,
+        team_name: team.name.clone(),
+        team_color: team.color.parse().unwrap_or_default(),
+        team_avatar_version: team.avatar_version.filter(|_| on_team),
         default_role: TeamRole::from_str(&invitation.default_role).unwrap_or(TeamRole::Viewer),
         target: InvitationTarget::of(
             invitation.invited_user_id,
@@ -1243,7 +1252,8 @@ pub async fn list_active_invitations(
 
     Ok(invitations
         .into_iter()
-        .map(|invitation| invitation_response(invitation, team.name.clone(), &usernames))
+        // Read by the team's Admins (see the route), members all.
+        .map(|invitation| invitation_response(invitation, &team, true, &usernames))
         .collect())
 }
 
@@ -1269,10 +1279,28 @@ pub async fn list_pending_invitations_for_user(
     let rows: Vec<_> = invitations.iter().map(|(row, _)| row.clone()).collect();
     let usernames = invitation_service::usernames(db, people_of(&rows)).await?;
 
+    // The teams among these the invitee is already on, one query: an
+    // invitation stays pending when its invitee joins by another way.
+    let teams_joined: std::collections::HashSet<Uuid> = if rows.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        team_members::Entity::find()
+            .filter(team_members::Column::UserId.eq(user_id))
+            .filter(team_members::Column::TeamId.is_in(rows.iter().map(|row| row.team_id)))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|member| member.team_id)
+            .collect()
+    };
+
     Ok(invitations
         .into_iter()
         .filter_map(|(invitation, team)| {
-            team.map(|team| invitation_response(invitation, team.name, &usernames))
+            team.map(|team| {
+                let on_team = teams_joined.contains(&team.id);
+                invitation_response(invitation, &team, on_team, &usernames)
+            })
         })
         .collect())
 }

@@ -1387,6 +1387,15 @@ export interface components {
             /** Format: int32 */
             max_uses?: number | null;
             target: components["schemas"]["InvitationTarget"];
+            /**
+             * Format: uuid
+             * @description Same contract as `TeamResponse.avatar_version`, and `null` as well
+             *     for a reader who is not on the team: the avatar is served to its
+             *     members only, so an invitee is announced none until they join.
+             */
+            team_avatar_version?: string | null;
+            /** @description The team's colour, for its monogram next to `team_name`. */
+            team_color: components["schemas"]["AccentColor"];
             /** Format: uuid */
             team_id: string;
             team_name: string;
@@ -1616,6 +1625,20 @@ export interface components {
             status: components["schemas"]["InvitationStatus"];
             /** @description `username` or `email`: a workspace has no generic link. */
             target: components["schemas"]["InvitationTarget"];
+            /**
+             * @description The workspace's team: a workspace invitation is only ever for a team
+             *     workspace.
+             */
+            team_name: string;
+            /**
+             * Format: uuid
+             * @description Same contract as `WorkspaceSummary.avatar_version`, and `null` as
+             *     well for a reader with no access to the workspace: the avatar is
+             *     served to those with access only, so an invitee is announced none.
+             */
+            workspace_avatar_version?: string | null;
+            /** @description The workspace's colour, for its monogram next to `workspace_name`. */
+            workspace_color: components["schemas"]["AccentColor"];
             /** Format: uuid */
             workspace_id: string;
             workspace_name: string;

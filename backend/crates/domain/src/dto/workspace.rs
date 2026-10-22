@@ -616,6 +616,15 @@ pub struct WorkspaceInvitationResponse {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub workspace_name: String,
+    /// The workspace's colour, for its monogram next to `workspace_name`.
+    pub workspace_color: AccentColor,
+    /// Same contract as `WorkspaceSummary.avatar_version`, and `null` as
+    /// well for a reader with no access to the workspace: the avatar is
+    /// served to those with access only, so an invitee is announced none.
+    pub workspace_avatar_version: Option<Uuid>,
+    /// The workspace's team: a workspace invitation is only ever for a team
+    /// workspace.
+    pub team_name: String,
     pub status: InvitationStatus,
     pub role: GuestRole,
     /// `username` or `email`: a workspace has no generic link.
