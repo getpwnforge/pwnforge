@@ -11,6 +11,9 @@ import { ROUTES } from "@/lib/routes";
  * browsers read `/\evil.tld` as `//evil.tld`, and the rest is resolved the
  * way the browser would resolve it: tabs and newlines dropped, `/./` and
  * `/../` folded. Only a result on this origin is used, and only as resolved.
+ *
+ * The fragment is dropped, whatever `target` holds: a mailed link carries its
+ * token there, and nothing that went through `?from=` may bring one back.
  */
 export function safeRedirect(target: string | null): string {
   if (!target || !target.startsWith("/") || target.startsWith("//") || target.includes("\\")) {
@@ -28,5 +31,5 @@ export function safeRedirect(target: string | null): string {
     return ROUTES.workspaces;
   }
 
-  return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  return `${resolved.pathname}${resolved.search}`;
 }

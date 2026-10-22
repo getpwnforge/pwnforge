@@ -25,9 +25,11 @@ export function RequireAuth() {
   }
 
   if (status === "anonymous") {
-    // Search and hash included: a filtered challenge list has to come back
-    // filtered once the user has signed in.
-    const from = `${location.pathname}${location.search}${location.hash}`;
+    // The query string included: a filtered challenge list has to come back
+    // filtered once the user has signed in. Never the fragment: a mailed
+    // link carries its token there, where no server sees it, and `?from=` is
+    // a query string every server on the way logs.
+    const from = `${location.pathname}${location.search}`;
 
     return <Navigate to={`${ROUTES.login}?from=${encodeURIComponent(from)}`} replace />;
   }

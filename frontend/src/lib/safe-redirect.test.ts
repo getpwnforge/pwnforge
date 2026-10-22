@@ -20,10 +20,12 @@ describe("safeRedirect", () => {
     expect(safeRedirect(target)).toBe(ROUTES.workspaces);
   });
 
-  it("keeps a path on this origin, with its query and fragment", () => {
-    expect(safeRedirect("/teams/ctf-team?tab=members#roster")).toBe(
-      "/teams/ctf-team?tab=members#roster",
-    );
+  it("keeps a path on this origin, with its query, and drops the fragment", () => {
+    expect(safeRedirect("/teams/ctf-team?tab=members#roster")).toBe("/teams/ctf-team?tab=members");
+  });
+
+  it("never brings a link's token back from `from`", () => {
+    expect(safeRedirect("/invitations/team#token=abc")).toBe("/invitations/team");
   });
 
   it("returns the path as the browser resolves it", () => {

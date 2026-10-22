@@ -1,6 +1,7 @@
 // src/hooks/useWorkspaces.ts
 import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { useMatch } from "react-router";
 
 import {
@@ -32,8 +33,10 @@ import type {
   WorkspaceRole,
   WorkspaceSummary,
 } from "@/lib/api/types";
+import { isApiError } from "@/lib/api-error";
 import { retryUnlessNotFound } from "@/lib/query-client";
 import { WORKSPACE_ROUTE_MATCH } from "@/lib/routes";
+import { forgetRecentWorkspace, useRecentWorkspaces } from "@/stores/recent-workspaces";
 
 // Every write below says what it changes in the cache: what it sets from its
 // answer, what it marks stale, what it removes. A query nobody watches is only
@@ -44,13 +47,41 @@ export function useWorkspaces() {
   return useQuery({ queryKey: workspaceKeys.list(), queryFn: listWorkspaces });
 }
 
-/** One workspace, once there is a slug to ask for: nothing is sent without one. */
+/**
+ * One workspace, once there is a slug to ask for: nothing is sent without one.
+ * A 404, gone or out of reach, takes the slug out of the recent workspaces.
+ */
 export function useWorkspace(slug: string | undefined) {
   return useQuery({
     queryKey: workspaceKeys.detail(slug ?? ""),
-    queryFn: slug ? () => getWorkspace(slug) : skipToken,
+    queryFn: slug
+      ? async () => {
+          try {
+            return await getWorkspace(slug);
+          } catch (error) {
+            if (isApiError(error) && error.status === 404) forgetRecentWorkspace(slug);
+            throw error;
+          }
+        }
+      : skipToken,
     retry: retryUnlessNotFound,
   });
+}
+
+/**
+ * Loads the workspace a page shows and, once it has loaded, records the visit
+ * in the recent workspaces, under the slug the server answered with.
+ */
+export function useRecordWorkspaceVisit(slug: string | undefined) {
+  const workspace = useWorkspace(slug);
+  const visit = useRecentWorkspaces((state) => state.visit);
+  const visited = workspace.data?.slug;
+
+  useEffect(() => {
+    if (visited) visit(visited);
+  }, [visited, visit]);
+
+  return workspace;
 }
 
 /** Everyone with access, optionally those one account brought in. */
@@ -71,10 +102,10 @@ export function useWorkspaceExclusions(slug: string | undefined) {
   });
 }
 
-/** The current workspace's id from any nested route, or `null` outside one. */
-export function useWorkspaceId(): string | null {
+/** The current workspace's slug from any nested route, or `null` outside one. */
+export function useWorkspaceSlug(): string | null {
   const match = useMatch(WORKSPACE_ROUTE_MATCH);
-  return match?.params.workspaceId ?? null;
+  return match?.params.slug ?? null;
 }
 
 /** Sets the new workspace's detail from the answer; the list is stale. */
@@ -102,13 +133,20 @@ export function useUpdateWorkspace() {
   });
 }
 
-/** What leaves the caller's reach for good: its detail goes, the list is stale. */
+/**
+ * What leaves the caller's reach for good: its detail goes, and its slug
+ * leaves the recent workspaces; the list is stale.
+ */
 function forgetWorkspace(queryClient: QueryClient, slug: string) {
   queryClient.removeQueries({ queryKey: workspaceKeys.detail(slug) });
+  forgetRecentWorkspace(slug);
   return queryClient.invalidateQueries({ queryKey: workspaceKeys.list() });
 }
 
-/** Removes the detail, and with it its members, exclusions and invitations. */
+/**
+ * Removes the detail, and with it its members, exclusions and invitations;
+ * the slug leaves the recent workspaces.
+ */
 export function useDeleteWorkspace() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -233,7 +271,10 @@ export function useRemoveWorkspaceGuest() {
   });
 }
 
-/** The workspace leaves the caller's reach: its detail goes, the list is stale. */
+/**
+ * The workspace leaves the caller's reach: its detail goes, its slug leaves
+ * the recent workspaces, the list is stale.
+ */
 export function useLeaveWorkspace() {
   const queryClient = useQueryClient();
   return useMutation({

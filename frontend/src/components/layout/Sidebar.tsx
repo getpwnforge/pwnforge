@@ -26,7 +26,8 @@ import type { LucideIcon } from "lucide-react"
 import { ROUTES } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
-import { useWorkspaces, useWorkspaceId } from "@/hooks/useWorkspaces"
+import { useWorkspaces, useWorkspaceSlug } from "@/hooks/useWorkspaces"
+import { useRecentWorkspaces } from "@/stores/recent-workspaces"
 import {
   useNotifications,
   useMarkNotificationRead,
@@ -82,14 +83,14 @@ import { useSidebar } from "../ui/sidebar-context";
 import type { WorkspaceSummary } from "@/lib/api/types";
 
 
-function workspaceNav(id: string): NavItem[] {
+function workspaceNav(slug: string): NavItem[] {
   return [
-    { key: "dashboard",  labelKey: "sidebar.dashboard",  icon: Home,              to: ROUTES.workspace(id), end: true },
-    { key: "challenges", labelKey: "sidebar.challenges", icon: Flag,              to: ROUTES.challenges(id), badgeKey: "challenges" },
-    { key: "writeups",   labelKey: "sidebar.writeups",   icon: FileText,          to: ROUTES.writeups(id), badgeKey: "writeups" },
-    { key: "stats",      labelKey: "sidebar.stats",      icon: ChartNoAxesColumn, to: ROUTES.stats(id) },
-    { key: "members",    labelKey: "sidebar.members",    icon: Users,             to: ROUTES.members(id), badgeKey: "members" },
-    { key: "settings",   labelKey: "sidebar.settings",   icon: Settings,          to: ROUTES.settings(id) },
+    { key: "dashboard",  labelKey: "sidebar.dashboard",  icon: Home,              to: ROUTES.workspace(slug), end: true },
+    { key: "challenges", labelKey: "sidebar.challenges", icon: Flag,              to: ROUTES.challenges(slug), badgeKey: "challenges" },
+    { key: "writeups",   labelKey: "sidebar.writeups",   icon: FileText,          to: ROUTES.writeups(slug), badgeKey: "writeups" },
+    { key: "stats",      labelKey: "sidebar.stats",      icon: ChartNoAxesColumn, to: ROUTES.stats(slug) },
+    { key: "members",    labelKey: "sidebar.members",    icon: Users,             to: ROUTES.members(slug), badgeKey: "members" },
+    { key: "settings",   labelKey: "sidebar.settings",   icon: Settings,          to: ROUTES.settings(slug) },
   ];
 }
 
@@ -329,9 +330,9 @@ function NotificationBell({ count }: Readonly<{ count: number }>) {
 
 function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const navigate = useNavigate();
-  const workspaceId = useWorkspaceId();
+  const workspaceSlug = useWorkspaceSlug();
 
-  const items = workspaceId ? workspaceNav(workspaceId) : GLOBAL_NAV;
+  const items = workspaceSlug ? workspaceNav(workspaceSlug) : GLOBAL_NAV;
 
   const { t } = useTranslation('nav')
 
@@ -443,7 +444,7 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const { data: workspaces = [], isLoading } = useWorkspaces()
   const [open, setOpen] = React.useState(false)
 
-  const currentId = useWorkspaceId()
+  const currentId = useWorkspaceSlug()
   const currentWorkspace = currentId
     ? (workspaces.find((w) => w.slug === currentId) ?? null)
     : null
@@ -616,6 +617,9 @@ function SidebarNav({
 }: Readonly<{ items: NavItem[]; counts?: Record<string, number>; onNavigate?: () => void }>) {
   const { t } = useTranslation('nav')
   const { data: workspaces = [] } = useWorkspaces()
+  const recentSlugs = useRecentWorkspaces((s) => s.slugs)
+  // In visit order, and only those the list still holds.
+  const recentWorkspaces = recentSlugs.flatMap((slug) => workspaces.filter((w) => w.slug === slug))
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
 
@@ -641,7 +645,7 @@ function SidebarNav({
         <SidebarGroup>
           <SidebarGroupLabel>{t("sections.recentWorkspaces")}</SidebarGroupLabel>
           <SidebarMenu>
-            {workspaces.map((w) => (
+            {recentWorkspaces.map((w) => (
               <SidebarMenuItem key={w.id}>
                 <SidebarMenuButton asChild tooltip={w.name}>
                   <NavLink to={ROUTES.workspace(w.slug)} onClick={onNavigate}>
@@ -811,8 +815,8 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
 }
 
 export function AppSidebar() {
-  const workspaceId = useWorkspaceId()
-  const items = workspaceId ? workspaceNav(workspaceId) : GLOBAL_NAV
+  const workspaceSlug = useWorkspaceSlug()
+  const items = workspaceSlug ? workspaceNav(workspaceSlug) : GLOBAL_NAV
   const { state, isMobile, setOpenMobile } = useSidebar()
   const collapsed = state === "collapsed"
 

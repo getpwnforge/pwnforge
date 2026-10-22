@@ -78,6 +78,14 @@ export const router = createBrowserRouter([
         ],
       },
 
+      // The links invitation mails carry. Outside RequireAuth on purpose: it
+      // keeps only the path and the query string in `?from=`, never the
+      // fragment, so a signed-out visitor sent to /login would arrive back
+      // without the token. The page reads it with useLinkToken first, then
+      // asks for a session itself.
+      // { path: ROUTES.teamInvitation, element: <Stub name="Team invitation" /> },
+      // { path: ROUTES.workspaceInvitation, element: <Stub name="Workspace invitation" /> },
+
       // Authenticated app: RequireAuth answers "is anyone signed in" before
       // AppShell renders, so no protected page ever flashes to a visitor.
       {
@@ -90,20 +98,20 @@ export const router = createBrowserRouter([
               { path: ROUTES.workspaces, element: <ActivityItem activity={activityExample} /> },
               // { path: ROUTES.workspaceCreate, element: <Stub name="Create workspace" /> },
               // { path: ROUTES.teams, element: <Stub name="Teams" /> },
-              // { path: ROUTES.team(":teamId"), element: <Stub name="Team detail" /> },
+              // { path: ROUTES.team(":slug"), element: <Stub name="Team detail" /> },
               // { path: ROUTES.profile, element: <Stub name="My profile" /> },
               // { path: ROUTES.help, element: <Stub name="Help" /> },
               // { path: ROUTES.myStats, element: <Stub name="My stats" /> },
               // { path: ROUTES.mySettings, element: <Stub name="My settings" /> },
 
-              // Inside a workspace (sidebar in "workspace" mode, driven by :workspaceSlug)
-              // { path: ROUTES.workspace(":workspaceId"), element: <Stub name="Dashboard" /> },
-              // { path: ROUTES.challenges(":workspaceId"), element: <Stub name="Challenges" /> },
-              // { path: ROUTES.challenge(":workspaceId", ":challengeId"), element: <Stub name="Challenge detail" /> },
-              // { path: ROUTES.writeups(":workspaceId"), element: <Stub name="Writeups" /> },
-              // { path: ROUTES.stats(":workspaceId"), element: <Stub name="Workspace stats" /> },
-              // { path: ROUTES.members(":workspaceId"), element: <Stub name="Members" /> },
-              // { path: ROUTES.settings(":workspaceId"), element: <Stub name="Settings" /> },
+              // Inside a workspace (sidebar in "workspace" mode, driven by :slug)
+              // { path: ROUTES.workspace(":slug"), element: <Stub name="Dashboard" /> },
+              // { path: ROUTES.challenges(":slug"), element: <Stub name="Challenges" /> },
+              // { path: ROUTES.challenge(":slug", ":challengeId"), element: <Stub name="Challenge detail" /> },
+              // { path: ROUTES.writeups(":slug"), element: <Stub name="Writeups" /> },
+              // { path: ROUTES.stats(":slug"), element: <Stub name="Workspace stats" /> },
+              // { path: ROUTES.members(":slug"), element: <Stub name="Members" /> },
+              // { path: ROUTES.settings(":slug"), element: <Stub name="Settings" /> },
             ],
           },
         ],

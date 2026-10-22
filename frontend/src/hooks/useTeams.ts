@@ -26,6 +26,7 @@ import type {
   WorkspaceSummary,
 } from "@/lib/api/types";
 import { retryUnlessNotFound } from "@/lib/query-client";
+import { forgetRecentWorkspace } from "@/stores/recent-workspaces";
 import type { User } from "@/types/api";
 
 // Every write below says what it changes in the cache: what it sets from its
@@ -86,15 +87,16 @@ export function useUpdateTeam() {
 }
 
 /**
- * Forgets what the cache holds of the team's workspaces, found in the cached
- * workspace list: they are gone with the team, or out of the caller's reach
- * once they leave it.
+ * Forgets what the cache and the recent workspaces hold of the team's
+ * workspaces, found in the cached workspace list: they are gone with the
+ * team, or out of the caller's reach once they leave it.
  */
 function forgetTeamWorkspaces(queryClient: QueryClient, slug: string) {
   const workspaces = queryClient.getQueryData<WorkspaceSummary[]>(workspaceKeys.list()) ?? [];
   for (const workspace of workspaces) {
     if (workspace.team?.slug === slug) {
       queryClient.removeQueries({ queryKey: workspaceKeys.detail(workspace.slug) });
+      forgetRecentWorkspace(workspace.slug);
     }
   }
 }

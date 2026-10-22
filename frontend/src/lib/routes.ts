@@ -42,6 +42,12 @@ export const ROUTES = {
   // gate sends it to /login.
   setup: "/setup",
 
+  // The links invitation mails carry, built by the backend's `token_link`
+  // (`{public_url}/invitations/{team|workspace}#token=...`): the token rides
+  // in the fragment, which never leaves the browser, and `useLinkToken`
+  // reads it. No page yet.
+  teamInvitation: "/invitations/team",
+  workspaceInvitation: "/invitations/workspace",
 
   // Personal space (sidebar "global" mode)
   workspaces: "/workspaces",
@@ -53,16 +59,17 @@ export const ROUTES = {
   mySettings: "/me/settings",
   help: "/help",
 
-  // Workspace-scoped (sidebar "workspace" mode). Dashboard is the index route.
-  workspace: (id: string) => `/w/${id}`,
-  challenges: (id: string) => `/w/${id}/challenges`,
-  challenge: (id: string, challenge: string) => `/w/${id}/challenges/${challenge}`,
-  writeups: (id: string) => `/w/${id}/writeups`,
-  stats: (id: string) => `/w/${id}/stats`,
-  members: (id: string) => `/w/${id}/members`,
-  settings: (id: string) => `/w/${id}/settings`,
+  // Workspace-scoped (sidebar "workspace" mode), by slug, the key the API
+  // names a workspace by. Dashboard is the index route.
+  workspace: (slug: string) => `/w/${slug}`,
+  challenges: (slug: string) => `/w/${slug}/challenges`,
+  challenge: (slug: string, challenge: string) => `/w/${slug}/challenges/${challenge}`,
+  writeups: (slug: string) => `/w/${slug}/writeups`,
+  stats: (slug: string) => `/w/${slug}/stats`,
+  members: (slug: string) => `/w/${slug}/members`,
+  settings: (slug: string) => `/w/${slug}/settings`,
 } as const;
 
-// Pattern for useMatch: reads the current workspace id from any nested route.
+// Pattern for useMatch: reads the current workspace slug from any nested route.
 // Kept next to ROUTES.workspace so the two never drift apart.
-export const WORKSPACE_ROUTE_MATCH = "/w/:workspaceId/*";
+export const WORKSPACE_ROUTE_MATCH = "/w/:slug/*";
