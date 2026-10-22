@@ -1,74 +1,39 @@
 // src/types/api.ts
+import type {
+  EmailConfigResponse,
+  EmailResendRequest,
+  LoginRequest,
+  PasswordForgotRequest,
+  PasswordResetRequest,
+  RegisterRequest,
+  SetupRequest,
+  SetupStatusResponse,
+  UserResponse,
+} from "@/lib/api/types";
 
-/**
- * Mirrors `UserResponse` in `crates/domain/src/dto/auth.rs`.
- *
- * Field names are kept exactly as they come off the wire: a mapping layer here
- * would be one more place to forget when the DTO gains a field.
- */
-export type User = {
-  id: string;
-  username: string;
-  email: string;
-  email_verified: boolean;
-  /** RFC 3339, UTC. */
-  created_at: string;
-};
+// The names the auth and setup code has always used, kept so that none of
+// it has to change, as aliases of the types generated from the backend's
+// OpenAPI spec (`lib/api/types.ts`): nothing here is written by hand any
+// more, so a DTO and its mirror cannot drift apart.
 
-/** Mirrors `LoginRequest`. The backend accepts either a username or an email. */
-export type LoginPayload = {
-  username_or_email: string;
-  password: string;
-  turnstile_token: string;
-};
+/** The account holding the session (`GET /auth/me`, login, refresh). */
+export type User = UserResponse;
 
-/** Mirrors `RegisterRequest`. */
-export type RegisterPayload = {
-  email: string;
-  username: string;
-  password: string;
-  legal: { terms_version: string; privacy_version: string };
-  turnstile_token: string;
-};
+/** The backend accepts either a username or an email in `username_or_email`. */
+export type LoginPayload = LoginRequest;
 
-export type SetupStatus = {
-  completed: boolean;
-};
+export type RegisterPayload = RegisterRequest;
 
-/** Mirrors `EmailConfigResponse`. Never carries a secret, by design. */
-export type EmailConfig = {
-  backend: string;
-  from: string;
-  smtp_host: string | null;
-  smtp_port: number | null;
-  smtp_tls: string | null;
-  /** Whether credentials are configured, not what they are. */
-  smtp_auth: boolean;
-  resend_key_hint: string | null;
-  public_url: string;
-};
+export type SetupStatus = SetupStatusResponse;
 
-/** Mirrors `SetupRequest`. */
-export type SetupPayload = {
-  admin_username: string;
-  admin_email: string;
-  admin_password: string;
-  default_locale: string;
-  /** IANA identifier, never a UTC offset. */
-  default_timezone: string;
-  allow_public_signup: boolean;
-};
+/** Never carries a secret, by design: whether credentials exist, not what they are. */
+export type EmailConfig = EmailConfigResponse;
 
-export type ForgotPasswordPayload = {
-  email: string;
-  turnstile_token: string;
-};
+/** `default_timezone` is an IANA identifier, never a UTC offset. */
+export type SetupPayload = SetupRequest;
 
-export type EmailResendPayload = {
-  token: string;
-};
+export type ForgotPasswordPayload = PasswordForgotRequest;
 
-export type ResetPasswordPayload = {
-  token: string;
-  new_password: string;
-};
+export type EmailResendPayload = EmailResendRequest;
+
+export type ResetPasswordPayload = PasswordResetRequest;

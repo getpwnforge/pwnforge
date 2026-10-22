@@ -42,7 +42,7 @@ sets the same variables itself and calls `cargo test --all-features
 - Commits: [Conventional Commits](https://www.conventionalcommits.org/), format `type(scope): summary`. Scopes: `auth teams workspaces challenges writeups ws stats api ui db docker ci repo deps`. `api` covers the backend's HTTP surface: routes, extractors, the mapping of errors to responses, and the OpenAPI spec. A feature scope wins when a change touches a single feature, its routes included, so `api` is kept for cross-cutting changes (shared extractors, error mapping, the OpenAPI spec as a whole, router configuration); `ws` covers everything WebSocket, the `ws-pubsub` crate included. `repo` covers repository metadata: root files such as AGENTS.md, CONTRIBUTING.md and README.md, and tooling configuration outside the CI workflows. `deps` covers dependency, toolchain and image updates. Where `deps` and `docker` overlap, a version bump (image, dependency or toolchain) is `deps`, and a change to how the containers are configured is `docker`.
 - New primary keys: Postgres-native `uuidv7()`, not app-side UUID generation.
 - Case-insensitive text (email, handle, slug): `CITEXT`, not `TEXT`.
-- User-facing strings go through `t()` (i18next) even though only `en.json` exists today.
+- User-facing strings go through `t()` (i18next): one file per namespace under `frontend/src/locales/en/` and `frontend/src/locales/fr/`, kept key for key by `locales.test.ts`.
 - API routes under `/api/v1/`; never break an existing v1 route. This holds from the first tagged release: before it, a route may change shape, provided the frontend and the OpenAPI spec follow in the same change.
 
 ## Testing instructions

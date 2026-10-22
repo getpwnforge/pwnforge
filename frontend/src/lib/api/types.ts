@@ -17,6 +17,17 @@ type Schemas = components["schemas"];
  */
 export type InvitedByQuery = NonNullable<operations["list_team_members"]["parameters"]["query"]>;
 
+// Accounts and setup
+export type UserResponse = Schemas["UserResponse"];
+export type LoginRequest = Schemas["LoginRequest"];
+export type RegisterRequest = Schemas["RegisterRequest"];
+export type PasswordForgotRequest = Schemas["PasswordForgotRequest"];
+export type PasswordResetRequest = Schemas["PasswordResetRequest"];
+export type EmailResendRequest = Schemas["EmailResendRequest"];
+export type SetupStatusResponse = Schemas["SetupStatusResponse"];
+export type SetupRequest = Schemas["SetupRequest"];
+export type EmailConfigResponse = Schemas["EmailConfigResponse"];
+
 // Workspaces
 export type WorkspaceSummary = Schemas["WorkspaceSummary"];
 export type WorkspaceResponse = Schemas["WorkspaceResponse"];

@@ -40,6 +40,45 @@ export const API_ERROR_CODES = [
   "malformed_json",
   "unsupported_media_type",
   "legal_version_stale",
+  // Teams, workspaces, invitations and avatars.
+  "insufficient_role",
+  "team_not_found",
+  "team_name_not_sluggable",
+  "team_name_reserved",
+  "team_quota_reached",
+  "slug_generation_failed",
+  "member_not_found",
+  "captain_must_transfer",
+  "captain_must_delete_team",
+  "target_already_captain",
+  "target_pending_deletion",
+  "target_is_self",
+  "target_is_captain",
+  "target_not_in_team",
+  "target_already_in_team",
+  "already_invited",
+  "already_member",
+  "invitation_not_found",
+  "invitation_expired",
+  "invitation_expiry_too_far",
+  "invitation_max_uses_reached",
+  "invitation_already_pending",
+  "invitation_not_pending",
+  "invited_user_not_found",
+  "workspace_not_found",
+  "workspace_name_not_sluggable",
+  "workspace_name_reserved",
+  "workspace_is_solo",
+  "workspace_archived",
+  "invalid_ownership",
+  "platform_required",
+  "ends_before_start",
+  "guest_role_above_member",
+  "avatar_too_large",
+  "avatar_svg_rejected",
+  "avatar_unsupported_format",
+  "avatar_undecodable",
+  "storage_quota_exceeded",
   // Frontend-only: the request never reached the API.
   "network",
 ] as const;
@@ -47,6 +86,32 @@ export const API_ERROR_CODES = [
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(API_ERROR_CODES);
+
+/**
+ * Validator codes a `validation_failed` answer can list in `fields`, by field
+ * name: the `validator` rules the DTOs declare (`length`, `email`, `regex`),
+ * and the codes of the backend's own checks (`uuid` for an `invited_by`
+ * filter, `password_composition`, `invitee_named_twice`, `invitee_required`).
+ *
+ * A check on the body as a whole, the two `invitee_*` codes, is listed under
+ * `FORM_FIELD` rather than under one input.
+ */
+export const API_FIELD_CODES = [
+  "length",
+  "email",
+  "regex",
+  "uuid",
+  "password_composition",
+  "invitee_named_twice",
+  "invitee_required",
+] as const;
+
+export type ApiFieldCode = (typeof API_FIELD_CODES)[number];
+
+/** The `fields` key of a check on the whole body, `validator`'s own. */
+export const FORM_FIELD = "__all__";
+
+const KNOWN_FIELD_CODES: ReadonlySet<string> = new Set(API_FIELD_CODES);
 
 /**
  * A failed API call, reduced to what a caller can act on.
@@ -178,4 +243,13 @@ function codeFromStatus(status: number): string {
 export function apiErrorKey(error: unknown): string {
   const code = isApiError(error) ? error.code : "internal_error";
   return KNOWN_CODES.has(code) ? `errors:api.${code}` : "errors:api.internal_error";
+}
+
+/**
+ * i18next key for one validator code of `ApiError.fields`, ready for `t()`:
+ * `errors:field.<code>`, or the generic message for a code this build does
+ * not know, for the same reason as `apiErrorKey`.
+ */
+export function fieldErrorKey(code: string): string {
+  return KNOWN_FIELD_CODES.has(code) ? `errors:field.${code}` : "errors:field.invalid";
 }
