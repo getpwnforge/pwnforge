@@ -25,6 +25,8 @@ export type AccentColor = Schemas["AccentColor"];
 
 // Teams
 export type TeamResponse = Schemas["TeamResponse"];
+/** A team as a workspace names it: its monogram, nothing about its members. */
+export type TeamSummary = Schemas["TeamSummary"];
 export type TeamMemberResponse = Schemas["TeamMemberResponse"];
 export type TeamRole = Schemas["TeamRole"];
 

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use validator::{Validate, ValidationError};
 
 use crate::dto::invitation::InvitationTarget;
-use crate::dto::team::TeamRole;
+use crate::dto::team::{TeamRole, TeamSummary};
 use crate::entities::workspaces;
 use crate::serde_helpers::deserialize_some;
 use crate::types::AccentColor;
@@ -114,6 +114,13 @@ pub struct WorkspaceSummary {
     pub favorite: bool,
     pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,
+    pub platform: Option<Platform>,
+    /// The caller's access, resolved as every route resolves it: an override
+    /// set on this workspace wins over the team role.
+    pub my_role: Membership,
+    /// The workspace's team, `null` for a solo workspace. A guest sees it
+    /// too, while the team's own routes stay closed to them.
+    pub team: Option<TeamSummary>,
 }
 
 /// One workspace as GET, POST and PATCH return it, with the caller's own
@@ -439,6 +446,21 @@ impl PartialSchema for Membership {
 
 /// Default name() gives "Membership"; no referenced schemas to collect.
 impl ToSchema for Membership {}
+
+/// Where an active role on a workspace comes from. Computed with the role
+/// itself, by `permissions_service::resolve`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RoleSource {
+    /// Sole owner of a solo workspace.
+    Owner,
+    /// The role held on the workspace's team.
+    Team,
+    /// A role set on this workspace for a member of its team.
+    Override,
+    /// Admitted to this workspace with no place on its team.
+    Guest,
+}
 
 /// The role a workspace invitation grants: a guest holds at most `member`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

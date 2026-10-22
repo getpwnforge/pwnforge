@@ -284,16 +284,18 @@ async fn list_members(
 #[cfg(test)]
 mod tests {
     use crate::test_support::{
-        add_team_member, app, avatar_stored, create_solo_workspace, create_team,
+        add_team_member, app, avatar_status, avatar_stored, create_solo_workspace, create_team,
         create_team_workspace, create_user, db, request_as, unique, upload_avatar,
     };
     use axum::http::StatusCode;
     use domain::dto::team::TeamRole;
-    use domain::entities::{workspace_favorites, workspaces};
+    use domain::entities::{teams, workspace_favorites, workspaces};
     use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
     use serde_json::{Value, json};
     use services::storage_service::AvatarKind;
     use services::workspace_service;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
 
     fn ws_uri(slug: &str) -> String {
@@ -1028,5 +1030,274 @@ mod tests {
             .map(|summary| summary["id"].as_str().unwrap().parse().unwrap())
             .collect();
         assert_eq!(listed, created);
+    }
+
+    /// The summary GET /workspaces lists for `workspace`, as `user` sees it,
+    /// or `None` when it is not listed.
+    async fn summary_of(app: &axum::Router, user: Uuid, workspace: Uuid) -> Option<Value> {
+        let (status, body) = request_as(app, "GET", "/api/v1/workspaces", Some(user), None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        body.as_array()
+            .expect("the list is an array")
+            .iter()
+            .find(|summary| summary["id"] == workspace.to_string())
+            .cloned()
+    }
+
+    async fn team_row(db: &DatabaseConnection, team_id: Uuid) -> teams::Model {
+        teams::Entity::find_by_id(team_id)
+            .one(db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the team must exist")
+    }
+
+    /// Each kind of access lists its own role: an override set on the
+    /// workspace wins over the team role, a guest has the role they were
+    /// admitted with, an excluded member is not listed at all. Every one of
+    /// them sees the team, and a solo workspace has none.
+    #[tokio::test]
+    async fn the_list_gives_the_callers_role_the_team_and_the_platform() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let avatar = Uuid::now_v7();
+        teams::ActiveModel {
+            id: Set(f.team_id),
+            avatar_version: Set(Some(avatar)),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the team avatar must be set");
+        let team = team_row(&db, f.team_id).await;
+
+        workspace_service::set_member_override(
+            &db,
+            f.workspace.id,
+            f.member,
+            TeamRole::Viewer,
+            false,
+        )
+        .await
+        .expect("the override must be written");
+        let guest = create_user(&db).await;
+        workspace_service::set_member_override(&db, f.workspace.id, guest, TeamRole::Member, true)
+            .await
+            .expect("the guest must be admitted");
+        let excluded = create_user(&db).await;
+        add_team_member(&db, f.team_id, excluded, TeamRole::Member).await;
+        workspace_service::exclude_member(&db, f.workspace.id, excluded)
+            .await
+            .expect("the exclusion must be written");
+
+        // The team's avatar goes to its members; a guest is not one.
+        let expected_team = |avatar_version: Option<Uuid>| {
+            json!({
+                "id": team.id,
+                "slug": team.slug,
+                "name": team.name,
+                "color": "blue",
+                "avatar_version": avatar_version,
+            })
+        };
+        for (user, role, avatar_version) in [
+            (f.captain, "captain", Some(avatar)),
+            (f.admin, "admin", Some(avatar)),
+            (f.member, "viewer", Some(avatar)),
+            (f.viewer, "viewer", Some(avatar)),
+            (guest, "member", None),
+        ] {
+            let summary = summary_of(&app, user, f.workspace.id)
+                .await
+                .unwrap_or_else(|| panic!("listed for the {role}"));
+            assert_eq!(summary["my_role"], role, "{summary}");
+            assert_eq!(summary["team"], expected_team(avatar_version), "{summary}");
+            assert_eq!(summary["platform"], Value::Null, "an event without one");
+        }
+        assert_eq!(summary_of(&app, excluded, f.workspace.id).await, None);
+
+        let solo = create_solo_workspace(&db, f.captain, "Solo").await;
+        let summary = summary_of(&app, f.captain, solo.id)
+            .await
+            .expect("the solo workspace is listed for its owner");
+        assert_eq!(summary["my_role"], "owner");
+        assert_eq!(summary["team"], Value::Null);
+        assert_eq!(summary["platform"], "htb");
+
+        // The column's spelling is not the API's.
+        workspaces::ActiveModel {
+            id: Set(solo.id),
+            platform: Set(Some("rootme".to_owned())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the platform must be set");
+        let summary = summary_of(&app, f.captain, solo.id).await.expect("listed");
+        assert_eq!(summary["platform"], "root_me");
+    }
+
+    /// A guest is shown the team's name in the list, and nothing more: every
+    /// route of the team answers them exactly as it answers a stranger, and
+    /// the team is not among theirs.
+    #[tokio::test]
+    async fn a_guest_sees_the_team_in_the_list_and_none_of_its_routes() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let guest = create_user(&db).await;
+        workspace_service::set_member_override(&db, f.workspace.id, guest, TeamRole::Viewer, true)
+            .await
+            .expect("the guest must be admitted");
+        let stranger = create_user(&db).await;
+        let team = team_row(&db, f.team_id).await;
+
+        let summary = summary_of(&app, guest, f.workspace.id)
+            .await
+            .expect("the workspace is listed for its guest");
+        assert_eq!(summary["team"]["name"], team.name);
+        assert_eq!(summary["team"]["slug"], team.slug);
+
+        for suffix in ["", "/members", "/invitations"] {
+            let uri = format!("/api/v1/teams/{}{suffix}", team.slug);
+            let (status, body) = request_as(&app, "GET", &uri, Some(guest), None).await;
+            let (stranger_status, stranger_body) =
+                request_as(&app, "GET", &uri, Some(stranger), None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "GET {uri}");
+            assert_eq!(
+                (status, &body),
+                (stranger_status, &stranger_body),
+                "GET {uri}"
+            );
+        }
+        // Control: the same routes answer a member of the team.
+        let (status, _) = request_as(
+            &app,
+            "GET",
+            &format!("/api/v1/teams/{}", team.slug),
+            Some(f.viewer),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, teams) = request_as(&app, "GET", "/api/v1/teams", Some(guest), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !teams
+                .as_array()
+                .expect("a list")
+                .iter()
+                .any(|t| t["id"] == f.team_id.to_string()),
+            "the team is not among the guest's teams"
+        );
+    }
+
+    /// The list announces an avatar only to a reader who can load it: the
+    /// team's to its members and not to a guest, whose request for it is
+    /// refused, and the workspace's own to everyone it lists it for, a guest
+    /// included.
+    #[tokio::test]
+    async fn the_list_announces_only_the_avatars_its_reader_can_load() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let guest = create_user(&db).await;
+        workspace_service::set_member_override(&db, f.workspace.id, guest, TeamRole::Viewer, true)
+            .await
+            .expect("the guest must be admitted");
+        let team_avatar = upload_avatar(&db, AvatarKind::Team, f.team_id).await;
+        let workspace_avatar = upload_avatar(&db, AvatarKind::Workspace, f.workspace.id).await;
+
+        for (reader, who) in [(f.captain, "the Captain"), (f.viewer, "a Viewer")] {
+            let summary = summary_of(&app, reader, f.workspace.id)
+                .await
+                .expect("listed");
+            assert_eq!(
+                summary["team"]["avatar_version"],
+                json!(team_avatar),
+                "{who}"
+            );
+            assert_eq!(
+                avatar_status(&app, reader, "teams", f.team_id, team_avatar).await,
+                StatusCode::OK,
+                "{who} loads the team avatar announced"
+            );
+        }
+
+        let summary = summary_of(&app, guest, f.workspace.id)
+            .await
+            .expect("listed");
+        assert_eq!(summary["team"]["avatar_version"], Value::Null);
+        assert_eq!(
+            avatar_status(&app, guest, "teams", f.team_id, team_avatar).await,
+            StatusCode::NOT_FOUND,
+            "the version withheld is one the guest could not load"
+        );
+        assert_eq!(summary["avatar_version"], json!(workspace_avatar));
+        assert_eq!(
+            avatar_status(&app, guest, "workspaces", f.workspace.id, workspace_avatar).await,
+            StatusCode::OK,
+            "the guest loads the workspace avatar announced"
+        );
+    }
+
+    /// One more of each kind of workspace for `user`: a solo one, one on a
+    /// team they are a Member of with an override, one excluded there, and
+    /// one where they are a guest of another team.
+    async fn one_of_each_kind(db: &DatabaseConnection, user: Uuid) {
+        create_solo_workspace(db, user, "Solo").await;
+
+        let captain = create_user(db).await;
+        let own_team = create_team(db, captain).await;
+        add_team_member(db, own_team, user, TeamRole::Member).await;
+        let overridden = create_team_workspace(db, own_team, "Overridden").await;
+        workspace_service::set_member_override(db, overridden.id, user, TeamRole::Viewer, false)
+            .await
+            .expect("the override must be written");
+        create_team_workspace(db, own_team, "Inherited").await;
+        let excluded = create_team_workspace(db, own_team, "Excluded").await;
+        workspace_service::exclude_member(db, excluded.id, user)
+            .await
+            .expect("the exclusion must be written");
+
+        let other_team = create_team(db, captain).await;
+        let hosted = create_team_workspace(db, other_team, "Hosted").await;
+        workspace_service::set_member_override(db, hosted.id, user, TeamRole::Member, true)
+            .await
+            .expect("the guest must be admitted");
+    }
+
+    /// The list costs as many queries for four workspaces as for sixteen,
+    /// teams and guests included: every row is read in bulk and each
+    /// workspace resolved in memory.
+    #[tokio::test]
+    async fn the_list_costs_a_fixed_number_of_queries() {
+        let db = db().await;
+        let user = create_user(&db).await;
+        let queries = Arc::new(AtomicUsize::new(0));
+        let mut metered = crate::test_support::another_connection().await;
+        let counter = queries.clone();
+        metered.set_metric_callback(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let mut costs = Vec::new();
+        for round in 0..4 {
+            one_of_each_kind(&db, user).await;
+            queries.store(0, Ordering::SeqCst);
+            let listed = workspace_service::list_workspaces_for_user(&metered, user)
+                .await
+                .expect("the list must load");
+            costs.push(queries.load(Ordering::SeqCst));
+            assert_eq!(listed.len(), 4 * (round + 1), "the excluded one left out");
+        }
+
+        assert!(costs.iter().all(|cost| *cost == costs[0]), "{costs:?}");
+        // Solo, team memberships, team workspaces, rows, guest workspaces,
+        // their teams, favourites.
+        assert_eq!(costs[0], 7, "{costs:?}");
     }
 }

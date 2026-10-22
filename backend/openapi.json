@@ -5791,7 +5791,8 @@
           "name",
           "color",
           "created_at",
-          "my_role"
+          "my_role",
+          "member_count"
         ],
         "properties": {
           "avatar_version": {
@@ -5812,6 +5813,12 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "member_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many members the team has, its Captain included.",
+            "minimum": 0
           },
           "my_role": {
             "$ref": "#/components/schemas/TeamRole",
@@ -5834,6 +5841,39 @@
           "member",
           "viewer"
         ]
+      },
+      "TeamSummary": {
+        "type": "object",
+        "description": "A team as another resource names it: enough to show its name and\nmonogram, nothing about its members.",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "color"
+        ],
+        "properties": {
+          "avatar_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Same contract as `TeamResponse.avatar_version`, and `null` as well\nfor a reader who is not on the team: the avatar is served to its\nmembers only."
+          },
+          "color": {
+            "$ref": "#/components/schemas/AccentColor"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
       },
       "TestEmailRequest": {
         "type": "object",
@@ -5946,6 +5986,7 @@
       },
       "UserResponse": {
         "type": "object",
+        "description": "The account holding the session, as the auth routes return it: only ever\nbuilt from the caller's own row, never from another account.",
         "required": [
           "id",
           "username",
@@ -5954,6 +5995,14 @@
           "created_at"
         ],
         "properties": {
+          "avatar_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` when the account has no avatar. Same contract as\n`TeamResponse.avatar_version`, under\n`/api/v1/avatars/users/{id}/{avatar_version}/256.webp`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -5964,9 +6013,23 @@
           "email_verified": {
             "type": "boolean"
           },
+          "first_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` until the account sets one."
+          },
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "last_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` until the account sets one."
           },
           "username": {
             "type": "string"
@@ -6258,7 +6321,8 @@
           "type",
           "mode",
           "archived",
-          "favorite"
+          "favorite",
+          "my_role"
         ],
         "properties": {
           "archived": {
@@ -6292,8 +6356,22 @@
           "mode": {
             "$ref": "#/components/schemas/WorkspaceMode"
           },
+          "my_role": {
+            "$ref": "#/components/schemas/Membership",
+            "description": "The caller's access, resolved as every route resolves it: an override\nset on this workspace wins over the team role."
+          },
           "name": {
             "type": "string"
+          },
+          "platform": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Platform"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "slug": {
             "type": "string"
@@ -6304,6 +6382,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "team": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TeamSummary",
+                "description": "The workspace's team, `null` for a solo workspace. A guest sees it\ntoo, while the team's own routes stay closed to them."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "type": {
             "$ref": "#/components/schemas/WorkspaceType"

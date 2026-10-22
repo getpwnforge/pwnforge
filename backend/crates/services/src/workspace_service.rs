@@ -1,11 +1,13 @@
 // backend/crates/services/src/workspace_service.rs
 
-use domain::dto::team::TeamRole;
+use domain::dto::team::{TeamRole, TeamSummary};
 use domain::dto::workspace::{
     CreateWorkspaceInput, EffectiveMember, Membership, Platform, UpdateWorkspaceInput,
     WorkspaceMode, WorkspaceSummary, WorkspaceType, WriteupVisibility,
 };
-use domain::entities::{team_members, users, workspace_favorites, workspace_members, workspaces};
+use domain::entities::{
+    team_members, teams, users, workspace_favorites, workspace_members, workspaces,
+};
 
 use chrono::{DateTime, Utc};
 use sea_orm::sea_query::LockType;
@@ -235,7 +237,12 @@ pub fn ensure_writable(workspace: &workspaces::Model) -> Result<(), WorkspaceErr
 /// Every workspace `user_id` can currently see: solo workspaces they own,
 /// team workspaces where they're a team member and not `Excluded` via a
 /// `workspace_members` override, and workspaces where they only appear as
-/// a guest.
+/// a guest. Each with the caller's role and its team.
+///
+/// A fixed number of queries, at most seven, however many workspaces and
+/// teams there are: every row the rule needs is read in bulk, then each
+/// workspace is resolved in memory by `permissions_service::resolve`, the
+/// rule every route applies.
 pub async fn list_workspaces_for_user(
     db: &DatabaseConnection,
     user_id: Uuid,
@@ -246,20 +253,24 @@ pub async fn list_workspaces_for_user(
         .all(db)
         .await?;
 
-    // Teams this user belongs to, then the workspaces under those teams.
-    let team_ids: Vec<Uuid> = team_members::Entity::find()
+    // Teams this user belongs to, with their role on each, then the
+    // workspaces under those teams.
+    let team_roles: std::collections::HashMap<Uuid, TeamRole> = team_members::Entity::find()
         .filter(team_members::Column::UserId.eq(user_id))
         .all(db)
         .await?
         .into_iter()
-        .map(|tm| tm.team_id)
+        .map(|tm| {
+            let role = TeamRole::from_str(&tm.role).unwrap_or(TeamRole::Viewer);
+            (tm.team_id, role)
+        })
         .collect();
 
-    let team_workspaces = if team_ids.is_empty() {
+    let team_workspaces = if team_roles.is_empty() {
         Vec::new()
     } else {
         workspaces::Entity::find()
-            .filter(workspaces::Column::TeamId.is_in(team_ids))
+            .filter(workspaces::Column::TeamId.is_in(team_roles.keys().copied()))
             .all(db)
             .await?
     };
@@ -275,20 +286,8 @@ pub async fn list_workspaces_for_user(
             .map(|o| (o.workspace_id, o))
             .collect();
 
-    // Drop any team workspace where this user is explicitly excluded.
-    let team_workspaces: Vec<workspaces::Model> = team_workspaces
-        .into_iter()
-        .filter(|w| {
-            overrides_by_workspace
-                .get(&w.id)
-                .and_then(|o| o.role.as_deref())
-                != Some(Membership::Excluded.as_str())
-        })
-        .collect();
-
-    // Guest workspaces: any override row with is_guest = true. A row
-    // can't be both excluded and a guest (one role field per row), so no
-    // extra filter needed here.
+    // Guest workspaces: any override row with is_guest = true. Whether it
+    // still admits them, and as what, is `resolve`'s to say below.
     let guest_workspace_ids: Vec<Uuid> = overrides_by_workspace
         .values()
         .filter(|o| o.is_guest)
@@ -316,6 +315,35 @@ pub async fn list_workspaces_for_user(
         by_id.entry(w.id).or_insert(w);
     }
 
+    // Each one resolved on the rows read above, and dropped when that grants
+    // nothing: an exclusion, for one. No query per workspace.
+    let visible: Vec<(workspaces::Model, Membership)> = by_id
+        .into_values()
+        .filter_map(|w| {
+            let row = overrides_by_workspace.get(&w.id);
+            let team_role = w.team_id.and_then(|id| team_roles.get(&id).copied());
+            let membership = permissions_service::resolve(&w, user_id, row, team_role).membership;
+            membership
+                .satisfies(TeamRole::Viewer)
+                .then_some((w, membership))
+        })
+        .collect();
+
+    // Their teams, one query: a guest's team included, which they are not on.
+    let team_ids: std::collections::HashSet<Uuid> =
+        visible.iter().filter_map(|(w, _)| w.team_id).collect();
+    let teams_by_id: std::collections::HashMap<Uuid, teams::Model> = if team_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        teams::Entity::find()
+            .filter(teams::Column::Id.is_in(team_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|team| (team.id, team))
+            .collect()
+    };
+
     // Favorites for this user, one query.
     let favorite_ids: std::collections::HashSet<Uuid> = workspace_favorites::Entity::find()
         .filter(workspace_favorites::Column::UserId.eq(user_id))
@@ -326,13 +354,32 @@ pub async fn list_workspaces_for_user(
         .collect();
 
     // Map to DTOs.
-    let mut summaries = by_id
-        .into_values()
-        .map(|w| {
+    let mut summaries = visible
+        .into_iter()
+        .map(|(w, my_role)| {
+            // A NULL column is "no platform"; an unrecognised value is
+            // corrupt data, as in `WorkspaceResponse::try_from_model`.
+            let platform = match w.platform.as_deref() {
+                None => None,
+                Some(raw) => Some(Platform::parse(raw).ok_or(WorkspaceError::DataIntegrity(w.id))?),
+            };
+
             Ok(WorkspaceSummary {
                 r#type: WorkspaceType::parse(&w.r#type)
                     .ok_or(WorkspaceError::DataIntegrity(w.id))?,
                 mode: WorkspaceMode::parse(&w.mode).ok_or(WorkspaceError::DataIntegrity(w.id))?,
+                platform,
+                my_role,
+                team: w.team_id.and_then(|id| teams_by_id.get(&id)).map(|team| {
+                    let mut summary = TeamSummary::from_model(team);
+                    // A team's avatar is served to its members only:
+                    // a guest would be announced an image they cannot
+                    // load.
+                    if !team_roles.contains_key(&team.id) {
+                        summary.avatar_version = None;
+                    }
+                    summary
+                }),
                 favorite: favorite_ids.contains(&w.id),
                 id: w.id,
                 slug: w.slug,

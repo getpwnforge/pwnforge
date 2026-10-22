@@ -100,15 +100,18 @@ pub struct TeamResponse {
     /// Current user's role in this team, avoids an extra frontend round trip
     /// to know which actions to show.
     pub my_role: TeamRole,
+    /// How many members the team has, its Captain included.
+    pub member_count: u64,
 }
 
 impl TeamResponse {
-    /// Builds the response from a stored row plus the caller's role.
+    /// Builds the response from a stored row plus the caller's role and the
+    /// team's member count.
     ///
     /// Single place where `teams.color` is read back into `AccentColor`, so the
     /// fallback for an out-of-palette value cannot drift between the six call
     /// sites that used to construct this by hand.
-    pub fn from_model(team: teams::Model, my_role: TeamRole) -> Self {
+    pub fn from_model(team: teams::Model, my_role: TeamRole, member_count: u64) -> Self {
         Self {
             id: team.id,
             slug: team.slug,
@@ -117,6 +120,33 @@ impl TeamResponse {
             avatar_version: team.avatar_version,
             created_at: team.created_at.into(),
             my_role,
+            member_count,
+        }
+    }
+}
+
+/// A team as another resource names it: enough to show its name and
+/// monogram, nothing about its members.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct TeamSummary {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub color: AccentColor,
+    /// Same contract as `TeamResponse.avatar_version`, and `null` as well
+    /// for a reader who is not on the team: the avatar is served to its
+    /// members only.
+    pub avatar_version: Option<Uuid>,
+}
+
+impl TeamSummary {
+    pub fn from_model(team: &teams::Model) -> Self {
+        Self {
+            id: team.id,
+            slug: team.slug.clone(),
+            name: team.name.clone(),
+            color: team.color.parse().unwrap_or_default(),
+            avatar_version: team.avatar_version,
         }
     }
 }

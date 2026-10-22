@@ -1397,6 +1397,11 @@ export interface components {
             /** Format: uuid */
             id: string;
             /**
+             * Format: int64
+             * @description How many members the team has, its Captain included.
+             */
+            member_count: number;
+            /**
              * @description Current user's role in this team, avoids an extra frontend round trip
              *     to know which actions to show.
              */
@@ -1409,6 +1414,24 @@ export interface components {
          * @enum {string}
          */
         TeamRole: "captain" | "admin" | "member" | "viewer";
+        /**
+         * @description A team as another resource names it: enough to show its name and
+         *     monogram, nothing about its members.
+         */
+        TeamSummary: {
+            /**
+             * Format: uuid
+             * @description Same contract as `TeamResponse.avatar_version`, and `null` as well
+             *     for a reader who is not on the team: the avatar is served to its
+             *     members only.
+             */
+            avatar_version?: string | null;
+            color: components["schemas"]["AccentColor"];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
+        };
         TestEmailRequest: {
             to: string;
         };
@@ -1460,13 +1483,28 @@ export interface components {
              */
             starts_at?: string | null;
         };
+        /**
+         * @description The account holding the session, as the auth routes return it: only ever
+         *     built from the caller's own row, never from another account.
+         */
         UserResponse: {
+            /**
+             * Format: uuid
+             * @description `null` when the account has no avatar. Same contract as
+             *     `TeamResponse.avatar_version`, under
+             *     `/api/v1/avatars/users/{id}/{avatar_version}/256.webp`.
+             */
+            avatar_version?: string | null;
             /** Format: date-time */
             created_at: string;
             email: string;
             email_verified: boolean;
+            /** @description `null` until the account sets one. */
+            first_name?: string | null;
             /** Format: uuid */
             id: string;
+            /** @description `null` until the account sets one. */
+            last_name?: string | null;
             username: string;
         };
         /** @description The administrator half of `SetupRequest`, checked on its own. */
@@ -1590,10 +1628,17 @@ export interface components {
             /** Format: uuid */
             id: string;
             mode: components["schemas"]["WorkspaceMode"];
+            /**
+             * @description The caller's access, resolved as every route resolves it: an override
+             *     set on this workspace wins over the team role.
+             */
+            my_role: components["schemas"]["Membership"];
             name: string;
+            platform?: components["schemas"]["Platform"] | null;
             slug: string;
             /** Format: date-time */
             starts_at?: string | null;
+            team?: components["schemas"]["TeamSummary"] | null;
             type: components["schemas"]["WorkspaceType"];
         };
         /** @enum {string} */

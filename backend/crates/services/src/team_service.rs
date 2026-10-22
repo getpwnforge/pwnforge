@@ -164,7 +164,8 @@ pub async fn create_team(
 
     txn.commit().await?;
 
-    Ok(TeamResponse::from_model(team, TeamRole::Captain))
+    // The founding Captain, inserted above, is its only member.
+    Ok(TeamResponse::from_model(team, TeamRole::Captain, 1))
 }
 
 pub async fn get_team_by_slug(
@@ -259,17 +260,56 @@ pub async fn list_teams_for_user(
         .all(db)
         .await?;
 
+    let counts = member_counts(db, teams.iter().map(|(member, _)| member.team_id)).await?;
+
     Ok(teams
         .into_iter()
         .filter_map(|(member, team)| {
             team.map(|team| {
+                let count = counts.get(&team.id).copied().unwrap_or_default();
                 TeamResponse::from_model(
                     team,
                     TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer),
+                    count,
                 )
             })
         })
         .collect())
+}
+
+/// How many members each of `team_ids` has, in one query whatever their
+/// number. A team with no member row is absent from the map.
+pub async fn member_counts<C: ConnectionTrait>(
+    db: &C,
+    team_ids: impl IntoIterator<Item = Uuid>,
+) -> Result<HashMap<Uuid, u64>, TeamError> {
+    let team_ids: Vec<Uuid> = team_ids.into_iter().collect();
+    if team_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let counts: Vec<(Uuid, i64)> = team_members::Entity::find()
+        .select_only()
+        .column(team_members::Column::TeamId)
+        .column_as(team_members::Column::UserId.count(), "members")
+        .filter(team_members::Column::TeamId.is_in(team_ids))
+        .group_by(team_members::Column::TeamId)
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    Ok(counts
+        .into_iter()
+        .map(|(team_id, count)| (team_id, u64::try_from(count).unwrap_or_default()))
+        .collect())
+}
+
+/// How many members `team_id` has.
+pub async fn member_count<C: ConnectionTrait>(db: &C, team_id: Uuid) -> Result<u64, TeamError> {
+    Ok(team_members::Entity::find()
+        .filter(team_members::Column::TeamId.eq(team_id))
+        .count(db)
+        .await?)
 }
 
 pub async fn update_team(
@@ -1364,10 +1404,11 @@ async fn join_by(
         .one(&txn)
         .await?
         .ok_or(TeamError::TeamNotFound)?;
+    let count = member_count(&txn, team.id).await?;
 
     txn.commit().await?;
 
-    Ok(TeamResponse::from_model(team, role))
+    Ok(TeamResponse::from_model(team, role, count))
 }
 
 /// Acceptance by token (`POST /teams/join`): a generic link, or the link of

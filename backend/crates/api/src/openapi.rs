@@ -134,6 +134,7 @@ impl Modify for SecurityAddon {
         domain::dto::team::CreateTeamRequest,
         domain::dto::team::TeamPatch,
         domain::dto::team::TeamResponse,
+        domain::dto::team::TeamSummary,
         domain::dto::team::TeamMemberResponse,
         domain::dto::team::ChangeMemberRoleRequest,
         domain::dto::team::TransferCaptaincyRequest,

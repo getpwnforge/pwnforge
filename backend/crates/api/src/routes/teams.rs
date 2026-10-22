@@ -113,8 +113,9 @@ async fn get_team(
     Path(slug): Path<String>,
 ) -> Result<Json<TeamResponse>, AppError> {
     let (team, my_role) = team_service::get_team_for_member(&state.db, &slug, user.id).await?;
+    let count = team_service::member_count(&state.db, team.id).await?;
 
-    Ok(Json(TeamResponse::from_model(team, my_role)))
+    Ok(Json(TeamResponse::from_model(team, my_role, count)))
 }
 
 #[utoipa::path(
@@ -144,8 +145,9 @@ async fn update_team(
     team_service::require_role(my_role, TeamRole::Admin)?;
 
     let updated = team_service::update_team(&state.db, team.id, patch).await?;
+    let count = team_service::member_count(&state.db, updated.id).await?;
 
-    Ok(Json(TeamResponse::from_model(updated, my_role)))
+    Ok(Json(TeamResponse::from_model(updated, my_role, count)))
 }
 
 #[utoipa::path(
@@ -566,6 +568,8 @@ mod tests {
     use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
     use serde_json::json;
     use services::storage_service::AvatarKind;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
 
     async fn slug_of(db: &DatabaseConnection, team_id: Uuid) -> String {
@@ -1728,5 +1732,154 @@ mod tests {
             .await
             .expect("the lookup must succeed");
         assert!(written.is_empty(), "no invitation is written");
+    }
+
+    /// `member_count` as GET /teams/{slug} and GET /teams both give it.
+    async fn counts(
+        app: &axum::Router,
+        db: &DatabaseConnection,
+        team_id: Uuid,
+        caller: Uuid,
+    ) -> (serde_json::Value, serde_json::Value) {
+        let (status, team) = request_as(
+            app,
+            "GET",
+            &format!("/api/v1/teams/{}", slug_of(db, team_id).await),
+            Some(caller),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, teams) = request_as(app, "GET", "/api/v1/teams", Some(caller), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let listed = teams
+            .as_array()
+            .expect("a list")
+            .iter()
+            .find(|t| t["id"] == team_id.to_string())
+            .expect("the team is listed")["member_count"]
+            .clone();
+        (team["member_count"].clone(), listed)
+    }
+
+    /// The count is the team's members, its Captain included, from its
+    /// creation on, and follows every arrival and departure.
+    #[tokio::test]
+    async fn the_member_count_follows_arrivals_and_departures() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+
+        let (status, created) = request_as(
+            &app,
+            "POST",
+            "/api/v1/teams",
+            Some(captain),
+            Some(json!({ "name": "Counted", "color": "teal" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["member_count"], 1);
+        let team_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+        assert_eq!(
+            counts(&app, &db, team_id, captain).await,
+            (json!(1), json!(1))
+        );
+
+        let member = create_user(&db).await;
+        add_team_member(&db, team_id, member, TeamRole::Member).await;
+        assert_eq!(
+            counts(&app, &db, team_id, captain).await,
+            (json!(2), json!(2))
+        );
+
+        let (status, link) = invite(
+            &app,
+            &db,
+            team_id,
+            captain,
+            json!({ "default_role": "viewer" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{link}");
+        let joiner = create_user(&db).await;
+        let (status, joined) = post(
+            &app,
+            "/api/v1/teams/join",
+            joiner,
+            Some(json!({ "token": link["token"] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{joined}");
+        assert_eq!(
+            joined["member_count"], 3,
+            "the joiner counted in the answer"
+        );
+        assert_eq!(
+            counts(&app, &db, team_id, member).await,
+            (json!(3), json!(3))
+        );
+
+        let (status, _) = request_as(
+            &app,
+            "DELETE",
+            &format!(
+                "/api/v1/teams/{}/members/{member}",
+                slug_of(&db, team_id).await
+            ),
+            Some(member),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "the member leaves");
+        assert_eq!(
+            counts(&app, &db, team_id, captain).await,
+            (json!(2), json!(2))
+        );
+
+        let (status, renamed) = request_as(
+            &app,
+            "PATCH",
+            &format!("/api/v1/teams/{}", slug_of(&db, team_id).await),
+            Some(captain),
+            Some(json!({ "name": "Recounted" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{renamed}");
+        assert_eq!(renamed["member_count"], 2);
+    }
+
+    /// GET /teams costs two queries, the teams and their counts, for one
+    /// team as for four of different sizes.
+    #[tokio::test]
+    async fn the_team_list_costs_a_fixed_number_of_queries() {
+        let db = db().await;
+        let user = create_user(&db).await;
+        let queries = Arc::new(AtomicUsize::new(0));
+        let mut metered = crate::test_support::another_connection().await;
+        let counter = queries.clone();
+        metered.set_metric_callback(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let mut costs = Vec::new();
+        for size in 0..4 {
+            let (team_id, _) =
+                team_with(&db, create_user(&db).await, &vec![TeamRole::Member; size]).await;
+            add_team_member(&db, team_id, user, TeamRole::Viewer).await;
+
+            queries.store(0, Ordering::SeqCst);
+            let listed = services::team_service::list_teams_for_user(&metered, user)
+                .await
+                .expect("the list must load");
+            costs.push(queries.load(Ordering::SeqCst));
+
+            let entry = listed.iter().find(|t| t.id == team_id).expect("listed");
+            // The Captain, `size` members, and the user.
+            assert_eq!(entry.member_count, size as u64 + 2);
+        }
+
+        assert!(costs.iter().all(|cost| *cost == costs[0]), "{costs:?}");
+        assert_eq!(costs[0], 2, "{costs:?}");
     }
 }

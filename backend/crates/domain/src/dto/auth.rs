@@ -75,10 +75,20 @@ pub struct RegisterRequest {
     pub turnstile_token: String,
 }
 
+/// The account holding the session, as the auth routes return it: only ever
+/// built from the caller's own row, never from another account.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
+    /// `null` until the account sets one.
+    pub first_name: Option<String>,
+    /// `null` until the account sets one.
+    pub last_name: Option<String>,
+    /// `null` when the account has no avatar. Same contract as
+    /// `TeamResponse.avatar_version`, under
+    /// `/api/v1/avatars/users/{id}/{avatar_version}/256.webp`.
+    pub avatar_version: Option<Uuid>,
     pub email: String,
     pub email_verified: bool,
     #[schema(value_type = String, format = DateTime)]
@@ -105,6 +115,9 @@ impl UserResponse {
         Self {
             id: user.id,
             username: user.username,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            avatar_version: user.avatar_version,
             email: email.email,
             email_verified: email.verified_at.is_some(),
             created_at: user.created_at.into(),

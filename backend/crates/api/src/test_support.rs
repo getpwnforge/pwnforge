@@ -65,6 +65,29 @@ pub(crate) async fn avatar_stored(kind: AvatarKind, id: Uuid, version: Uuid) -> 
     }
 }
 
+/// What GET /avatars answers `user` for the large rendition of `version`:
+/// whether an avatar an answer announced is one they can load.
+pub(crate) async fn avatar_status(
+    app: &axum::Router,
+    user: Uuid,
+    kind: &str,
+    id: Uuid,
+    version: Uuid,
+) -> StatusCode {
+    let request = Request::builder()
+        .method("GET")
+        .uri(format!("/api/v1/avatars/{kind}/{id}/{version}/256.webp"))
+        .header("cookie", cookie_for(user))
+        .body(Body::empty())
+        .expect("request must build");
+
+    app.clone()
+        .oneshot(request)
+        .await
+        .expect("router must answer")
+        .status()
+}
+
 pub(crate) fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_owned())
 }
@@ -155,6 +178,20 @@ pub(crate) async fn db() -> sea_orm::DatabaseConnection {
     migrated.expect("migrations must apply");
 
     db
+}
+
+/// Another connection to the database `db()` migrated, for a test that needs
+/// one of its own, to meter its queries for one. Not `db()` again: the
+/// migration lock can still be held by an idle connection of the test's
+/// first pool, since the lock and the unlock may run on different pooled
+/// connections, and a second `db()` would then wait on it for good.
+pub(crate) async fn another_connection() -> sea_orm::DatabaseConnection {
+    Database::connect(env_or(
+        "DATABASE_URL",
+        "postgresql://pwnforge:changeme@127.0.0.1:5432/pwnforge",
+    ))
+    .await
+    .expect("a Postgres instance must be reachable")
 }
 
 /// The key travels as a bound parameter, never spliced into the SQL text.

@@ -593,7 +593,9 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::test_support::{app, app_with_config, config, cookie_for, db, env_or, unique};
+    use crate::test_support::{
+        app, app_with_config, config, cookie_for, db, env_or, request_as, unique,
+    };
 
     const PASSWORD: &str = "a-long-test-password-1!";
 
@@ -933,6 +935,63 @@ mod tests {
         assert_eq!(body["error"], "rate_limited");
         assert!(headers.contains_key(header::RETRY_AFTER));
         let _: () = redis.del(identifier_key(&username)).await.expect("DEL");
+    }
+
+    /// GET /auth/me and the login answer carry the account's own names and
+    /// avatar version, `null` until set, and never another account's.
+    #[tokio::test]
+    async fn the_session_answers_carry_the_callers_own_profile() {
+        let db = db().await;
+        let app = app(&db).await;
+        let (named, username, _) = account(&db, true).await;
+        let (blank, _, _) = account(&db, true).await;
+        let avatar = Uuid::now_v7();
+        users::ActiveModel {
+            id: Set(named),
+            first_name: Set(Some("Ada".to_owned())),
+            last_name: Set(Some("Lovelace".to_owned())),
+            avatar_version: Set(Some(avatar)),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .expect("the profile must be set");
+        let profile = |body: &Value| {
+            json!({
+                "id": body["id"],
+                "first_name": body["first_name"],
+                "last_name": body["last_name"],
+                "avatar_version": body["avatar_version"],
+            })
+        };
+
+        let (status, me) = request_as(&app, "GET", "/api/v1/auth/me", Some(named), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            profile(&me),
+            json!({ "id": named, "first_name": "Ada", "last_name": "Lovelace", "avatar_version": avatar })
+        );
+
+        let (status, me) = request_as(&app, "GET", "/api/v1/auth/me", Some(blank), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            profile(&me),
+            json!({ "id": blank, "first_name": null, "last_name": null, "avatar_version": null })
+        );
+
+        let (status, _, logged_in) = post(
+            &app,
+            "/api/v1/auth/login",
+            login_body(&username, PASSWORD, ""),
+            fresh_ip(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{logged_in}");
+        assert_eq!(
+            profile(&logged_in),
+            json!({ "id": named, "first_name": "Ada", "last_name": "Lovelace", "avatar_version": avatar })
+        );
     }
 
     /// The IP window comes before anything else, Turnstile included.
