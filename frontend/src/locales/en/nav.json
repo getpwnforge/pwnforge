@@ -31,9 +31,16 @@
   "myTeams": "My teams",
   "noWorkspaceOpen": "No workspace open",
   "switchWorkspace": "Switch workspace",
-  "workspacesTypes": {
+  "workspaceModes": {
     "team": "Team",
     "solo": "Solo"
+  },
+  "platforms": {
+    "htb": "HackTheBox",
+    "thm": "TryHackMe",
+    "root_me": "Root-Me",
+    "ctftime": "CTFtime",
+    "other": "Other"
   },
   "notifications": {
     "title": "Notifications",

@@ -79,7 +79,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarRail, SidebarTrigger } from "../ui/sidebar";
 import { useSidebar } from "../ui/sidebar-context";
-import type { WsColor } from "@/lib/ws-color";
+import type { WorkspaceSummary } from "@/lib/api/types";
 
 
 function workspaceNav(id: string): NavItem[] {
@@ -101,6 +101,9 @@ const GLOBAL_NAV: NavItem[] = [
 ];
 
 const systemTags = new Set(["web", "crypto", "pwn", "reverse", "forensics", "misc"])
+
+// No route lists a workspace's tags yet.
+const activeTags: string[] = []
 
 type NavItem = {
   key: string
@@ -396,7 +399,7 @@ function WorkspaceTrigger({
   workspace,
   isLoading,
 }: Readonly<{
-  workspace: { name: string; type: string; platform?: string; color?: WsColor } | null;
+  workspace: WorkspaceSummary | null;
   isLoading: boolean;
 }>) {
   const { t } = useTranslation("nav");
@@ -425,7 +428,8 @@ function WorkspaceTrigger({
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-text">{workspace.name}</div>
         <div className="truncate text-xs text-muted-foreground">
-          {t(`workspacesTypes.${workspace.type}`)} · {workspace.platform}
+          {t(`workspaceModes.${workspace.mode}`)}
+          {workspace.platform ? ` · ${t(`platforms.${workspace.platform}`)}` : null}
         </div>
       </div>
     </>
@@ -441,13 +445,13 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
 
   const currentId = useWorkspaceId()
   const currentWorkspace = currentId
-    ? (workspaces.find((w: { id: string }) => w.id === currentId) ?? null)
+    ? (workspaces.find((w) => w.slug === currentId) ?? null)
     : null
 
 
-  function selectWorkspace(id: string) {
+  function selectWorkspace(slug: string) {
     setOpen(false)
-    navigate(`/w/${id}`)
+    navigate(ROUTES.workspace(slug))
   }
 
   const commandList = (
@@ -463,21 +467,22 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
             <CommandEmpty>{t("search.noResults")}</CommandEmpty>
             {workspaces.length > 0 && (
               <CommandGroup heading={t("search.recent")}>
-                {workspaces.map((w: { id: string; name: string; platform?: string; type: string; color?: "ember" | "blue" | "violet" | "teal" | "rose" | "amber" }) => (
+                {workspaces.map((w) => (
                   <CommandItem
                     key={w.id}
-                    value={`${w.name} ${w.platform} ${w.type}`}
-                    onSelect={() => selectWorkspace(w.id)}
+                    value={`${w.name} ${w.slug}`}
+                    onSelect={() => selectWorkspace(w.slug)}
                     className="gap-2.5"
                   >
                     <WsIcon name={w.name} color={w.color} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm">{w.name}</div>
                       <div className="truncate text-xs text-muted-foreground">
-                        {t(`workspacesTypes.${w.type}`)} · {w.platform}
+                        {t(`workspaceModes.${w.mode}`)}
+                        {w.platform ? ` · ${t(`platforms.${w.platform}`)}` : null}
                       </div>
                     </div>
-                    {w.id === currentId && (
+                    {w.slug === currentId && (
                       <Check className="ml-auto size-4 shrink-0 text-primary" />
                     )}
                   </CommandItem>
@@ -611,8 +616,6 @@ function SidebarNav({
 }: Readonly<{ items: NavItem[]; counts?: Record<string, number>; onNavigate?: () => void }>) {
   const { t } = useTranslation('nav')
   const { data: workspaces = [] } = useWorkspaces()
-  const workspaceId = useWorkspaceId()
-  const workspace = workspaces.find((w) => w.id === workspaceId)
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
 
@@ -641,7 +644,7 @@ function SidebarNav({
             {workspaces.map((w) => (
               <SidebarMenuItem key={w.id}>
                 <SidebarMenuButton asChild tooltip={w.name}>
-                  <NavLink to={`/w/${w.id}`} onClick={onNavigate}>
+                  <NavLink to={ROUTES.workspace(w.slug)} onClick={onNavigate}>
                     <WsIcon name={w.name} color={w.color} size="sm" />
                     {!collapsed && <span>{w.name}</span>}
                   </NavLink>
@@ -655,7 +658,7 @@ function SidebarNav({
           <SidebarGroup>
             <SidebarGroupLabel>{t("sections.activeTags")}</SidebarGroupLabel>
             <div className="flex flex-wrap gap-1 px-2">
-              {workspace?.tags?.map((tag) => (
+              {activeTags.map((tag) => (
                 <Tag key={tag} variant={systemTags.has(tag) ? "system" : "custom"} className="text-xs">{tag}</Tag>
               ))}
             </div>
