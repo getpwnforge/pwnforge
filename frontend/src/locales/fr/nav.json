@@ -25,12 +25,16 @@
   "search": {
     "placeholder": "Rechercher...",
     "noResults": "Aucun résultat.",
-    "recent": "Workspaces récents"
+    "recent": "Workspaces récents",
+    "suggestions": "Suggestions"
   },
+  "palette": { "workspaces": "Workspaces", "teams": "Équipes" },
   "allWorkspaces": "Tous les workspaces",
   "myTeams": "Mes équipes",
   "noWorkspaceOpen": "Aucun workspace ouvert",
   "switchWorkspace": "Changer de workspace",
+  "breadcrumb": "Fil d'Ariane",
+  "breadcrumbMore": "Afficher les niveaux masqués",
   "workspaceModes": {
     "team": "Équipe",
     "solo": "Solo"
@@ -51,9 +55,18 @@
   },
   "userMenu": {
     "profile": "Mon profil",
+    "open": "Menu utilisateur",
     "stats": "Mes stats",
     "settings": "Paramètres",
     "help": "Aide & support",
     "logout": "Se déconnecter"
+  },
+  "invitations": {
+    "open_one": "{{count}} invitation en attente",
+    "open_other": "{{count}} invitations en attente",
+    "none": "Aucune invitation en attente",
+    "team": "Invitation d'équipe",
+    "workspace": "Invitation à un workspace",
+    "seeAll": "Voir toutes les invitations"
   }
 }

@@ -25,12 +25,16 @@
   "search": {
     "placeholder": "Search...",
     "noResults": "No results found.",
-    "recent": "Recent workspaces"
+    "recent": "Recent workspaces",
+    "suggestions": "Suggestions"
   },
+  "palette": { "workspaces": "Workspaces", "teams": "Teams" },
   "allWorkspaces": "All workspaces",
   "myTeams": "My teams",
   "noWorkspaceOpen": "No workspace open",
   "switchWorkspace": "Switch workspace",
+  "breadcrumb": "Breadcrumb",
+  "breadcrumbMore": "Show hidden levels",
   "workspaceModes": {
     "team": "Team",
     "solo": "Solo"
@@ -51,9 +55,18 @@
   },
   "userMenu":{
     "profile": "My profile",
+    "open": "User menu",
     "stats": "My stats",
     "settings": "Settings",
     "help": "Help & support",
     "logout": "Log out"
+  },
+  "invitations": {
+    "open_one": "{{count}} pending invitation",
+    "open_other": "{{count}} pending invitations",
+    "none": "No pending invitation",
+    "team": "Team invitation",
+    "workspace": "Workspace invitation",
+    "seeAll": "See all invitations"
   }
 }
