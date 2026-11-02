@@ -1,6 +1,7 @@
 // src/lib/permissions.ts
 import type {
   Membership,
+  TeamResponse,
   TeamRole,
   WorkspaceRole,
   WorkspaceSummary,
@@ -82,11 +83,14 @@ export function canTransferCaptaincy(myRole: TeamRole): boolean {
 }
 
 /**
- * `workspace_service::create_workspace`, `MIN_ROLE_TO_CREATE_WORKSPACE`:
- * Admin on the team. A solo workspace is anyone's to create.
+ * `workspace_service::create_workspace`, `min_role_to_create_workspace`:
+ * Admin on the team, or Member when the team's `members_can_create_workspaces`
+ * is on. Never a Viewer. A solo workspace is anyone's to create.
  */
-export function canCreateTeamWorkspace(teamRole: TeamRole): boolean {
-  return atLeast(teamRole, "admin");
+export function canCreateTeamWorkspace(
+  team: Pick<TeamResponse, "my_role" | "members_can_create_workspaces">,
+): boolean {
+  return atLeast(team.my_role, team.members_can_create_workspaces ? "member" : "admin");
 }
 
 // ---- Workspaces -------------------------------------------------------------

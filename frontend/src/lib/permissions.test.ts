@@ -45,8 +45,19 @@ describe("the team helpers", () => {
     expect(canTransferCaptaincy(role)).toBe(transfer);
   });
 
-  it("only an Admin or the Captain creates a team workspace", () => {
-    expect(ROLES.filter(canCreateTeamWorkspace)).toEqual(["captain", "admin"]);
+  // creating_a_team_workspace_needs_admin_and_hides_foreign_teams,
+  // a_member_{cannot_create,creates}_a_team_workspace_when_the_team_*,
+  // a_viewer_cannot_create_a_team_workspace_even_when_the_team_allows_it.
+  it.each([
+    ["captain", false, true],
+    ["admin", false, true],
+    ["admin", true, true],
+    ["member", false, false],
+    ["member", true, true],
+    ["viewer", false, false],
+    ["viewer", true, false],
+  ] as const)("%s creating a team workspace (members allowed: %s): %s", (role, allowed, expected) => {
+    expect(canCreateTeamWorkspace({ my_role: role, members_can_create_workspaces: allowed })).toBe(expected);
   });
 
   it("everyone but the Captain may leave", () => {
