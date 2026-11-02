@@ -1436,6 +1436,18 @@ export interface components {
         };
         TeamPatch: {
             color?: components["schemas"]["AccentColor"] | null;
+            /**
+             * @description Absent leaves it unchanged, null clears it, a string sets it. Trimmed,
+             *     and a string empty once trimmed clears it too. At most 500 characters
+             *     once trimmed.
+             */
+            description?: string | null;
+            /**
+             * @description Whether a Member may create workspaces under the team. An Admin and
+             *     the Captain always may, a Viewer never does. Turning it off leaves the
+             *     workspaces already created as they are.
+             */
+            members_can_create_workspaces?: boolean | null;
             name?: string | null;
         };
         TeamResponse: {
@@ -1449,6 +1461,8 @@ export interface components {
             color: components["schemas"]["AccentColor"];
             /** Format: date-time */
             created_at: string;
+            /** @description `null` when the team has none. */
+            description?: string | null;
             /** Format: uuid */
             id: string;
             /**
@@ -1456,6 +1470,11 @@ export interface components {
              * @description How many members the team has, its Captain included.
              */
             member_count: number;
+            /**
+             * @description Whether a Member may create workspaces under the team, besides the
+             *     Admins and the Captain, who always may.
+             */
+            members_can_create_workspaces: boolean;
             /**
              * @description Current user's role in this team, avoids an extra frontend round trip
              *     to know which actions to show.
@@ -3554,7 +3573,7 @@ export interface operations {
                     "application/json": components["schemas"]["SimpleErrorResponse"];
                 };
             };
-            /** @description Insufficient role */
+            /** @description insufficient_role: below Admin, whichever field is sent, members_can_create_workspaces included */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -3581,7 +3600,7 @@ export interface operations {
                     "application/json": components["schemas"]["SimpleErrorResponse"];
                 };
             };
-            /** @description validation_failed or invalid_body */
+            /** @description validation_failed (fields.name, or fields.description beyond 500 characters once trimmed) or invalid_body */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4111,7 +4130,7 @@ export interface operations {
                     "application/json": components["schemas"]["SimpleErrorResponse"];
                 };
             };
-            /** @description Team member below Admin */
+            /** @description insufficient_role: a team member below Admin, or below Member when the team's members_can_create_workspaces is on. A Viewer is refused either way */
             403: {
                 headers: {
                     [name: string]: unknown;

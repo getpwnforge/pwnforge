@@ -24,3 +24,24 @@ where
 {
     Deserialize::deserialize(deserializer).map(Some)
 }
+
+/// `deserialize_some` for nullable text that is trimmed on the way in: a
+/// string that is empty once trimmed reads as `null`, so it clears the field
+/// rather than storing blank text.
+///
+/// Trimmed here rather than in the service so that `validate()` measures what
+/// will be stored, and a length bound on the field means the same thing as
+/// the database check behind it.
+///
+/// Usage: `#[serde(default, deserialize_with = "deserialize_some_trimmed")]
+/// pub field: Option<Option<String>>`.
+pub fn deserialize_some_trimmed<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text: Option<String> = Deserialize::deserialize(deserializer)?;
+    Ok(Some(text.and_then(|text| {
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    })))
+}

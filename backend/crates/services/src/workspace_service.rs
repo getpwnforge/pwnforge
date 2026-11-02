@@ -87,10 +87,20 @@ pub enum WorkspaceError {
     PlatformRequired,
 }
 
-/// Minimum team role required to create a workspace under that team.
-/// Arbitrary threshold, easy to revisit: swap this constant if Member should
-/// also be allowed to create workspaces.
-const MIN_ROLE_TO_CREATE_WORKSPACE: TeamRole = TeamRole::Admin;
+/// Minimum team role required to create a workspace under `team`: Admin, or
+/// Member when the team lets its members create workspaces. A Viewer never
+/// can, whatever the setting.
+///
+/// The creator gets nothing beyond their team role: no override is written,
+/// so a Member who creates a workspace is a Member on it, and turning the
+/// setting off later leaves the workspace as it is.
+fn min_role_to_create_workspace(team: &teams::Model) -> TeamRole {
+    if team.members_can_create_workspaces {
+        TeamRole::Member
+    } else {
+        TeamRole::Admin
+    }
+}
 
 /// Creates a workspace, either solo (owned directly by `actor_id`) or under
 /// a team, and returns the persisted row with the creator's access to it.
@@ -121,7 +131,14 @@ pub async fn create_workspace(
         let role = team_service::get_user_role_in_team(db, team_id, actor_id)
             .await?
             .ok_or(team_service::TeamError::TeamNotFound)?;
-        team_service::require_role(role, MIN_ROLE_TO_CREATE_WORKSPACE)?;
+        // Read without a lock, as the role above: a creation racing with the
+        // setting being turned off lands as one made just before it, which
+        // turning it off leaves in place anyway.
+        let team = teams::Entity::find_by_id(team_id)
+            .one(db)
+            .await?
+            .ok_or(team_service::TeamError::TeamNotFound)?;
+        team_service::require_role(role, min_role_to_create_workspace(&team))?;
     }
 
     let slug = slug_service::generate_unique_slug(&input.name, move |candidate| async move {

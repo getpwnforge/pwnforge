@@ -2,6 +2,7 @@
 
 use crate::dto::invitation::InvitationTarget;
 use crate::entities::teams;
+use crate::serde_helpers::deserialize_some_trimmed;
 use crate::types::AccentColor;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,6 +82,20 @@ pub struct TeamPatch {
     #[validate(length(min = 1, max = 60))]
     pub name: Option<String>,
     pub color: Option<AccentColor>,
+    /// Absent leaves it unchanged, null clears it, a string sets it. Trimmed,
+    /// and a string empty once trimmed clears it too. At most 500 characters
+    /// once trimmed.
+    // Same double Option and `value_type` as `UpdateWorkspaceInput.description`.
+    // Trimmed at deserialization, so the bound measures what is stored, as
+    // `ck_teams_description_length` does: both count characters.
+    #[serde(default, deserialize_with = "deserialize_some_trimmed")]
+    #[schema(value_type = Option<String>)]
+    #[validate(length(max = 500))]
+    pub description: Option<Option<String>>,
+    /// Whether a Member may create workspaces under the team. An Admin and
+    /// the Captain always may, a Viewer never does. Turning it off leaves the
+    /// workspaces already created as they are.
+    pub members_can_create_workspaces: Option<bool>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -88,6 +103,8 @@ pub struct TeamResponse {
     pub id: Uuid,
     pub slug: String,
     pub name: String,
+    /// `null` when the team has none.
+    pub description: Option<String>,
     pub color: AccentColor,
     /// `null` when the team has no avatar. Otherwise the cache-busting version
     /// the client puts in the avatar URL, which it builds from the id:
@@ -97,6 +114,9 @@ pub struct TeamResponse {
     // an object in the bucket.
     pub avatar_version: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    /// Whether a Member may create workspaces under the team, besides the
+    /// Admins and the Captain, who always may.
+    pub members_can_create_workspaces: bool,
     /// Current user's role in this team, avoids an extra frontend round trip
     /// to know which actions to show.
     pub my_role: TeamRole,
@@ -116,9 +136,11 @@ impl TeamResponse {
             id: team.id,
             slug: team.slug,
             name: team.name,
+            description: team.description,
             color: team.color.parse().unwrap_or_default(),
             avatar_version: team.avatar_version,
             created_at: team.created_at.into(),
+            members_can_create_workspaces: team.members_can_create_workspaces,
             my_role,
             member_count,
         }
@@ -389,6 +411,30 @@ mod tests {
         };
 
         assert!(parsed.validate().is_err());
+    }
+
+    /// The description's three states on a PATCH, trimmed on the way in:
+    /// blank reads as null, and the bound measures the trimmed text, which is
+    /// what `ck_teams_description_length` measures once stored.
+    #[test]
+    fn team_patch_trims_the_description_and_bounds_what_is_stored() {
+        let parse = |body: &str| serde_json::from_str::<TeamPatch>(body).unwrap();
+
+        assert_eq!(parse("{}").description, None);
+        assert_eq!(parse(r#"{"description":null}"#).description, Some(None));
+        assert_eq!(parse(r#"{"description":" \n\t "}"#).description, Some(None));
+        assert_eq!(
+            parse(r#"{"description":"  Red team  "}"#).description,
+            Some(Some("Red team".to_owned()))
+        );
+
+        let padded = parse(&format!(r#"{{"description":"  {}  "}}"#, "a".repeat(500)));
+        assert!(
+            padded.validate().is_ok(),
+            "500 characters once trimmed is the ceiling, not past it"
+        );
+        let too_long = parse(&format!(r#"{{"description":"{}"}}"#, "a".repeat(501)));
+        assert!(too_long.validate().is_err());
     }
 
     fn invitation(username: Option<&str>, email: Option<&str>) -> CreateInvitationRequest {

@@ -127,10 +127,10 @@ async fn get_team(
     responses(
         (status = 200, description = "Team updated", body = TeamResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
-        (status = 403, description = "Insufficient role", body = SimpleErrorResponse),
+        (status = 403, description = "insufficient_role: below Admin, whichever field is sent, members_can_create_workspaces included", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed or invalid_body", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed (fields.name, or fields.description beyond 500 characters once trimmed) or invalid_body", body = UnprocessableErrorResponse),
     )
 )]
 async fn update_team(
@@ -884,6 +884,104 @@ mod tests {
 
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "captain_must_transfer");
+    }
+
+    /// The two settings as stored.
+    async fn settings_of(db: &DatabaseConnection, team_id: Uuid) -> (Option<String>, bool) {
+        let team = teams::Entity::find_by_id(team_id)
+            .one(db)
+            .await
+            .expect("the lookup must succeed")
+            .expect("the team must exist");
+        (team.description, team.members_can_create_workspaces)
+    }
+
+    /// An Admin sets the description trimmed, clears it with null or with a
+    /// blank string, and is refused past 500 characters with the field named
+    /// and the stored value left alone.
+    #[tokio::test]
+    async fn patching_the_description_sets_clears_and_bounds_it() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) = team_with(&db, captain, &[TeamRole::Admin]).await;
+        let uri = format!("/api/v1/teams/{}", slug_of(&db, team_id).await);
+        let patch = |description: serde_json::Value| {
+            request_as(
+                &app,
+                "PATCH",
+                &uri,
+                Some(members[0]),
+                Some(json!({ "description": description })),
+            )
+        };
+
+        let (status, body) = patch(json!("  Red team, Thursdays  ")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["description"], "Red team, Thursdays");
+        assert_eq!(
+            settings_of(&db, team_id).await.0.as_deref(),
+            Some("Red team, Thursdays")
+        );
+
+        let (status, body) = patch(json!(null)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["description"], json!(null));
+        assert_eq!(settings_of(&db, team_id).await.0, None);
+
+        assert_eq!(patch(json!("Red team")).await.0, StatusCode::OK);
+        let (status, body) = patch(json!("")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["description"], json!(null));
+        assert_eq!(
+            settings_of(&db, team_id).await.0,
+            None,
+            "an empty string is stored as NULL, not as blank text"
+        );
+
+        assert_eq!(patch(json!("Red team")).await.0, StatusCode::OK);
+        let (status, body) = patch(json!("a".repeat(501))).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["error"], "validation_failed");
+        assert!(
+            body["fields"]["description"].is_array(),
+            "the refusal must name the field, got {body}"
+        );
+        assert_eq!(
+            settings_of(&db, team_id).await.0.as_deref(),
+            Some("Red team")
+        );
+    }
+
+    /// Who may create workspaces is changed like the rest of the team: an
+    /// Admin at least. A Member knows the team and gets a 403, someone
+    /// outside it a 404, and the setting stays off for both.
+    #[tokio::test]
+    async fn only_an_admin_changes_whether_members_create_workspaces() {
+        let db = db().await;
+        let app = app(&db).await;
+        let captain = create_user(&db).await;
+        let (team_id, members) =
+            team_with(&db, captain, &[TeamRole::Admin, TeamRole::Member]).await;
+        let outsider = create_user(&db).await;
+        let uri = format!("/api/v1/teams/{}", slug_of(&db, team_id).await);
+        let body = Some(json!({ "members_can_create_workspaces": true }));
+
+        let (status, answer) =
+            request_as(&app, "PATCH", &uri, Some(members[1]), body.clone()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(answer["error"], "insufficient_role");
+
+        let (status, answer) = request_as(&app, "PATCH", &uri, Some(outsider), body.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(answer["error"], "team_not_found");
+
+        assert!(!settings_of(&db, team_id).await.1, "nothing changed yet");
+
+        let (status, answer) = request_as(&app, "PATCH", &uri, Some(members[0]), body).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer["members_can_create_workspaces"], true);
+        assert!(settings_of(&db, team_id).await.1);
     }
 
     /// Deleting a team takes its avatar out of the bucket, and those of every

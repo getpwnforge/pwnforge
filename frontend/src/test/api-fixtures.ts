@@ -18,6 +18,8 @@ export function teamResponse(overrides: Partial<TeamResponse> = {}): TeamRespons
     created_at: "2026-10-01T10:00:00Z",
     my_role: "captain",
     member_count: 3,
+    description: null,
+    members_can_create_workspaces: false,
     ...overrides,
   };
 }

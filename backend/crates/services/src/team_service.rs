@@ -330,6 +330,15 @@ pub async fn update_team(
     if let Some(color) = patch.color {
         team_am.color = Set(color.as_str().to_string());
     }
+    // Absent keeps the stored value, null clears it, a value replaces it.
+    // Already trimmed, blank already null (see `TeamPatch::description`).
+    if let Some(description) = patch.description {
+        team_am.description = Set(description);
+    }
+    // Only the setting: workspaces a Member created while it was on stay.
+    if let Some(members_can_create_workspaces) = patch.members_can_create_workspaces {
+        team_am.members_can_create_workspaces = Set(members_can_create_workspaces);
+    }
 
     let updated_team = team_am.update(db).await?;
 

@@ -82,7 +82,7 @@ async fn list_workspaces(
         (status = 201, description = "Workspace created", body = WorkspaceResponse),
         (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
-        (status = 403, description = "Team member below Admin", body = SimpleErrorResponse),
+        (status = 403, description = "insufficient_role: a team member below Admin, or below Member when the team's members_can_create_workspaces is on. A Viewer is refused either way", body = SimpleErrorResponse),
         (status = 404, description = "Team not found or not a member", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
         (status = 422, description = "validation_failed, invalid_body, invalid_ownership, platform_required, ends_before_start, workspace_name_not_sluggable or workspace_name_reserved", body = UnprocessableErrorResponse),
@@ -289,8 +289,11 @@ mod tests {
     };
     use axum::http::StatusCode;
     use domain::dto::team::TeamRole;
-    use domain::entities::{teams, workspace_favorites, workspaces};
-    use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+    use domain::entities::{teams, workspace_favorites, workspace_members, workspaces};
+    use sea_orm::{
+        ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait,
+        QueryFilter, Set,
+    };
     use serde_json::{Value, json};
     use services::storage_service::AvatarKind;
     use services::workspace_service;
@@ -587,6 +590,140 @@ mod tests {
         .await;
         assert_eq!(captain, StatusCode::CREATED);
         assert_eq!(created["my_role"], "captain");
+    }
+
+    async fn create_in_team(
+        app: &axum::Router,
+        caller: Uuid,
+        team_id: Uuid,
+    ) -> (StatusCode, Value) {
+        let body = json!({
+            "name": "New Team Workspace",
+            "color": "violet",
+            "type": "event",
+            "mode": "team",
+            "team_id": team_id,
+        });
+        request_as(app, "POST", "/api/v1/workspaces", Some(caller), Some(body)).await
+    }
+
+    /// Sets the team's `members_can_create_workspaces` directly.
+    async fn let_members_create(db: &DatabaseConnection, team_id: Uuid, allowed: bool) {
+        teams::ActiveModel {
+            id: Set(team_id),
+            members_can_create_workspaces: Set(allowed),
+            ..Default::default()
+        }
+        .update(db)
+        .await
+        .expect("the setting must be written");
+    }
+
+    async fn team_workspace_count(db: &DatabaseConnection, team_id: Uuid) -> u64 {
+        workspaces::Entity::find()
+            .filter(workspaces::Column::TeamId.eq(team_id))
+            .count(db)
+            .await
+            .expect("the count must succeed")
+    }
+
+    fn id_of(created: &Value) -> Uuid {
+        created["id"]
+            .as_str()
+            .and_then(|id| id.parse().ok())
+            .expect("the answer must carry the workspace id")
+    }
+
+    /// With the setting off, a Member is refused and nothing is created.
+    #[tokio::test]
+    async fn a_member_cannot_create_a_team_workspace_when_the_team_does_not_allow_it() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let_members_create(&db, f.team_id, false).await;
+
+        let (status, body) = create_in_team(&app, f.member, f.team_id).await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "insufficient_role");
+        assert_eq!(
+            team_workspace_count(&db, f.team_id).await,
+            1,
+            "only the fixture's workspace"
+        );
+    }
+
+    /// With the setting on, a Member creates one and holds their team role on
+    /// it, nothing more: no override is written for the creator.
+    #[tokio::test]
+    async fn a_member_creates_a_team_workspace_when_the_team_allows_it() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let_members_create(&db, f.team_id, true).await;
+
+        let (status, created) = create_in_team(&app, f.member, f.team_id).await;
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(created["my_role"], "member");
+        let row = workspace_members::Entity::find_by_id((id_of(&created), f.member))
+            .one(&db)
+            .await
+            .expect("the lookup must succeed");
+        assert!(row.is_none(), "the creator gets no override");
+    }
+
+    /// A Viewer is refused whatever the setting says.
+    #[tokio::test]
+    async fn a_viewer_cannot_create_a_team_workspace_even_when_the_team_allows_it() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let_members_create(&db, f.team_id, true).await;
+
+        let (status, body) = create_in_team(&app, f.viewer, f.team_id).await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], "insufficient_role");
+        assert_eq!(team_workspace_count(&db, f.team_id).await, 1);
+    }
+
+    /// Turning the setting off touches no workspace created under it: the row
+    /// is as it was and its creator still reaches it as a Member. Only the
+    /// next creation is refused.
+    #[tokio::test]
+    async fn turning_the_setting_off_leaves_the_workspaces_created_under_it() {
+        let db = db().await;
+        let app = app(&db).await;
+        let f = team_fixture(&db).await;
+        let_members_create(&db, f.team_id, true).await;
+        let (status, created) = create_in_team(&app, f.member, f.team_id).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let before = stored(&db, id_of(&created)).await;
+
+        // Through the team route, as an Admin turns it off.
+        let (status, _) = request_as(
+            &app,
+            "PATCH",
+            &format!("/api/v1/teams/{}", team_row(&db, f.team_id).await.slug),
+            Some(f.admin),
+            Some(json!({ "members_can_create_workspaces": false })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        assert_eq!(stored(&db, before.id).await, before);
+        let (status, body) =
+            request_as(&app, "GET", &ws_uri(&before.slug), Some(f.member), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["my_role"], "member");
+
+        let (status, _) = create_in_team(&app, f.member, f.team_id).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "the next creation is refused"
+        );
     }
 
     async fn create_solo(app: &axum::Router, owner: Uuid, body: Value) -> (StatusCode, Value) {

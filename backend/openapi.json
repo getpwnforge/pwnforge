@@ -2223,7 +2223,7 @@
             }
           },
           "403": {
-            "description": "Insufficient role",
+            "description": "insufficient_role: below Admin, whichever field is sent, members_can_create_workspaces included",
             "content": {
               "application/json": {
                 "schema": {
@@ -2253,7 +2253,7 @@
             }
           },
           "422": {
-            "description": "validation_failed or invalid_body",
+            "description": "validation_failed (fields.name, or fields.description beyond 500 characters once trimmed) or invalid_body",
             "content": {
               "application/json": {
                 "schema": {
@@ -2969,7 +2969,7 @@
             }
           },
           "403": {
-            "description": "Team member below Admin",
+            "description": "insufficient_role: a team member below Admin, or below Member when the team's members_can_create_workspaces is on. A Viewer is refused either way",
             "content": {
               "application/json": {
                 "schema": {
@@ -5915,6 +5915,20 @@
               }
             ]
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent leaves it unchanged, null clears it, a string sets it. Trimmed,\nand a string empty once trimmed clears it too. At most 500 characters\nonce trimmed."
+          },
+          "members_can_create_workspaces": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a Member may create workspaces under the team. An Admin and\nthe Captain always may, a Viewer never does. Turning it off leaves the\nworkspaces already created as they are."
+          },
           "name": {
             "type": [
               "string",
@@ -5932,6 +5946,7 @@
           "name",
           "color",
           "created_at",
+          "members_can_create_workspaces",
           "my_role",
           "member_count"
         ],
@@ -5951,6 +5966,13 @@
             "type": "string",
             "format": "date-time"
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when the team has none."
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -5960,6 +5982,10 @@
             "format": "int64",
             "description": "How many members the team has, its Captain included.",
             "minimum": 0
+          },
+          "members_can_create_workspaces": {
+            "type": "boolean",
+            "description": "Whether a Member may create workspaces under the team, besides the\nAdmins and the Captain, who always may."
           },
           "my_role": {
             "$ref": "#/components/schemas/TeamRole",
