@@ -5,7 +5,12 @@
     "searchPlaceholder": "Rechercher un workspace...",
     "newWorkspace": "Nouveau workspace",
     "import": "Importer",
+    "importCtftime": "Importer depuis CTFtime",
+    "importBackup": "Importer depuis un backup",
+    "soon": "Bientôt disponible",
     "filters": "Filtres",
+    "clearFilters": "Effacer les filtres",
+    "facets": { "type": "Type", "mode": "Mode", "platform": "Plateforme" },
     "tabs": {
       "all": "Tous",
       "active": "Actifs",
@@ -13,6 +18,9 @@
     },
     "favorites": "Favoris",
     "allWorkspaces": "Tous les workspaces",
+    "empty": "Aucun workspace pour l'instant",
+    "noMatch": "Aucun workspace ne correspond",
+    "noArchived": "Aucun workspace archivé pour l'instant",
     "newCard": {
       "title": "Nouveau workspace",
       "hint": "Plateforme, CTF ou perso"
@@ -21,37 +29,73 @@
   "create": {
     "title": "Nouveau workspace",
     "subtitle": "Un workspace = une plateforme, un CTF, ou un challenge perso.",
+    "cancel": "Annuler",
     "submit": "Créer le workspace",
-    "steps": {
-      "type": "1 · Type",
-      "details": "2 · Détails",
-      "mode": "3 · Mode de travail"
-    },
+    "steps": { "type": "1 · Type", "details": "2 · Détails", "mode": "3 · Mode de travail" },
     "type": {
       "platform": "Plateforme",
-      "platformHint": "Continu : HTB, THM, Root-Me. Pas de date de fin.",
-      "ctfEvent": "CTF / Événement",
-      "ctfEventHint": "Durée limitée : scoreboard live et fin d'événement."
+      "platformHelp": "Long terme : HTB, THM, Root-Me. Challenges illimités.",
+      "event": "CTF / Événement",
+      "eventHelp": "Durée limitée : scoreboard et fin d'événement."
     },
-    "platformSource": "Plateforme / source",
-    "platformOptions": {
-      "other": "Autre"
+    "details": {
+      "name": "Nom",
+      "description": "Description",
+      "color": "Couleur",
+      "platform": "Plateforme / source",
+      "platformPlaceholder": "Choisir une plateforme",
+      "noPlatform": "Aucune",
+      "startsAt": "Début",
+      "endsAt": "Fin",
+      "timezone": "Les heures sont dans votre fuseau horaire ({{zone}}).",
+      "lockAfterEnd": "Verrouiller après la fin",
+      "lockAfterEndHelp": "Empêche de modifier les challenges et les writeups après la fin de l'événement."
     },
     "mode": {
       "solo": "Solo",
-      "soloHint": "Vous seul. Notes privées par défaut.",
+      "soloHelp": "Vous seul. Vous pourrez inviter des personnes plus tard.",
       "team": "Équipe",
-      "teamHint": "Partagé avec une équipe existante. Permissions par rôle."
-    },
-    "associatedTeam": "Équipe associée",
-    "teamMeta": "{{count}} membres · Vous êtes {{role}}"
+      "teamHelp": "Partagé avec une équipe existante. Permissions par rôle.",
+      "noEligibleTeam": "Il faut être admin ou capitaine d'une équipe pour lui créer un workspace.",
+      "pickTeam": "Équipe associée",
+      "pickTeamPlaceholder": "Choisir une équipe",
+      "searchTeam": "Rechercher une équipe...",
+      "noTeamFound": "Aucune équipe trouvée.",
+      "teamMeta_one": "{{count}} membre · Vous êtes {{role}}",
+      "teamMeta_other": "{{count}} membres · Vous êtes {{role}}"
+    }
+  },
+  "validation": {
+    "nameRequired": "Donnez un nom au workspace.",
+    "platformRequired": "Choisissez une plateforme.",
+    "teamRequired": "Choisissez une équipe.",
+    "endsBeforeStart": "La fin doit être après le début."
   },
   "card": {
     "solvedRatio": "{{solved}} / {{total}} résolus",
-    "you": "Vous"
+    "noChallenges": "Aucun challenge créé pour l'instant",
+    "you": "Vous",
+    "favorite": "Ajouter aux favoris",
+    "unfavorite": "Retirer des favoris",
+    "menu": "Actions pour {{name}}",
+    "settings": "Paramètres",
+    "archive": "Archiver",
+    "unarchive": "Désarchiver",
+    "leave": "Quitter le workspace"
+  },
+  "status": {
+    "live": "En cours",
+    "upcoming": "À venir",
+    "ended": "Terminé",
+    "permanent": "Permanent",
+    "archived": "Archivé"
   },
   "settings": {
     "pageTitle": "Paramètres généraux",
+    "leaveTitle": "Quitter le workspace",
+    "leaveDescription": "Vous perdrez l'accès à ce workspace et à tout son contenu. Cette action ne peut pas être annulée.",
+    "leaveConfirm": "Êtes-vous sûr de vouloir quitter ce workspace ?",
+    "leaveAction": "Quitter le workspace",
     "nav": {
       "general": "Général",
       "visibility": "Visibilité",
@@ -89,12 +133,13 @@
       "defaultLabel": "Par défaut, les writeups sont",
       "defaultHint": "Vous pouvez toujours publier individuellement par writeup.",
       "draft": "Brouillon",
-      "teamVisible": "Visibles par l'équipe"
+      "team": "Visibles par l'équipe"
     }
   },
   "members": {
     "title": "Membres du workspace",
-    "subtitle": "{{count}} membres · équipe « {{team}} » associée.",
+    "subtitle_one": "{{count}} membre · équipe « {{team}} » associée.",
+    "subtitle_other": "{{count}} membres · équipe « {{team}} » associée.",
     "inviteLink": "Lien d'invitation",
     "activeInviteLink": "Lien d'invitation actif",
     "linkRole": "Rôle : {{role}}",
