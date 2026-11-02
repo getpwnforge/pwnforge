@@ -123,6 +123,25 @@
     "permission": "Permission",
     "permissions": "Permissions"
   },
+  "roles": {
+    "owner": "Owner",
+    "captain": "Captain",
+    "admin": "Admin",
+    "member": "Member",
+    "viewer": "Viewer"
+  },
+  "roleSources": {
+    "override": "Rôle fixé sur ce workspace, à la place de celui de l'équipe",
+    "guest": "Invité : ne fait pas partie de l'équipe du workspace"
+  },
+  "colors": {
+    "ember": "Braise",
+    "blue": "Bleu",
+    "violet": "Violet",
+    "teal": "Bleu canard",
+    "rose": "Rose",
+    "amber": "Ambre"
+  },
   "state": {
     "active": "Actif",
     "activeFeminine": "Active",
@@ -203,6 +222,19 @@
     "readMore": "En savoir plus",
     "dismiss": "Ignorer l'alerte"
   },
+  "confirm": {
+    "typeToConfirm": "Saisissez {{text}} pour confirmer"
+  },
+  "invitations": {
+    "title": "Invitations en attente",
+    "none": "Aucune invitation en attente",
+    "by": "Invité par {{who}}",
+    "expires": "Expire",
+    "accept": "Accepter",
+    "reject": "Refuser",
+    "acceptNamed": "Accepter l'invitation dans {{name}}",
+    "rejectNamed": "Refuser l'invitation dans {{name}}"
+  },
   "legal": {
     "lastUpdated": "Dernière mise à jour :",
     "version": "version",
@@ -215,5 +247,11 @@
     "read": "Lire",
     "acceptNow": "Accepter maintenant",
     "dismiss": "Fermer"
+  },
+  "notFound": {
+    "title": "Page introuvable",
+    "description": "La page que vous recherchez n'existe pas ou a été déplacée.",
+    "back": "Retour à la page précédente",
+    "home": "Retour à l'accueil"
   }
 }

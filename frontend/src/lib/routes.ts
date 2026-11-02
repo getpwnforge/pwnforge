@@ -53,7 +53,11 @@ export const ROUTES = {
   workspaces: "/workspaces",
   workspaceCreate: "/workspaces/new",
   teams: "/teams",
-  team: (slug: string) => `/teams/${slug}`,
+  team: (slug: string) => `/teams/${encodeURIComponent(slug)}`,
+  teamWorkspaces: (slug: string) => `/teams/${encodeURIComponent(slug)}?tab=workspaces`,
+  teamRoles: (slug: string) => `/teams/${encodeURIComponent(slug)}?tab=roles`,
+  teamInvitations: (slug: string) => `/teams/${encodeURIComponent(slug)}?tab=invitations`,
+  teamSettings: (slug: string) => `/teams/${encodeURIComponent(slug)}?tab=settings`,
   profile: "/me",
   myStats: "/me/stats",
   mySettings: "/me/settings",
@@ -61,13 +65,13 @@ export const ROUTES = {
 
   // Workspace-scoped (sidebar "workspace" mode), by slug, the key the API
   // names a workspace by. Dashboard is the index route.
-  workspace: (slug: string) => `/w/${slug}`,
-  challenges: (slug: string) => `/w/${slug}/challenges`,
-  challenge: (slug: string, challenge: string) => `/w/${slug}/challenges/${challenge}`,
-  writeups: (slug: string) => `/w/${slug}/writeups`,
-  stats: (slug: string) => `/w/${slug}/stats`,
-  members: (slug: string) => `/w/${slug}/members`,
-  settings: (slug: string) => `/w/${slug}/settings`,
+  workspace: (slug: string) => `/w/${encodeURIComponent(slug)}`,
+  challenges: (slug: string) => `/w/${encodeURIComponent(slug)}/challenges`,
+  challenge: (slug: string, challenge: string) => `/w/${encodeURIComponent(slug)}/challenges/${encodeURIComponent(challenge)}`,
+  writeups: (slug: string) => `/w/${encodeURIComponent(slug)}/writeups`,
+  stats: (slug: string) => `/w/${encodeURIComponent(slug)}/stats`,
+  members: (slug: string) => `/w/${encodeURIComponent(slug)}/members`,
+  settings: (slug: string) => `/w/${encodeURIComponent(slug)}/settings`,
 } as const;
 
 // Pattern for useMatch: reads the current workspace slug from any nested route.

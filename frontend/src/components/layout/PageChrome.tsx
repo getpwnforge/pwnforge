@@ -1,66 +1,117 @@
-import * as React from 'react';
+import * as React from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { cn } from "@/lib/utils";
+import {
+  Breadcrumb,
+  BreadcrumbEllipsis,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 type Crumb = {
   label: string;
+  /** Where the crumb leads. Left out for a level with no page of its own. */
   to?: string;
-}
+};
 
 interface PageChromeProps {
   /** Breadcrumb segments, from root to current page. Declared by each page. */
-  crumbs?: Crumb[]
+  crumbs?: Crumb[];
   /** Contextual actions rendered on the right (buttons, status text, badges). */
-  children?: React.ReactNode
+  children?: React.ReactNode;
+}
+
+/** Beyond this many crumbs, the middle ones fold into "…". */
+const MAX_VISIBLE = 4;
+
+function CrumbLink({ crumb }: Readonly<{ crumb: Crumb }>) {
+  if (!crumb.to) return <span>{crumb.label}</span>;
+  return (
+    <BreadcrumbLink asChild>
+      <Link to={crumb.to}>{crumb.label}</Link>
+    </BreadcrumbLink>
+  );
+}
+
+/** "…" opening the levels it hides. */
+function FoldedCrumbs({ crumbs }: Readonly<{ crumbs: Crumb[] }>) {
+  const { t } = useTranslation("nav");
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="icon-sm" variant="ghost" aria-label={t("breadcrumbMore")}>
+          <BreadcrumbEllipsis />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {crumbs.map((crumb) =>
+          crumb.to ? (
+            <DropdownMenuItem key={crumb.to} asChild>
+              <Link to={crumb.to}>{crumb.label}</Link>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem key={crumb.label} disabled>{crumb.label}</DropdownMenuItem>
+          ),
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 export function PageChrome({ crumbs = [], children }: Readonly<PageChromeProps>) {
+  const { t } = useTranslation("nav");
   const hasActions = React.Children.count(children) > 0;
+  const current = crumbs.at(-1);
 
-  if (crumbs.length === 0 && !hasActions) {
-    return null;
-  }
+  if (!current && !hasActions) return null;
+
+  const parents = crumbs.slice(0, -1);
+  const folded = crumbs.length > MAX_VISIBLE ? parents.slice(1, -1) : [];
+  const shown = folded.length > 0 ? [...parents.slice(0, 1), ...parents.slice(-1)] : parents;
 
   return (
     <div className="sticky top-0 z-20 flex h-(--chrome-h) shrink-0 items-center gap-3 border-b border-border bg-background px-4 sm:px-8">
-      {crumbs.length > 0 && (
-        <nav
-          aria-label="Breadcrumb"
-          className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground"
-        >
-          {crumbs.map((crumb, i) => {
-            const isLast = i === crumbs.length - 1;
-            return (
-              <React.Fragment key={`${i}-${crumb.label}`}>
-                {i > 0 && (
-                  <span aria-hidden className={cn("shrink-0 text-text-subtle", !isLast && "hidden sm:inline")}>
-                    /
-                  </span>
-                )}
-                {crumb.to && !isLast ? (
-                  <Link
-                    to={crumb.to}
-                    className="hidden transition-colors hover:text-foreground sm:inline"
-                  >
-                    {crumb.label}
-                  </Link>
-                ) : (
-                  <span
-                    aria-current={isLast ? "page" : undefined}
-                    className={cn("truncate", isLast ? "text-text" : "hidden sm:inline")}
-                  >
-                    {crumb.label}
-                  </span>
-                )}
+      {current && (
+        <Breadcrumb aria-label={t("breadcrumb")} className="min-w-0">
+          <BreadcrumbList className="flex-nowrap">
+            {parents.length > 0 && (
+              <>
+                {/* Phones: every level above folds into "…". */}
+                <BreadcrumbItem className="sm:hidden">
+                  <FoldedCrumbs crumbs={parents} />
+                </BreadcrumbItem>
+                <BreadcrumbSeparator className="sm:hidden">/</BreadcrumbSeparator>
+              </>
+            )}
+            {shown.map((crumb, i) => (
+              <React.Fragment key={crumb.to ?? crumb.label}>
+                <BreadcrumbItem className="hidden sm:inline-flex">
+                  <CrumbLink crumb={crumb} />
+                </BreadcrumbItem>
+                <BreadcrumbSeparator className="hidden sm:inline-flex">/</BreadcrumbSeparator>
+                {i === 0 && folded.length > 0 ? (
+                  <>
+                    <BreadcrumbItem className="hidden sm:inline-flex">
+                      <FoldedCrumbs crumbs={folded} />
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator className="hidden sm:inline-flex">/</BreadcrumbSeparator>
+                  </>
+                ) : null}
               </React.Fragment>
-            );
-          })}
-        </nav>
+            ))}
+            <BreadcrumbItem className="min-w-0">
+              <BreadcrumbPage className="truncate font-medium">{current.label}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
       )}
 
-      {hasActions && (
-        <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>
-      )}
+      {hasActions && <div className="ml-auto flex shrink-0 items-center gap-2">{children}</div>}
     </div>
   );
 }

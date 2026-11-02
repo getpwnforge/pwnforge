@@ -48,6 +48,7 @@ export type Platform = Schemas["Platform"];
 /** Access on one workspace: a team role, or `owner` for a solo workspace. */
 export type Membership = Schemas["Membership"];
 export type AccentColor = Schemas["AccentColor"];
+export type WriteupVisibility = Schemas["WriteupVisibility"];
 
 // Teams
 export type TeamResponse = Schemas["TeamResponse"];

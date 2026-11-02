@@ -123,6 +123,25 @@
     "permission": "Permission",
     "permissions": "Permissions"
   },
+  "roles": {
+    "owner": "Owner",
+    "captain": "Captain",
+    "admin": "Admin",
+    "member": "Member",
+    "viewer": "Viewer"
+  },
+  "roleSources": {
+    "override": "Role set on this workspace, in place of the team's",
+    "guest": "Guest: not a member of the workspace's team"
+  },
+  "colors": {
+    "ember": "Ember",
+    "blue": "Blue",
+    "violet": "Violet",
+    "teal": "Teal",
+    "rose": "Rose",
+    "amber": "Amber"
+  },
   "state": {
     "active": "Active",
     "activeFeminine": "Active",
@@ -203,6 +222,19 @@
     "readMore": "Learn more",
     "dismiss": "Dismiss alert"
   },
+  "confirm": {
+    "typeToConfirm": "Type {{text}} to confirm"
+  },
+  "invitations": {
+    "title": "Pending invitations",
+    "none": "No pending invitations",
+    "by": "Invited by {{who}}",
+    "expires": "Expires",
+    "accept": "Accept",
+    "reject": "Decline",
+    "acceptNamed": "Accept the invitation to {{name}}",
+    "rejectNamed": "Decline the invitation to {{name}}"
+  },
   "legal": {
     "lastUpdated": "Last updated:",
     "version": "version",
@@ -215,5 +247,11 @@
     "read": "Read",
     "acceptNow": "Accept now",
     "dismiss": "Close"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "The page you are looking for does not exist or has been moved.",
+    "back": "Back to previous page",
+    "home": "Back to home"
   }
 }
