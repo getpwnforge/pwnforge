@@ -7,7 +7,7 @@
 //! written under the previous check. CI provisions the instance and sets
 //! `DATABASE_URL`; locally the dev compose exposes one.
 
-use domain::entities::{teams, users, workspaces};
+use domain::entities::{users, workspaces};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, Set,
@@ -46,19 +46,18 @@ async fn create_owner(db: &DatabaseConnection) -> Uuid {
     .id
 }
 
+/// Written with a statement rather than through the entity: the schema at
+/// this point predates `teams.description`, which the entity reads back.
 async fn create_team(db: &DatabaseConnection) -> Uuid {
-    teams::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        slug: Set(format!("own-{}", Uuid::now_v7().simple())),
-        name: Set("Ownership".to_owned()),
-        color: Set("ember".to_owned()),
-        created_by: Set(None),
-        ..Default::default()
-    }
-    .insert(db)
+    let id = Uuid::now_v7();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO teams (id, slug, name, color) VALUES ($1, $2, 'Ownership', 'ember')",
+        [id.into(), format!("own-{}", id.simple()).into()],
+    ))
     .await
-    .expect("the fixture team must insert")
-    .id
+    .expect("the fixture team must insert");
+    id
 }
 
 async fn insert_workspace(

@@ -21,6 +21,9 @@ pub struct Model {
     pub avatar_version: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
     pub created_by: Option<Uuid>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub description: Option<String>,
+    pub members_can_create_workspaces: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -8,7 +8,7 @@
 //! provisions the instance and sets `DATABASE_URL`; locally the dev compose
 //! exposes one.
 
-use domain::entities::{team_members, teams, users};
+use domain::entities::{team_members, users};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr,
@@ -47,24 +47,22 @@ async fn create_user(db: &DatabaseConnection) -> Uuid {
     .id
 }
 
+/// Written with a statement rather than through the entity, as the three
+/// below: the schema at this point predates `teams.description`,
+/// `team_members.invited_by` and a required `team_invitations.expires_at`,
+/// which the entities read back.
 async fn create_team(db: &DatabaseConnection) -> Uuid {
-    teams::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        slug: Set(format!("cpt-{}", Uuid::now_v7().simple())),
-        name: Set("Captains".to_owned()),
-        color: Set("ember".to_owned()),
-        created_by: Set(None),
-        ..Default::default()
-    }
-    .insert(db)
+    let id = Uuid::now_v7();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO teams (id, slug, name, color) VALUES ($1, $2, 'Captains', 'ember')",
+        [id.into(), format!("cpt-{}", id.simple()).into()],
+    ))
     .await
-    .expect("the fixture team must insert")
-    .id
+    .expect("the fixture team must insert");
+    id
 }
 
-/// Written with a statement rather than through the entity, as the two
-/// below: the schema at this point predates `team_members.invited_by` and a
-/// required `team_invitations.expires_at`, which the entities read back.
 async fn insert_member(
     db: &DatabaseConnection,
     team_id: Uuid,

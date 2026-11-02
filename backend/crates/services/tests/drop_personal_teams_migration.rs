@@ -9,7 +9,7 @@
 //! `DATABASE_URL`; locally the dev compose exposes one.
 
 use chrono::{Duration, Utc};
-use domain::entities::{teams, users, workspace_favorites, workspaces};
+use domain::entities::{users, workspace_favorites, workspaces};
 use migration::MigratorTrait;
 use sea_orm::{
     ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Set, Statement,
@@ -153,12 +153,19 @@ async fn workspace(db: &DatabaseConnection, id: Uuid) -> Option<workspaces::Mode
         .expect("the lookup must succeed")
 }
 
+/// Read with a statement too: the entity reads back `teams.description`,
+/// which this schema predates.
 async fn team_exists(db: &DatabaseConnection, id: Uuid) -> bool {
-    teams::Entity::find_by_id(id)
-        .one(db)
-        .await
-        .expect("the lookup must succeed")
-        .is_some()
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT count(*) AS n FROM teams WHERE id = $1",
+        [id.into()],
+    ))
+    .await
+    .expect("the lookup must succeed")
+    .and_then(|row| row.try_get::<i64>("", "n").ok())
+    .expect("a count returns a row")
+        > 0
 }
 
 async fn count_on(db: &DatabaseConnection, sql: &str, workspace_id: Uuid) -> usize {

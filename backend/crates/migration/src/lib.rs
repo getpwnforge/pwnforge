@@ -21,6 +21,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_120000_team_invitations_expire::Migration),
             Box::new(m20261014_121000_members_invited_by::Migration),
             Box::new(m20261014_122000_targeted_workspace_invitations::Migration),
+            Box::new(m20261102_090000_team_settings::Migration),
         ]
     }
 }
@@ -38,3 +39,4 @@ mod m20261014_090000_drop_personal_teams;
 mod m20261014_120000_team_invitations_expire;
 mod m20261014_121000_members_invited_by;
 mod m20261014_122000_targeted_workspace_invitations;
+mod m20261102_090000_team_settings;
