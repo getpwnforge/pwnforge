@@ -2,161 +2,157 @@
   "list": {
     "title": "Équipes",
     "subtitle": "Vos groupes permanents. Une équipe peut être liée à plusieurs workspaces.",
-    "newTeam": "Nouvelle équipe",
-    "createTeam": "Créer une équipe",
-    "createTeamHint": "Inviter ensuite avec un lien",
-    "meta": "{{members}} membres · {{workspaces}} workspaces · actif {{lastActive}}",
-    "workspacesButton": "Workspaces",
-    "pendingInvitations": "Invitations en attente · {{count}}",
-    "invitedBy": "Invité par @{{handle}} · expire {{expiry}}"
+    "new": "Nouvelle équipe",
+    "newCard": {
+      "title": "Créer une équipe",
+      "hint": "Inviter ensuite avec un lien"
+    }
+  },
+  "card": {
+    "members_one": "{{count}} membre",
+    "members_other": "{{count}} membres",
+    "workspaces_one": "{{count}} workspace",
+    "workspaces_other": "{{count}} workspaces",
+    "openWorkspaces": "Workspaces",
+    "settings": "Paramètres de {{name}}"
+  },
+  "create": {
+    "title": "Nouvelle équipe",
+    "subtitle": "Vous en serez le Captain. Invitez des membres une fois l'équipe créée.",
+    "name": "Nom",
+    "color": "Couleur",
+    "cancel": "Annuler",
+    "submit": "Créer l'équipe"
+  },
+  "validation": {
+    "nameRequired": "Donnez un nom à l'équipe."
+  },
+  "notFound": {
+    "title": "Équipe introuvable",
+    "description": "Elle n'existe pas, ou vous n'en êtes pas membre."
   },
   "detail": {
-    "subtitle": "{{members}} membres · {{workspaces}} workspaces · créée en {{date}}",
-    "inviteLink": "Lien d'invitation",
+    "tabsLabel": "Sections de l'équipe",
     "tabs": {
       "members": "Membres",
       "workspaces": "Workspaces",
       "roles": "Rôles & permissions",
-      "invites": "Invitations",
+      "invitations": "Invitations",
       "settings": "Paramètres"
     },
-    "membersFilterPlaceholder": "Filtrer les membres...",
-    "addMember": "Ajouter un membre",
+    "created": "créée en {{date}}"
+  },
+  "members": {
+    "filter": "Filtrer les membres...",
+    "invite": "Inviter des membres",
     "columns": {
       "member": "Membre",
       "role": "Rôle",
-      "workspaces": "Workspaces",
-      "lastActivity": "Dernière activité"
+      "joined": "Arrivée",
+      "invitedBy": "Invité par",
+      "actions": "Actions"
     },
-    "editPermissions": "Modifier les permissions",
-    "linkedWorkspaces": "Workspaces liés"
+    "actionsFor": "Actions pour {{name}}",
+    "setRole": "Passer {{role}}",
+    "remove": "Retirer de l'équipe",
+    "removeTitle": "Retirer {{name}} ?",
+    "removeText": "Cette personne perd l'accès aux workspaces de l'équipe. Pour revenir, il lui faudra une nouvelle invitation.",
+    "leave": "Quitter l'équipe",
+    "leaveTitle": "Quitter {{team}} ?",
+    "leaveText": "Vous perdez l'accès aux workspaces de l'équipe. Pour revenir, il faudra une nouvelle invitation.",
+    "noMatch": "Aucun membre ne correspond."
   },
-  "roles": {
-    "captain": "Captain",
-    "admin": "Admin",
-    "member": "Member",
-    "viewer": "Viewer",
-    "descriptions": {
-      "captain": "Contrôle total, y compris la suppression de l'équipe.",
-      "admin": "Gère membres, workspaces et intégrations.",
-      "member": "Crée des challenges, écrit et publie des writeups.",
-      "viewer": "Accès en lecture seule sur tous les workspaces."
-    },
-    "captainUniqueHint": "Le rôle Captain est unique et ne peut pas être restreint."
-  },
-  "permissions": {
-    "matrixTitle": "Matrice des permissions",
-    "permission": "Permission",
-    "customRole": "Rôle personnalisé",
-    "allowed": "Autorisé",
-    "notAllowed": "Non autorisé",
-    "groups": {
-      "challenges": "Challenges",
-      "writeups": "Writeups",
-      "workspaces": "Workspaces",
-      "members": "Membres",
-      "team": "Équipe",
-      "read": "Lecture"
-    },
-    "rows": {
-      "challengeCreateEdit": "Créer & éditer",
-      "challengeClaimSolve": "Claim / marquer résolu",
-      "challengeDelete": "Supprimer",
-      "writeupDraft": "Rédiger un brouillon",
-      "writeupPublish": "Publier",
-      "writeupDeleteOthers": "Supprimer ceux des autres",
-      "workspaceCreateLink": "Créer & lier",
-      "workspaceArchiveUnlink": "Archiver / délier",
-      "memberInvite": "Inviter",
-      "memberChangeRoles": "Changer les rôles",
-      "memberRemove": "Retirer un membre",
-      "teamEditSettings": "Modifier les paramètres",
-      "teamManageIntegrations": "Gérer les intégrations",
-      "teamDelete": "Supprimer l'équipe",
-      "viewChallengesWriteups": "Voir challenges & writeups"
-    }
-  },
-  "workspacesTab": {
-    "linkedWorkspaces": "Workspaces liés",
-    "linkedWorkspacesHint": "{{active}} actif · {{archived}} archivés/permanents",
-    "solvedChallenges": "Challenges résolus",
-    "involvedMembers": "Membres impliqués",
-    "wholeTeamActive": "Toute l'équipe est active",
-    "averageProgress": "Progression moyenne",
-    "acrossAllWorkspaces": "Tous workspaces confondus",
-    "filterPlaceholder": "Filtrer les workspaces...",
-    "linkWorkspace": "Lier un workspace",
+  "workspaces": {
+    "new": "Nouveau workspace",
+    "empty": "Cette équipe n'a pas encore de workspace.",
+    "filter": "Filtrer les workspaces...",
+    "status": "Statut",
+    "allStatuses": "Tous les statuts",
+    "noMatch": "Aucun workspace ne correspond.",
     "columns": {
       "workspace": "Workspace",
       "status": "Statut",
-      "linkedMembers": "Membres liés",
-      "progress": "Progression",
-      "lastActivity": "Dernière activité"
-    },
-    "status": {
-      "inProgress": "En cours",
-      "finished": "Terminé",
-      "archived": "Archivé",
-      "permanent": "Permanent"
+      "type": "Type",
+      "myRole": "Mon rôle"
     }
-  },
-  "invitations": {
-    "linkTitle": "Lien d'invitation d'équipe",
-    "linkRole": "Rôle : {{role}}",
-    "linkExpiry": "Expire dans {{count}} j",
-    "inviteByEmail": "Inviter par email",
-    "inviteByEmailPlaceholder": "adresses email, séparées par des virgules",
-    "pending": "Invitations en attente",
-    "columns": {
-      "recipient": "Destinataire",
-      "role": "Rôle",
-      "invitedBy": "Invité par",
-      "sent": "Envoyée",
-      "expires": "Expire"
-    },
-    "joinedRecentlyViaLink": "Rejoints récemment via lien"
   },
   "settings": {
-    "identity": {
-      "title": "Identité de l'équipe",
-      "teamName": "Nom de l'équipe",
-      "slug": "Slug",
-      "description": "Description",
-      "colorHint": "Couleur de l'équipe, utilisée dans le monogramme et les badges."
+    "identity": "Identité de l'équipe",
+    "name": "Nom de l'équipe",
+    "color": "Couleur",
+    "colorHint": "Utilisée pour le monogramme et les badges.",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saved": "Équipe mise à jour.",
+    "danger": "Zone de danger",
+    "leave": "Quitter l'équipe",
+    "leaveHint": "Vous perdez l'accès aux workspaces de l'équipe. Pour revenir, il faudra une nouvelle invitation.",
+    "leaveTitle": "Quitter {{team}} ?",
+    "leaveText": "Vous perdez l'accès aux workspaces de l'équipe. Pour revenir, il faudra une nouvelle invitation.",
+    "transfer": "Transférer le rôle de Captain",
+    "transferHint": "Un autre membre devient Captain ; vous devenez Admin.",
+    "transferTitle": "Transférer le rôle de Captain",
+    "transferText": "Le membre choisi devient Captain. Vous restez dans l'équipe comme Admin.",
+    "transferTarget": "Nouveau Captain",
+    "transferPlaceholder": "Choisir un membre",
+    "transferConfirm": "Transférer",
+    "transferred": "Le rôle de Captain a été transféré.",
+    "delete": "Supprimer l'équipe",
+    "deleteHint": "Irréversible. Les workspaces de l'équipe sont supprimés avec elle.",
+    "deleteTitle": "Supprimer {{team}} ?",
+    "deleteText": "L'équipe et tous ses workspaces sont supprimés définitivement. Tapez {{team}} pour confirmer.",
+    "slug": "Slug",
+    "slugHint": "Fixé à la création de l'équipe ; il ne change pas.",
+    "avatarAdd": "Ajouter une image",
+    "avatarChange": "Changer l'image",
+    "avatarRemove": "Retirer",
+    "description": "Description",
+    "membersCreate": "Les membres peuvent créer des workspaces",
+    "membersCreateHint": "Sinon, seuls les Admins et le Captain le peuvent. Jamais les Viewers."
+  },
+  "roles": {
+    "title": "Rôles & permissions",
+    "seeDetail": "Voir ce que permet chaque rôle",
+    "short": {
+      "captain": "Tous les droits, suppression de l'équipe comprise.",
+      "admin": "Gère membres, invitations et workspaces.",
+      "member": "Travaille dans les workspaces et y invite des personnes.",
+      "viewer": "Consulte les workspaces, sans rien modifier."
     },
-    "membersRoles": {
-      "title": "Membres & rôles par défaut",
-      "defaultRole": "Rôle par défaut des nouveaux membres",
-      "defaultRoleHint": "Appliqué à quiconque rejoint via le lien d'invitation.",
-      "manualApproval": "Approuver manuellement les demandes",
-      "manualApprovalHint": "Les nouvelles demandes d'adhésion doivent être validées par un Admin.",
-      "allowMembersCreateWorkspaces": "Autoriser les membres à créer des workspaces",
-      "allowMembersCreateWorkspacesHint": "Sinon, seuls Captain et Admin peuvent en créer."
+    "long": {
+      "captain": "Tous les droits sur l'équipe et ses workspaces, suppression comprise. Le Captain est unique ; son rôle ne change de main que par transfert.",
+      "admin": "Modifie l'équipe, invite et gère les membres de rang inférieur, crée et configure les workspaces de l'équipe.",
+      "member": "Travaille dans les workspaces de l'équipe et peut y inviter des personnes.",
+      "viewer": "Ouvre les workspaces de l'équipe en lecture seule."
     },
-    "visibility": {
-      "title": "Visibilité",
-      "publicProfile": "Profil d'équipe public",
-      "publicProfileHint": "Affiche une page publique avec le nom, le logo et le palmarès.",
-      "discoverable": "Découvrable via la recherche",
-      "discoverableHint": "L'équipe apparaît dans les résultats de recherche PwnForge.",
-      "showLeaderboard": "Afficher le classement des membres",
-      "showLeaderboardHint": "Publie le leaderboard interne sur le profil public."
+    "matrix": "Matrice des permissions",
+    "permission": "Permission",
+    "allowed": "Autorisé",
+    "denied": "Non autorisé",
+    "footnote": "Le rôle de Captain est unique et ne peut pas être restreint.",
+    "groups": {
+      "team": "Équipe",
+      "members": "Membres",
+      "workspaces": "Workspaces"
     },
-    "notifications": {
-      "title": "Notifications d'équipe",
-      "weeklySummary": "Résumé hebdomadaire",
-      "weeklySummaryHint": "Un récap de l'activité de l'équipe chaque lundi matin.",
-      "discordChannel": "Canal Discord lié",
-      "discordChannelHint": "Poste les résolutions et les writeups publiés dans le canal choisi."
-    },
-    "dangerZone": {
-      "title": "Zone de danger",
-      "leaveTeam": "Quitter l'équipe",
-      "leaveTeamHint": "Vous perdez l'accès à tous les workspaces liés.",
-      "transferOwnership": "Transférer la propriété",
-      "transferOwnershipHint": "Désigner un autre membre comme Captain de l'équipe.",
+    "rows": {
+      "editTeam": "Modifier le nom et la couleur",
+      "transfer": "Transférer le rôle de Captain",
       "deleteTeam": "Supprimer l'équipe",
-      "deleteTeamHint": "Irréversible. Les workspaces liés deviennent orphelins."
+      "invite": "Inviter dans l'équipe",
+      "changeRoles": "Changer le rôle d'un membre de rang inférieur",
+      "remove": "Retirer un membre",
+      "leave": "Quitter l'équipe",
+      "view": "Ouvrir les workspaces de l'équipe",
+      "createWorkspace": "Créer un workspace pour l'équipe",
+      "editWorkspace": "Modifier les paramètres d'un workspace",
+      "archiveWorkspace": "Archiver ou supprimer un workspace",
+      "inviteGuest": "Inviter une personne dans un workspace"
     }
+  },
+  "linked": {
+    "title": "Workspaces liés",
+    "seeAll_one": "Voir le workspace",
+    "seeAll_other": "Voir les {{count}} workspaces"
   }
 }

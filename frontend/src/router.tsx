@@ -23,19 +23,12 @@ import { ResetPasswordPage } from "@/pages/auth/ResetPasswordPage";
 // Authenticated app routes
 import { RequireAuth } from "@/components/common/RequireAuth";
 import { AppShell } from "@/components/layout/AppShell";
-import { ActivityItem } from "@/components/activity/ActivityItem";
 import { LegalPage } from "@/pages/public/LegalPage";
 import { ContactPage } from "./pages/public/ContactPage";
-
-
-const activityExample = {
-  user: { name: "Alice" },
-  action: "blocked",
-  element: "Challenge 1",
-  tag: "+100 pts",
-  tagType: "success" as const,
-  timestamp: "2026-09-05 19:23",
-};
+import { NotFoundPage } from "./pages/app/NotFoundPage";
+import { WorkspacesPage } from "./pages/app/workspaces/WorkspacesPage";
+import { TeamsPage } from "./pages/app/teams/TeamsPage";
+import { TeamPage } from "./pages/app/teams/TeamPage";
 
 export const router = createBrowserRouter([
   // Everything sits under the setup gate: on a fresh instance every route
@@ -95,10 +88,9 @@ export const router = createBrowserRouter([
             element: <AppShell />,
             children: [
               // Personal space (sidebar in "global" mode)
-              { path: ROUTES.workspaces, element: <ActivityItem activity={activityExample} /> },
-              // { path: ROUTES.workspaceCreate, element: <Stub name="Create workspace" /> },
-              // { path: ROUTES.teams, element: <Stub name="Teams" /> },
-              // { path: ROUTES.team(":slug"), element: <Stub name="Team detail" /> },
+              { path: ROUTES.workspaces, element: <WorkspacesPage /> },
+              { path: ROUTES.teams, element: <TeamsPage /> },
+              { path: "teams/:slug", element: <TeamPage /> },
               // { path: ROUTES.profile, element: <Stub name="My profile" /> },
               // { path: ROUTES.help, element: <Stub name="Help" /> },
               // { path: ROUTES.myStats, element: <Stub name="My stats" /> },
@@ -112,6 +104,7 @@ export const router = createBrowserRouter([
               // { path: ROUTES.stats(":slug"), element: <Stub name="Workspace stats" /> },
               // { path: ROUTES.members(":slug"), element: <Stub name="Members" /> },
               // { path: ROUTES.settings(":slug"), element: <Stub name="Settings" /> },
+              { path: "*", element: <NotFoundPage /> }
             ],
           },
         ],
