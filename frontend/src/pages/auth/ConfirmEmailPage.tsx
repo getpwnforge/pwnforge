@@ -12,12 +12,56 @@ import { ROUTES } from "@/lib/routes";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useLinkToken } from "@/hooks/useLinkToken";
 
+function ConfirmEmailError({
+  token,
+  error,
+}: Readonly<{ token: string | null; error: unknown }>) {
+  const { t } = useTranslation(["auth", "common"]);
+  const { resendVerification } = useAuth();
+  const resend = useMutation({ mutationFn: resendVerification });
+
+  return (
+    <div className="flex flex-col items-center gap-4 text-center">
+      <div className="flex size-11 items-center justify-center rounded-full bg-danger-soft text-danger-text">
+        <XCircle className="size-5" />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-page font-semibold tracking-hero">
+          {t("auth:confirmEmail.error.title")}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {token ? t(apiErrorKey(error)) : t("auth:confirmEmail.error.missingToken")}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          {t("auth:confirmEmail.error.needNewToken")}
+          {token ? (
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto p-0 text-sm text-ember-text"
+              disabled={resend.isPending}
+              onClick={() => resend.mutate({ token })}
+            >
+              {resend.isPending ? <Spinner /> : null}
+              {resend.isSuccess
+                ? t("auth:confirmEmail.error.sent")
+                : t("auth:confirmEmail.error.resend")}
+            </Button>
+          ) : null}
+        </p>
+        {resend.isError ? <FormError error={resend.error} /> : null}
+      </div>
+      <Button asChild variant="secondary" size="lg" className="w-full">
+        <Link to={ROUTES.login}>{t("auth:confirmEmail.error.backToLogin")}</Link>
+      </Button>
+    </div>
+  );
+}
+
 export function ConfirmEmailPage() {
   const { t } = useTranslation(["auth", "common"]);
-  const { confirmEmail, resendVerification } = useAuth();
+  const { confirmEmail } = useAuth();
   const token = useLinkToken();
-  const resendToken = token;
-  const resend = useMutation({ mutationFn: resendVerification });
   usePageTitle(t("auth:confirmEmail.tabTitle"));
 
   // Sent on the button, never on load. A link scanner that runs the page's
@@ -29,42 +73,7 @@ export function ConfirmEmailPage() {
   const confirm = useMutation({ mutationFn: (value: string) => confirmEmail(value) });
 
   if (!token || confirm.isError) {
-    return (
-      <div className="flex flex-col items-center gap-4 text-center">
-        <div className="flex size-11 items-center justify-center rounded-full bg-danger-soft text-danger-text">
-          <XCircle className="size-5" />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <h1 className="text-page font-semibold tracking-hero">
-            {t("auth:confirmEmail.error.title")}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {token ? t(apiErrorKey(confirm.error)) : t("auth:confirmEmail.error.missingToken")}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {t("auth:confirmEmail.error.needNewToken")}
-            {resendToken ? (
-              <Button
-                type="button"
-                variant="link"
-                className="h-auto p-0 text-sm text-ember-text"
-                disabled={resend.isPending}
-                onClick={() => resend.mutate({ token: resendToken })}
-              >
-                {resend.isPending ? <Spinner /> : null}
-                {resend.isSuccess
-                  ? t("auth:confirmEmail.error.sent")
-                  : t("auth:confirmEmail.error.resend")}
-              </Button>
-            ) : null}
-          </p>
-          {resend.isError ? <FormError error={resend.error} /> : null}
-        </div>
-        <Button asChild variant="secondary" size="lg" className="w-full">
-          <Link to={ROUTES.login}>{t("auth:confirmEmail.error.backToLogin")}</Link>
-        </Button>
-      </div>
-    );
+    return <ConfirmEmailError token={token} error={confirm.error} />;
   }
 
   if (confirm.isSuccess) {

@@ -24,8 +24,8 @@ describe("the test setup", () => {
     expect(document.body).toBeEmptyDOMElement();
     expect(useSidebarStore.getState().collapsed).toBe(false);
     expect(queryClient.getQueryCache().getAll()).toEqual([]);
-    expect(localStorage.length).toBe(0);
-    expect(sessionStorage.length).toBe(0);
+    expect(localStorage).toHaveLength(0);
+    expect(sessionStorage).toHaveLength(0);
     expect(`${window.location.pathname}${window.location.search}${window.location.hash}`).toBe("/");
   });
 });

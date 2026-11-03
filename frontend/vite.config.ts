@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         : undefined,
       proxy: {
         '/api': {
+          // eslint-disable-next-line sonarjs/no-clear-text-protocols -- local dev API behind the Vite proxy
           target: 'http://backend:3000',
           changeOrigin: true,
         }

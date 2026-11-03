@@ -80,14 +80,16 @@ describe("TeamsPage", () => {
   });
 
   it("accepts an invitation and opens the team", async () => {
-    const { user } = renderPage({
+    const { server, user } = renderPage({
       "GET /teams/invitations/pending": { status: 200, data: [invite] },
       [`POST /teams/invitations/${INVITE_ID}/accept`]: {
         status: 200, data: teamResponse({ slug: "charlie-z7y8", name: "Team Charlie" }),
       },
     });
     await user.click(await screen.findByRole("button", { name: t("common:invitations.acceptNamed", { name: "Team Charlie" }) }));
+
     await landsOn("/teams/charlie-z7y8");
+    expect(server.count(`POST /teams/invitations/${INVITE_ID}/accept`)).toBe(1);
   });
 
   it("declines an invitation and stays on the list", async () => {
