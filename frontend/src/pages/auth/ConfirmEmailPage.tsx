@@ -18,7 +18,7 @@ export function ConfirmEmailPage() {
   const token = useLinkToken();
   const resendToken = token;
   const resend = useMutation({ mutationFn: resendVerification });
-  usePageTitle(t("auth:confirmEmail.title"));
+  usePageTitle(t("auth:confirmEmail.tabTitle"));
 
   // Sent on the button, never on load. A link scanner that runs the page's
   // script, as some mail gateways do, would otherwise verify the address
