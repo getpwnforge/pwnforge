@@ -33,7 +33,14 @@ export function fakeApi(routes: Record<string, FakeRoute>) {
     requests.push({ method, url, body });
 
     const route = routes[`${method} ${url}`];
-    const reply = route === undefined ? { status: 599 } : typeof route === "function" ? await route() : route;
+    let reply: FakeReply;
+    if (route === undefined) {
+      reply = { status: 599 };
+    } else if (typeof route === "function") {
+      reply = await route();
+    } else {
+      reply = route;
+    }
     const response: AxiosResponse = {
       data: reply.data ?? null,
       status: reply.status,
@@ -68,4 +75,8 @@ export function deferred<T>() {
     resolve = settle;
   });
   return { promise, resolve };
+}
+
+export function lastBody(server: ReturnType<typeof fakeApi>, key: string): unknown {
+  return server.requests.findLast(({ method, url }) => `${method} ${url}` === key)?.body;
 }

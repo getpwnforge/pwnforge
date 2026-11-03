@@ -7,6 +7,20 @@ import type * as Zustand from "zustand";
 import i18n from "@/lib/i18n";
 import { queryClient } from "@/lib/query-client";
 
+// What jsdom lacks and Radix popovers, menus, selects and dialogs call.
+function noop() {
+  // jsdom has no layout: there is nothing to measure, scroll or capture.
+}
+globalThis.ResizeObserver ??= class {
+  observe = noop;
+  unobserve = noop;
+  disconnect = noop;
+};
+const element = Element.prototype as unknown as Record<string, unknown>;
+element.hasPointerCapture ??= () => false;
+element.releasePointerCapture ??= noop;
+element.scrollIntoView ??= noop;
+
 /** One per store created while a test file runs, to put it back after each test. */
 const storeResets = vi.hoisted(() => new Set<() => void>());
 
