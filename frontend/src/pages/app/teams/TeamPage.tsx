@@ -23,6 +23,7 @@ import { TeamMembersTab } from "@/pages/app/teams/TeamMembersTab";
 import { TeamRolesTab } from "@/pages/app/teams/TeamRolesTab";
 import { TeamSettingsTab } from "@/pages/app/teams/TeamSettingsTab";
 import { TeamWorkspacesTab } from "@/pages/app/teams/TeamWorkspacesTab";
+import { TeamInvitationsTab } from "./TeamInvitationsTab";
 
 const TEAM_TABS = ["members", "workspaces", "roles", "invitations", "settings"] as const;
 type TeamTab = (typeof TEAM_TABS)[number];
@@ -143,7 +144,11 @@ function TeamView({ team }: Readonly<{ team: TeamResponse }>) {
             <TabsPanel value="roles">
               <TeamRolesTab team={team} />
             </TabsPanel>
-            {canInvite ? <TabsPanel value="invitations">{/* TeamInvitationsTab, next commit */}</TabsPanel> : null}
+              {canInvite ? (
+                <TabsPanel value="invitations">
+                  <TeamInvitationsTab team={team} />
+                </TabsPanel>
+              ) : null}
             <TabsPanel value="settings">
               <TeamSettingsTab team={team} />
             </TabsPanel>
