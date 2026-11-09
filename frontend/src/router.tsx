@@ -30,6 +30,7 @@ import { NotFoundPage } from "./pages/app/NotFoundPage";
 import { WorkspacesPage } from "./pages/app/workspaces/WorkspacesPage";
 import { TeamsPage } from "./pages/app/teams/TeamsPage";
 import { TeamPage } from "./pages/app/teams/TeamPage";
+import { InvitationLinkPage } from "./pages/invitations/InvitationLinkPage";
 
 export const router = createBrowserRouter([
   // Everything sits under the setup gate: on a fresh instance every route
@@ -61,14 +62,33 @@ export const router = createBrowserRouter([
           // { path: ROUTES.changelog, element: <LegalPage slug="changelog" /> }
         ],
       },
+      // Signed-out only: a browser that still holds a session goes straight to
+      // the app. Above AuthShell rather than inside it, so the auth layout
+      // never shows on the way.
+      {
+        element: <RequireAnonymous />,
+        children: [
+          {
+            element: <AuthShell />,
+            children: [
+              { path: ROUTES.login, element: <LoginPage /> },
+              { path: ROUTES.register, element: <RegisterPage /> },
+            ],
+          },
+        ],
+      },
+      // Reachable signed in or not. The two mailed links have to work in a
+      // browser that holds a session, and their token is in the fragment, which
+      // a redirect would drop. Forgot-password stays open to the user who has
+      // a session but no longer knows the password behind it.
       {
         element: <AuthShell />,
         children: [
-          { path: ROUTES.login, element: <LoginPage /> },
-          { path: ROUTES.register, element: <RegisterPage /> },
           { path: ROUTES.confirmEmail, element: <ConfirmEmailPage /> },
           { path: ROUTES.forgotPassword, element: <ForgotPasswordPage /> },
           { path: ROUTES.resetPassword, element: <ResetPasswordPage /> },
+          { path: ROUTES.teamInvitation, element: <InvitationLinkPage kind="team" /> },
+          { path: ROUTES.workspaceInvitation, element: <InvitationLinkPage kind="workspace" /> },
         ],
       },
 

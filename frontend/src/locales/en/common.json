@@ -253,5 +253,49 @@
     "description": "The page you are looking for does not exist or has been moved.",
     "back": "Back to previous page",
     "home": "Back to home"
+  },
+  "invitationLink": {
+    "tabTitle": "Invitation",
+    "team": {
+      "eyebrow": "Team invitation",
+      "title": "Join {{name}}",
+      "lead": "{{author}} invites you to join the team.",
+      "leadNoAuthor": "You are invited to join the team.",
+      "join": "Join the team"
+    },
+    "workspace": {
+      "eyebrow": "Workspace invitation",
+      "title": "Join {{name}}",
+      "lead": "{{author}} invites you as a guest of this workspace.",
+      "leadNoAuthor": "You are invited as a guest of this workspace.",
+      "join": "Join the workspace"
+    },
+    "expires": "Expires",
+    "later": "Later",
+    "home": "Back to the app",
+    "signedInAs": "Signed in as",
+    "switchAccount": "Switch account",
+    "alreadyMember": "You are already in {{name}}.",
+    "anonymous": {
+      "title": "You have an invitation",
+      "team": "Sign in to see who invites you and join the team.",
+      "workspace": "Sign in to see who invites you and join the workspace.",
+      "signIn": "Sign in",
+      "register": "Create an account",
+      "hint": "Once signed in, open this link again. An invitation sent to you by email also waits among your pending invitations."
+    },
+    "invalid": {
+      "title": "This link no longer works",
+      "text": "It leads to no invitation you can accept.",
+      "reasons": "This happens when the link:",
+      "expired": "has expired or was revoked;",
+      "usedUp": "has been used as many times as allowed;",
+      "otherAccount": "was meant for another account.",
+      "pending": "See my pending invitations"
+    },
+    "missing": {
+      "title": "This link is incomplete",
+      "text": "The end of the link is missing. Copy it in full from the email or message you received, then open it again."
+    }
   }
 }

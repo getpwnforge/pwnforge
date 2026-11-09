@@ -253,5 +253,49 @@
     "description": "La page que vous recherchez n'existe pas ou a été déplacée.",
     "back": "Retour à la page précédente",
     "home": "Retour à l'accueil"
+  },
+  "invitationLink": {
+    "tabTitle": "Invitation",
+    "team": {
+      "eyebrow": "Invitation à une équipe",
+      "title": "Rejoindre {{name}}",
+      "lead": "{{author}} vous invite à rejoindre l'équipe.",
+      "leadNoAuthor": "Vous êtes invité à rejoindre l'équipe.",
+      "join": "Rejoindre l'équipe"
+    },
+    "workspace": {
+      "eyebrow": "Invitation à un workspace",
+      "title": "Rejoindre {{name}}",
+      "lead": "{{author}} vous invite comme invité de ce workspace.",
+      "leadNoAuthor": "Vous êtes invité comme invité de ce workspace.",
+      "join": "Rejoindre le workspace"
+    },
+    "expires": "Expire",
+    "later": "Plus tard",
+    "home": "Retour à l'app",
+    "signedInAs": "Connecté en tant que",
+    "switchAccount": "Changer de compte",
+    "alreadyMember": "Vous faites déjà partie de {{name}}.",
+    "anonymous": {
+      "title": "Vous avez reçu une invitation",
+      "team": "Connectez-vous pour voir qui vous invite et rejoindre l'équipe.",
+      "workspace": "Connectez-vous pour voir qui vous invite et rejoindre le workspace.",
+      "signIn": "Se connecter",
+      "register": "Créer un compte",
+      "hint": "Une fois connecté, rouvrez ce lien. Une invitation reçue par mail vous attend aussi dans vos invitations en attente."
+    },
+    "invalid": {
+      "title": "Ce lien ne fonctionne plus",
+      "text": "Il ne mène à aucune invitation que vous pouvez accepter.",
+      "reasons": "Cela arrive quand le lien :",
+      "expired": "a expiré ou a été révoqué ;",
+      "usedUp": "a déjà servi autant de fois que prévu ;",
+      "otherAccount": "était destiné à un autre compte.",
+      "pending": "Voir mes invitations en attente"
+    },
+    "missing": {
+      "title": "Ce lien est incomplet",
+      "text": "Il manque la fin du lien. Copiez-le en entier depuis le mail ou le message reçu, puis rouvrez-le."
+    }
   }
 }
