@@ -2,7 +2,7 @@ import { useForm } from "react-hook-form";
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { EyeOff, Eye } from "lucide-react";
 
@@ -14,7 +14,6 @@ import { FormError } from "@/components/common/FormError";
 import { loginSchema, type LoginValues } from "@/lib/schemas/auth";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
-import { safeRedirect } from "@/lib/safe-redirect";
 import { InputGroup, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { isApiError } from "@/lib/api-error";
 import { usePageTitle } from "@/hooks/usePageTitle";
@@ -24,8 +23,6 @@ import { TurnstileWidget } from "@/components/common/TurnstileWidget";
 export function LoginPage() {
   const { t } = useTranslation(["auth", "common"]);
   const { login, resendVerification } = useAuth();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const resend = useMutation({ mutationFn: resendVerification });
   const turnstile = useTurnstile("login");
@@ -40,9 +37,10 @@ export function LoginPage() {
     defaultValues: { username_or_email: "", password: "" },
   });
 
+  // No navigation on success: RequireAnonymous sends a signed-in visitor on
+  // to `?from=`, and one who has just signed in is no exception.
   const submit = useMutation({
     mutationFn: (values: LoginValues) => login({ ...values, turnstile_token: turnstile.token ?? "" }),
-    onSuccess: () => navigate(safeRedirect(searchParams.get("from")), { replace: true }),
     onError: () => turnstile.reset(),
   });
   const unverifiedUserId =

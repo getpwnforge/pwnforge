@@ -14,6 +14,7 @@ import { LandingPage } from "@/pages/public/LandingPage";
 
 // Auth routes
 import { AuthShell } from "@/components/layout/AuthShell";
+import { RequireAnonymous } from "@/components/common/RequireAnonymous";
 import { LoginPage } from "@/pages/auth/LoginPage";
 import { RegisterPage } from "@/pages/auth/RegisterPage";
 import { ConfirmEmailPage } from "@/pages/auth/ConfirmEmailPage";
