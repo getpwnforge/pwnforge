@@ -7,7 +7,7 @@ import { ME_ID, teamMember } from "@/test/api-fixtures";
 import { lastBody } from "@/test/fake-api";
 import { ALPHA, renderTeam } from "@/test/render-team";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const NORA_ID = "0000000f-0000-7000-8000-000000000009";
 const MEMBERS = {
   "GET /teams/alpha-k2m4/members": {

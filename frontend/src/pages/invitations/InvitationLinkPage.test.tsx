@@ -10,7 +10,7 @@ import { teamResponse } from "@/test/api-fixtures";
 import { fakeApi, lastBody, type FakeRoute } from "@/test/fake-api";
 import { renderRoute } from "@/test/render-route";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const TOKEN = "aK7d9Qm2vT4xR8wPq3Zt";
 // To check against src/api/calls.ts: the preview sends the token in its body.
 const PREVIEW = "POST /teams/invitations/preview";

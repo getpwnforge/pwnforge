@@ -6,7 +6,7 @@ import i18n from "@/lib/i18n";
 import { teamMember } from "@/test/api-fixtures";
 import { ALPHA, renderTeam } from "@/test/render-team";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const MEMBERS = { "GET /teams/alpha-k2m4/members": { status: 200, data: [teamMember()] } };
 const tabs = () => within(screen.getByRole("tablist", { name: t("teams:detail.tabsLabel") }));
 /** A tab by its label; counts follow the label in the same tab. */

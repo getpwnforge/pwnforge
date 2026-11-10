@@ -9,7 +9,7 @@ import { teamSummary, workspaceInvitation, workspaceSummary } from "@/test/api-f
 import { deferred, fakeApi, type FakeReply, type FakeRoute } from "@/test/fake-api";
 import { renderRoute } from "@/test/render-route";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 
 const team = teamSummary({ id: "0000000a-0000-7000-8000-000000000001", slug: "alpha-k2m4", name: "Team Alpha", color: "blue" });
 const hexagon = workspaceSummary({ id: "00000001-0000-7000-8000-000000000001", slug: "hexagon-ab12", name: "CTF Hexagon", my_role: "captain", team, platform: null });

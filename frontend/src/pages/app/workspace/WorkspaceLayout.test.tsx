@@ -5,7 +5,7 @@ import i18n from "@/lib/i18n";
 import { deferred, type FakeReply } from "@/test/fake-api";
 import { HEXAGON, renderWorkspace } from "@/test/render-workspace";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const DETAIL = `GET /workspaces/${HEXAGON.slug}`;
 
 describe("WorkspaceLayout", () => {

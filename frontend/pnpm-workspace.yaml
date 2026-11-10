@@ -6,6 +6,9 @@ audit:
   ignore:
     - GHSA-vfj7-8cjw-p6xm
 
+minimumReleaseAge: 10080   # 7 days, in minutes
+minimumReleaseAgeStrict: true
+
 overrides:
   brace-expansion: "^5.0.9"
   postcss: "^8.5.23"

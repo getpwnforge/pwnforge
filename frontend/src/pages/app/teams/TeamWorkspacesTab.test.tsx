@@ -6,7 +6,7 @@ import i18n from "@/lib/i18n";
 import { teamMember, teamSummary, workspaceSummary } from "@/test/api-fixtures";
 import { ALPHA, renderTeam } from "@/test/render-team";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const alphaRef = teamSummary({ id: ALPHA.id, slug: ALPHA.slug, name: ALPHA.name, color: ALPHA.color });
 const hexagon = workspaceSummary({ id: "00000001-0000-7000-8000-000000000001", slug: "hexagon-ab12", name: "CTF Hexagon", team: alphaRef });
 const old = workspaceSummary({ id: "00000003-0000-7000-8000-000000000003", slug: "old-ctf-ef56", name: "Old CTF", team: alphaRef, archived: true });

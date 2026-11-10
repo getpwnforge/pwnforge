@@ -10,7 +10,7 @@ import { fakeApi, lastBody } from "@/test/fake-api";
 import { renderRoute } from "@/test/render-route";
 import { ALPHA } from "@/test/render-team";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const bravo = teamResponse({ id: "0000000a-0000-7000-8000-000000000002", slug: "bravo-p9q1", name: "Team Bravo", my_role: "member", member_count: 5 });
 const bravoRef = teamSummary({ id: bravo.id, slug: bravo.slug, name: bravo.name, color: bravo.color });
 const INVITE_ID = "0000000e-0000-7000-8000-000000000007";

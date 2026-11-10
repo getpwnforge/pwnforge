@@ -7,7 +7,7 @@ import { teamInvitation } from "@/test/api-fixtures";
 import { lastBody } from "@/test/fake-api";
 import { ALPHA, renderTeam } from "@/test/render-team";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const LIST = "GET /teams/alpha-k2m4/invitations";
 const CREATE = "POST /teams/alpha-k2m4/invitations";
 

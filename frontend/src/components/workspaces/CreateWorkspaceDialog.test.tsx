@@ -11,7 +11,7 @@ import { teamResponse, workspaceResponse } from "@/test/api-fixtures";
 import { fakeApi, lastBody, type FakeReply } from "@/test/fake-api";
 import { renderRoute } from "@/test/render-route";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 
 const ALPHA_ID = "0000000a-0000-7000-8000-000000000001";
 const alpha = teamResponse({ id: ALPHA_ID, slug: "alpha-k2m4", name: "Team Alpha", my_role: "captain" });

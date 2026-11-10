@@ -7,7 +7,7 @@ import { ME_ID, teamMember } from "@/test/api-fixtures";
 import { lastBody } from "@/test/fake-api";
 import { ALPHA, renderTeam } from "@/test/render-team";
 
-const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options);
+const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
 const NORA_ID = "0000000f-0000-7000-8000-000000000009";
 const me = (role: "captain" | "member") => teamMember({ role });
 const nora = teamMember({ user_id: NORA_ID, username: "nora", first_name: "Nora", last_name: "", role: "member", invited_by: ME_ID });
