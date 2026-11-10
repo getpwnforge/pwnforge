@@ -152,5 +152,25 @@
       "status": "Statut",
       "joined": "Rejoint"
     }
+  },
+  "notFound": {
+    "title": "Workspace introuvable",
+    "description": "Il n'existe pas, ou vous n'y avez plus accès."
+  },
+  "archived": {
+    "banner": "Ce workspace est archivé : il est en lecture seule."
+  },
+  "dashboard": {
+    "solo": "Solo",
+    "team": "Équipe",
+    "dates": "{{start}} → {{end}}",
+    "from": "À partir du {{date}}",
+    "until": "Jusqu'au {{date}}",
+    "emptyTitle": "Pas encore de challenges",
+    "emptyText": "Les challenges, leur progression et l'activité de l'équipe s'afficheront ici.",
+    "learnMore": "En savoir plus",
+    "createChallenge": "Créer un challenge",
+    "members_one": "{{count}} membre",
+    "members_other": "{{count}} membres"
   }
 }

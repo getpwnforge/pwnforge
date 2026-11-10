@@ -25,12 +25,14 @@ import { ResetPasswordPage } from "@/pages/auth/ResetPasswordPage";
 import { RequireAuth } from "@/components/common/RequireAuth";
 import { AppShell } from "@/components/layout/AppShell";
 import { LegalPage } from "@/pages/public/LegalPage";
-import { ContactPage } from "./pages/public/ContactPage";
-import { NotFoundPage } from "./pages/app/NotFoundPage";
-import { WorkspacesPage } from "./pages/app/workspaces/WorkspacesPage";
-import { TeamsPage } from "./pages/app/teams/TeamsPage";
-import { TeamPage } from "./pages/app/teams/TeamPage";
-import { InvitationLinkPage } from "./pages/invitations/InvitationLinkPage";
+import { ContactPage } from "@/pages/public/ContactPage";
+import { NotFoundPage } from "@/pages/app/NotFoundPage";
+import { WorkspacesPage } from "@/pages/app/workspaces/WorkspacesPage";
+import { TeamsPage } from "@/pages/app/teams/TeamsPage";
+import { TeamPage } from "@/pages/app/teams/TeamPage";
+import { InvitationLinkPage } from "@/pages/invitations/InvitationLinkPage";
+import { WorkspaceDashboardPage } from "@/pages/app/workspace/WorkspaceDashboardPage";
+import { WorkspaceLayout } from "@/pages/app/workspace/WorkspaceLayout";
 
 export const router = createBrowserRouter([
   // Everything sits under the setup gate: on a fresh instance every route
@@ -118,7 +120,15 @@ export const router = createBrowserRouter([
               // { path: ROUTES.mySettings, element: <Stub name="My settings" /> },
 
               // Inside a workspace (sidebar in "workspace" mode, driven by :slug)
-              // { path: ROUTES.workspace(":slug"), element: <Stub name="Dashboard" /> },
+              {
+                path: "w/:slug",
+                element: <WorkspaceLayout />,
+                children: [
+                  { index: true, element: <WorkspaceDashboardPage /> },
+                  // F5: { path: "members", element: <WorkspaceMembersPage /> },
+                  // F5: { path: "settings", element: <WorkspaceSettingsPage /> },
+                ],
+              },
               // { path: ROUTES.challenges(":slug"), element: <Stub name="Challenges" /> },
               // { path: ROUTES.challenge(":slug", ":challengeId"), element: <Stub name="Challenge detail" /> },
               // { path: ROUTES.writeups(":slug"), element: <Stub name="Writeups" /> },

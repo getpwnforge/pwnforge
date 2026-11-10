@@ -1,12 +1,12 @@
 const GITHUB_REPO = "https://github.com/getpwnforge/pwnforge";
+const DOCS_URL = import.meta.env.VITE_DOCS_URL ?? "https://docs.pwnforge.app";
 
 /** External destinations. These go in <a href>, never in React Router <Link>. */
 export const EXTERNAL = {
-  docs: import.meta.env.VITE_DOCS_URL ?? "https://docs.pwnforge.app",
-  api: import.meta.env.VITE_DOCS_URL
-    ? `${import.meta.env.VITE_DOCS_URL}/api`
-    : "https://docs.pwnforge.app/api",
-  selfhost: "https://docs.pwnforge.app/self-hosting",
+  docs: DOCS_URL,
+  api: `${DOCS_URL}/api`,
+  selfhost: `${DOCS_URL}/self-hosting`,
+  challengesDocs: `${DOCS_URL}/challenges`,
 
   github: GITHUB_REPO,
   contributing: `${GITHUB_REPO}/blob/main/CONTRIBUTING.md`,
@@ -68,6 +68,7 @@ export const ROUTES = {
   workspace: (slug: string) => `/w/${encodeURIComponent(slug)}`,
   challenges: (slug: string) => `/w/${encodeURIComponent(slug)}/challenges`,
   challenge: (slug: string, challenge: string) => `/w/${encodeURIComponent(slug)}/challenges/${encodeURIComponent(challenge)}`,
+  challengeCreate: (slug: string) => `/w/${encodeURIComponent(slug)}/challenges/new`,
   writeups: (slug: string) => `/w/${encodeURIComponent(slug)}/writeups`,
   stats: (slug: string) => `/w/${encodeURIComponent(slug)}/stats`,
   members: (slug: string) => `/w/${encodeURIComponent(slug)}/members`,
