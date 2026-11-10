@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
 
@@ -55,32 +55,37 @@ export function WorkspaceSettingsPage() {
   const section: Section = isSection(requested) && (requested !== "danger" || withDanger) ? requested : "general";
 
   const navLink = (target: Section) => (
-    <Link
-      key={target}
-      to={{ search: target === "general" ? "" : `?section=${target}` }}
-      replace
-      aria-current={target === section ? "page" : undefined}
-      className={cn(ITEM, target === "danger" && "text-danger hover:text-danger", target === section && "bg-surface-2 text-text")}
-    >
-      {t(`workspaces:settings.nav.${NAV_KEY[target]}`)}
-    </Link>
+    <li key={target}>
+      <Link
+        to={{ search: target === "general" ? "" : `?section=${target}` }}
+        replace
+        aria-current={target === section ? "page" : undefined}
+        className={cn(ITEM, target === "danger" && "text-danger hover:text-danger", target === section && "bg-surface-2 text-text")}
+      >
+        {t(`workspaces:settings.nav.${NAV_KEY[target]}`)}
+      </Link>
+    </li>
   );
   const soonItem = (key: string) => (
-    <span key={key} aria-disabled="true" className={cn(ITEM, "cursor-default text-text-subtle hover:bg-transparent hover:text-text-subtle")}>
-      {t(`workspaces:settings.nav.${key}`)}
-      <span className="text-[10.5px] font-normal">{t("workspaces:settings.soon")}</span>
-    </span>
+    <li key={key}>
+      <span aria-disabled="true" className={cn(ITEM, "cursor-default text-text-subtle hover:bg-transparent hover:text-text-subtle")}>
+        {t(`workspaces:settings.nav.${key}`)}
+        <span className="text-xs font-normal">{t("workspaces:settings.soon")}</span>
+      </span>
+    </li>
   );
-  const group = (key: string, items: ReactNode) => (
-    <>
-      <div key={key} aria-labelledby={`ws-nav-${key}`} className="flex flex-col">
+  const group = (key: string, items: ReactNode, last = false) => (
+    <Fragment key={key}>
+      <div className="flex flex-col">
         <div id={`ws-nav-${key}`} className={GROUP_LABEL}>
           {t(`workspaces:settings.navGroups.${key}`)}
         </div>
-        {items}
+        <ul aria-labelledby={`ws-nav-${key}`} className="flex flex-col">
+          {items}
+        </ul>
       </div>
-      <Separator />
-    </>
+      {last ? null : <Separator />}
+    </Fragment>
   );
 
   return (
@@ -95,10 +100,14 @@ export function WorkspaceSettingsPage() {
             aria-label={t("workspaces:settings.sectionsLabel")}
             className="flex flex-col gap-5 p-3 md:sticky md:top-(--chrome-h) md:py-6 md:pr-3 md:pl-6"
           >
-            {GROUPS.map(({ key, entries }) =>
-              group(key, entries.map((entry) => ("section" in entry ? navLink(entry.section) : soonItem(entry.soon)))),
+            {GROUPS.map(({ key, entries }, index) =>
+              group(
+                key,
+                entries.map((entry) => ("section" in entry ? navLink(entry.section) : soonItem(entry.soon))),
+                !withDanger && index === GROUPS.length - 1,
+              ),
             )}
-            {withDanger ? group("danger", navLink("danger")) : null}
+            {withDanger ? group("danger", navLink("danger"), true) : null}
           </nav>
         </aside>
 
