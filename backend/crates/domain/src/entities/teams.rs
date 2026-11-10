@@ -18,9 +18,9 @@ pub struct Model {
     pub name: String,
     #[sea_orm(column_type = "Text")]
     pub color: String,
-    pub avatar_version: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
     pub created_by: Option<Uuid>,
+    pub avatar_version: Option<Uuid>,
     #[sea_orm(column_type = "Text", nullable)]
     pub description: Option<String>,
     pub members_can_create_workspaces: bool,
@@ -64,10 +64,7 @@ impl Related<super::workspaces::Entity> for Entity {
 
 impl Related<super::users::Entity> for Entity {
     fn to() -> RelationDef {
-        super::team_members::Relation::Users.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::team_members::Relation::Teams.def().rev())
+        Relation::Users.def()
     }
 }
 

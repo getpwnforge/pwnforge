@@ -35,12 +35,28 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(
         belongs_to = "super::users::Entity",
+        from = "Column::AcceptedBy",
+        to = "super::users::Column::Id",
+        on_update = "NoAction",
+        on_delete = "SetNull"
+    )]
+    AcceptedBy,
+    #[sea_orm(
+        belongs_to = "super::users::Entity",
         from = "Column::InvitedBy",
         to = "super::users::Column::Id",
         on_update = "NoAction",
         on_delete = "SetNull"
     )]
-    Users,
+    InvitedBy,
+    #[sea_orm(
+        belongs_to = "super::users::Entity",
+        from = "Column::InvitedUserId",
+        to = "super::users::Column::Id",
+        on_update = "NoAction",
+        on_delete = "Cascade"
+    )]
+    InvitedUser,
     #[sea_orm(
         belongs_to = "super::workspaces::Entity",
         from = "Column::WorkspaceId",
@@ -49,12 +65,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Workspaces,
-}
-
-impl Related<super::users::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Users.def()
-    }
 }
 
 impl Related<super::workspaces::Entity> for Entity {

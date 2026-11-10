@@ -22,7 +22,6 @@ pub struct Model {
     pub last_name: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub bio: Option<String>,
-    pub avatar_version: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
     pub theme: String,
     #[sea_orm(column_type = "Text")]
@@ -42,6 +41,7 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     pub last_activity_at: Option<DateTimeWithTimeZone>,
+    pub avatar_version: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -60,8 +60,6 @@ pub enum Relation {
     RefreshTokens,
     #[sea_orm(has_many = "super::reserved_usernames::Entity")]
     ReservedUsernames,
-    #[sea_orm(has_many = "super::team_members::Entity")]
-    TeamMembers,
     #[sea_orm(has_many = "super::teams::Entity")]
     Teams,
     #[sea_orm(has_many = "super::user_emails::Entity")]
@@ -84,10 +82,6 @@ pub enum Relation {
     SelfRef1,
     #[sea_orm(has_many = "super::workspace_favorites::Entity")]
     WorkspaceFavorites,
-    #[sea_orm(has_many = "super::workspace_invitations::Entity")]
-    WorkspaceInvitations,
-    #[sea_orm(has_many = "super::workspace_members::Entity")]
-    WorkspaceMembers,
     #[sea_orm(has_many = "super::workspaces::Entity")]
     Workspaces,
 }
@@ -134,12 +128,6 @@ impl Related<super::reserved_usernames::Entity> for Entity {
     }
 }
 
-impl Related<super::team_members::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::TeamMembers.def()
-    }
-}
-
 impl Related<super::user_emails::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::UserEmails.def()
@@ -152,30 +140,15 @@ impl Related<super::workspace_favorites::Entity> for Entity {
     }
 }
 
-impl Related<super::workspace_invitations::Entity> for Entity {
+impl Related<super::teams::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::WorkspaceInvitations.def()
-    }
-}
-
-impl Related<super::workspace_members::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::WorkspaceMembers.def()
+        Relation::Teams.def()
     }
 }
 
 impl Related<super::workspaces::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Workspaces.def()
-    }
-}
-
-impl Related<super::teams::Entity> for Entity {
-    fn to() -> RelationDef {
-        super::team_members::Relation::Teams.def()
-    }
-    fn via() -> Option<RelationDef> {
-        Some(super::team_members::Relation::Users.def().rev())
     }
 }
 
