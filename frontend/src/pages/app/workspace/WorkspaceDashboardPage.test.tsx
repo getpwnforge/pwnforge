@@ -47,4 +47,11 @@ describe("WorkspaceDashboardPage", () => {
     renderWorkspace("");
     expect(await screen.findByText(t("workspaces:dashboard.emptyTitle"))).toBeInTheDocument();
   });
+
+  it("links to the event page in a new tab", async () => {
+    renderWorkspace("", {}, { workspace: { ...HEXAGON, event_url: "https://hexagon.ctf/" } });
+    const link = await screen.findByRole("link", { name: /hexagon\.ctf/ });
+    expect(link).toHaveAttribute("href", "https://hexagon.ctf/");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
 });

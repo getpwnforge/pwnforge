@@ -72,6 +72,7 @@ export const API_ERROR_CODES = [
   "workspace_archived",
   "invalid_ownership",
   "platform_required",
+  "invalid_event_url",
   "ends_before_start",
   "guest_role_above_member",
   "avatar_too_large",

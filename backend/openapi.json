@@ -3591,7 +3591,7 @@
             }
           },
           "422": {
-            "description": "validation_failed, invalid_body or ends_before_start",
+            "description": "validation_failed, invalid_body, invalid_event_url, or ends_before_start",
             "content": {
               "application/json": {
                 "schema": {
@@ -6127,6 +6127,13 @@
             "format": "date-time",
             "description": "Same three states as `starts_at`, and must be after it."
           },
+          "event_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent leaves it unchanged, null or a blank string clears it, an\nabsolute http(s) URL sets it (422 `invalid_event_url` otherwise)."
+          },
           "lock_after_end": {
             "type": [
               "boolean",
@@ -6139,6 +6146,17 @@
               "null"
             ],
             "description": "Same bounds as `CreateWorkspaceInput.name`, checked only when present."
+          },
+          "platform": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Platform",
+                "description": "Absent leaves it unchanged, null clears it, a platform sets it.\nRequired for a `platform` workspace (422 `platform_required`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "starts_at": {
             "type": [
@@ -6437,6 +6455,12 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "event_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "type": "string",

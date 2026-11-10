@@ -59,11 +59,27 @@ export type CreateWorkspaceValues = z.infer<typeof createWorkspaceSchema>;
 
 // ---- Settings ----------------------------------------------------------
 
+const EVENT_URL_MAX = 2048;
+
+/** Mirrors the API: an absolute http(s) URL with a host and no credentials. Empty clears it. */
+function isEventUrl(value: string): boolean {
+  if (value === "") return true;
+  if (value.length > EVENT_URL_MAX) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname !== "" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 export const updateWorkspaceSchema = z
   .object({
     name,
     description: z.string(),
     color: z.enum(ACCENT_COLORS),
+    platform: z.enum(PLATFORMS).nullable(),
+    event_url: z.string().trim().refine(isEventUrl, { message: "workspaces:validation.eventUrl" }),
     starts_at: localDateTime,
     ends_at: localDateTime,
     lock_after_end: z.boolean(),
@@ -86,7 +102,7 @@ export function toLocalInput(instant: string | null | undefined): string | null 
   return shifted.toISOString().slice(0, 16);
 }
 
-/** Only what changed. An emptied description is sent as null, which clears it. */
+/** Only what changed. An emptied description or event URL is sent as null, which clears it. */
 export function toWorkspacePatch(
   values: UpdateWorkspaceValues,
   dirty: Partial<Record<keyof UpdateWorkspaceValues, boolean | undefined>>,
@@ -95,6 +111,8 @@ export function toWorkspacePatch(
   if (dirty.name) patch.name = values.name.trim();
   if (dirty.description) patch.description = values.description.trim() || null;
   if (dirty.color) patch.color = values.color;
+  if (dirty.platform) patch.platform = values.platform;
+  if (dirty.event_url) patch.event_url = values.event_url.trim() || null;
   if (dirty.starts_at) patch.starts_at = toInstant(values.starts_at);
   if (dirty.ends_at) patch.ends_at = toInstant(values.ends_at);
   if (dirty.lock_after_end) patch.lock_after_end = values.lock_after_end;

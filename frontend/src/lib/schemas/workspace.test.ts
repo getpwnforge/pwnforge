@@ -54,6 +54,8 @@ const current: UpdateWorkspaceValues = {
   name: "CTF Hexagon", description: "Autumn CTF", color: "rose",
   starts_at: "2026-11-10T10:00", ends_at: "2026-11-12T18:00", lock_after_end: false,
   default_writeup_visibility: "team",
+  platform: null,
+  event_url: "",
 };
 
 describe("toWorkspacePatch", () => {
@@ -76,6 +78,11 @@ describe("toWorkspacePatch", () => {
     expect(toWorkspacePatch({ ...current, color: "teal", lock_after_end: true }, { color: true, lock_after_end: true }))
       .toEqual({ color: "teal", lock_after_end: true });
   });
+
+  it("clears an emptied event URL with null, and passes the platform as is", () => {
+    const values = { ...current, event_url: "  ", platform: null };
+    expect(toWorkspacePatch(values, { event_url: true, platform: true })).toEqual({ event_url: null, platform: null });
+  });
 });
 
 describe("updateWorkspaceSchema", () => {
@@ -83,5 +90,14 @@ describe("updateWorkspaceSchema", () => {
     const result = updateWorkspaceSchema.safeParse({ ...current, ends_at: "2026-11-09T10:00" });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toBe("workspaces:validation.endsBeforeStart");
+  });
+
+  it("takes an empty event URL or an absolute http(s) one, nothing else", () => {
+    const parse = (event_url: string) => updateWorkspaceSchema.safeParse({ ...current, event_url });
+    expect(parse("").success).toBe(true);
+    expect(parse(" https://hexagon.ctf/scoreboard ").success).toBe(true);
+    for (const bad of ["javascript:alert(1)", "ftp://ctf.example", "https://user:pw@ctf.example", "ctf.example"]) {
+      expect(parse(bad).error?.issues[0]?.message).toBe("workspaces:validation.eventUrl");
+    }
   });
 });

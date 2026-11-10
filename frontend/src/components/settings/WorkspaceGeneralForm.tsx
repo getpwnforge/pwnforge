@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/color-picker";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useTeams } from "@/hooks/useTeams";
@@ -24,21 +25,37 @@ import { avatarUrl } from "@/lib/avatar";
 import { canEditWorkspace } from "@/lib/permissions";
 import { ROUTES } from "@/lib/routes";
 import {
+  PLATFORMS,
   toLocalInput,
   toWorkspacePatch,
   updateWorkspaceSchema,
   type UpdateWorkspaceValues,
 } from "@/lib/schemas/workspace";
 
-const NAME_CODES = new Set(["workspace_name_reserved", "workspace_name_not_sluggable"]);
+/** The API codes that belong under one field rather than above the form. */
+const FIELD_OF_CODE: Record<string, keyof UpdateWorkspaceValues> = {
+  workspace_name_reserved: "name",
+  workspace_name_not_sluggable: "name",
+  invalid_event_url: "event_url",
+  platform_required: "platform",
+};
+/** Fields whose validator codes the API can list in `fields`. */
+const LISTED_FIELDS = ["name", "event_url"] as const;
 /** Image types the avatar picker offers; the server checks the file again. */
 const AVATAR_TYPES = "image/png,image/jpeg,image/webp";
+/** Radix Select has no empty item: this stands for "no platform" on an event. */
+const NO_PLATFORM = "none";
 
-function nameErrorOf(error: unknown): string | null {
+/** Where a refused save shows: under one field, or (null) above the form. */
+function placedErrorOf(error: unknown): { field: keyof UpdateWorkspaceValues; message: string } | null {
   if (!isApiError(error)) return null;
-  if (NAME_CODES.has(error.code)) return apiErrorKey(error);
-  const listed = error.fields?.name?.[0];
-  return listed ? fieldErrorKey(listed) : null;
+  const field = FIELD_OF_CODE[error.code];
+  if (field) return { field, message: apiErrorKey(error) };
+  for (const listed of LISTED_FIELDS) {
+    const code = error.fields?.[listed]?.[0];
+    if (code) return { field: listed, message: fieldErrorKey(code) };
+  }
+  return null;
 }
 
 function valuesOf(workspace: WorkspaceResponse): UpdateWorkspaceValues {
@@ -46,6 +63,8 @@ function valuesOf(workspace: WorkspaceResponse): UpdateWorkspaceValues {
     name: workspace.name,
     description: workspace.description ?? "",
     color: workspace.color,
+    platform: workspace.platform ?? null,
+    event_url: workspace.event_url ?? "",
     starts_at: toLocalInput(workspace.starts_at),
     ends_at: toLocalInput(workspace.ends_at),
     lock_after_end: workspace.lock_after_end,
@@ -54,7 +73,7 @@ function valuesOf(workspace: WorkspaceResponse): UpdateWorkspaceValues {
 }
 
 /**
- * Identity, mode and team, and the event's dates, saved together with the bar and only for what
+ * Identity, type and source, mode and team, and the event's dates, saved together with the bar and only for what
  * changed. Read-only for whoever cannot edit, and for everyone while the workspace is archived.
  */
 export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: WorkspaceResponse }>) {
@@ -82,14 +101,14 @@ export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: Worksp
           outcome?.onSaved();
         },
         onError: (error) => {
-          const message = nameErrorOf(error);
-          if (message) form.setError("name", { message }, { shouldFocus: true });
+          const placed = placedErrorOf(error);
+          if (placed) form.setError(placed.field, { message: placed.message }, { shouldFocus: true });
           outcome?.onFailed();
         },
       },
     );
   const saveThen: SaveThen = (outcome) => void form.handleSubmit((values) => submit(values, outcome), outcome.onFailed)();
-  const unplaced = update.error && !nameErrorOf(update.error) ? update.error : null;
+  const unplaced = update.error && !placedErrorOf(update.error) ? update.error : null;
 
   return (
     <form noValidate className="flex flex-col gap-7" onSubmit={(event) => void form.handleSubmit((values) => submit(values))(event)}>
@@ -146,12 +165,67 @@ export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: Worksp
               <TeamName teamId={workspace.team_id} />
             </SettingRow>
           ) : null}
-          <SettingRow label={t("workspaces:settings.modeTeam.type")}>
-            <span className="text-sm text-text">
-              {t(`workspaces:create.type.${workspace.type}`)}
-              {workspace.platform ? <> · {t(`nav:platforms.${workspace.platform}`)}</> : null}
-            </span>
+        </SettingsSection>
+
+        <SettingsSection id="ws-source" title={t("workspaces:settings.source.title")}>
+          <SettingRow label={t("workspaces:settings.source.type")} hint={t("workspaces:settings.source.typeHint")}>
+            <span className="text-sm text-text">{t(`workspaces:create.type.${workspace.type}`)}</span>
           </SettingRow>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Controller
+              control={form.control}
+              name="platform"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={!!fieldState.error}>
+                  <FieldLabel id="ws-settings-platform-label" htmlFor="ws-settings-platform">
+                    {t("workspaces:settings.source.platform")}
+                  </FieldLabel>
+                  <Select
+                    value={field.value ?? (workspace.type === "event" ? NO_PLATFORM : "")}
+                    onValueChange={(value) => field.onChange(value === NO_PLATFORM ? null : value)}
+                    disabled={!canEdit}
+                  >
+                    <SelectTrigger
+                      ref={field.ref}
+                      id="ws-settings-platform"
+                      aria-labelledby="ws-settings-platform-label"
+                      aria-invalid={!!fieldState.error}
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* A platform workspace always keeps one; only an event may have none. */}
+                      {workspace.type === "event" ? (
+                        <SelectItem value={NO_PLATFORM}>{t("workspaces:settings.source.noPlatform")}</SelectItem>
+                      ) : null}
+                      {PLATFORMS.map((platform) => (
+                        <SelectItem key={platform} value={platform}>
+                          {t(`nav:platforms.${platform}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldError errors={fieldError(fieldState.error?.message)} />
+                </Field>
+              )}
+            />
+            <Field data-invalid={!!errors.event_url}>
+              <FieldLabel htmlFor="ws-settings-event-url">{t("workspaces:settings.source.eventUrl")}</FieldLabel>
+              <Input
+                id="ws-settings-event-url"
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://"
+                aria-invalid={!!errors.event_url}
+                {...form.register("event_url")}
+              />
+              <FieldDescription>{t("workspaces:settings.source.eventUrlHint")}</FieldDescription>
+              <FieldError errors={fieldError(errors.event_url?.message)} />
+            </Field>
+          </div>
         </SettingsSection>
 
         {workspace.type === "event" ? (

@@ -1547,9 +1547,15 @@ export interface components {
              * @description Same three states as `starts_at`, and must be after it.
              */
             ends_at?: string | null;
+            /**
+             * @description Absent leaves it unchanged, null or a blank string clears it, an
+             *     absolute http(s) URL sets it (422 `invalid_event_url` otherwise).
+             */
+            event_url?: string | null;
             lock_after_end?: boolean | null;
             /** @description Same bounds as `CreateWorkspaceInput.name`, checked only when present. */
             name?: string | null;
+            platform?: components["schemas"]["Platform"] | null;
             /**
              * Format: date-time
              * @description Absent leaves it unchanged, null clears it, a date sets it. Must be
@@ -1679,6 +1685,7 @@ export interface components {
             description?: string | null;
             /** Format: date-time */
             ends_at?: string | null;
+            event_url?: string | null;
             /** Format: uuid */
             id: string;
             lock_after_end: boolean;
@@ -4628,7 +4635,7 @@ export interface operations {
                     "application/json": components["schemas"]["SimpleErrorResponse"];
                 };
             };
-            /** @description validation_failed, invalid_body or ends_before_start */
+            /** @description validation_failed, invalid_body, invalid_event_url, or ends_before_start */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -104,6 +104,7 @@ export function workspaceResponse(overrides: Partial<WorkspaceResponse> = {}): W
     avatar_version: null,
     type: "event",
     platform: null,
+    event_url: null,
     mode: "team",
     team_id: "01900000-0000-7000-8000-000000000001",
     starts_at: null,

@@ -77,7 +77,8 @@
     "nameRequired": "Give the workspace a name.",
     "platformRequired": "Choose a platform.",
     "teamRequired": "Choose a team.",
-    "endsBeforeStart": "The end must come after the start."
+    "endsBeforeStart": "The end must come after the start.",
+    "eventUrl": "Enter a full http:// or https:// address."
   },
   "card": {
     "solvedRatio": "{{solved}} / {{total}} solved",
@@ -151,8 +152,7 @@
       "workspaceType": "Workspace type",
       "workspaceTypeHint": "Solo: you alone. Team: shared with a team.",
       "associatedTeam": "Associated team",
-      "associatedTeamHint": "Members and roles come from this team.",
-      "type": "Type"
+      "associatedTeamHint": "Members and roles come from this team."
     },
     "event": {
       "title": "Event",
@@ -190,7 +190,16 @@
       "manage": "Manage in the team"
     },
     "dangerReversible": "Reversible actions",
-    "dangerDestructive": "Destructive actions"
+    "dangerDestructive": "Destructive actions",
+    "source": {
+      "title": "Type and source",
+      "type": "Type",
+      "typeHint": "Set at creation.",
+      "platform": "Platform",
+      "noPlatform": "None",
+      "eventUrl": "Event URL",
+      "eventUrlHint": "Public page of the CTF or platform, opened from the dashboard."
+    }
   },
   "members": {
     "title": "Workspace members",
@@ -229,6 +238,7 @@
     "learnMore": "Learn more",
     "createChallenge": "Create a challenge",
     "members_one": "{{count}} member",
-    "members_other": "{{count}} members"
+    "members_other": "{{count}} members",
+    "eventLinkHint": "(opens the event page in a new tab)"
   }
 }

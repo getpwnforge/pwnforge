@@ -1,4 +1,4 @@
-import { ArrowUpRightIcon, FlagIcon, PlusIcon } from "lucide-react";
+import { ArrowUpRightIcon, FlagIcon, PlusIcon, ExternalLinkIcon  } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
@@ -23,6 +23,15 @@ import { Button } from "@/components/ui/button";
  */
 function canCreateChallenge(role: WorkspaceResponse["my_role"]): boolean {
   return !!(role);
+}
+
+/** The host to show for a link; the API only stores parsed http(s) URLs. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 /**
@@ -145,6 +154,23 @@ function Facts({ workspace }: Readonly<{ workspace: WorkspaceResponse }>) {
   if (start && end) parts.push({ key: "dates", node: t("workspaces:dashboard.dates", { start, end }) });
   else if (start) parts.push({ key: "dates", node: t("workspaces:dashboard.from", { date: start }) });
   else if (end) parts.push({ key: "dates", node: t("workspaces:dashboard.until", { date: end }) });
+  if (workspace.event_url) {
+    parts.push({
+      key: "event",
+      node: (
+        <a
+          href={workspace.event_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-text hover:underline"
+        >
+          {hostOf(workspace.event_url)}
+          <ExternalLinkIcon aria-hidden className="size-3.5" />
+          <span className="sr-only">{t("workspaces:dashboard.eventLinkHint")}</span>
+        </a>
+      ),
+    });
+  }
 
   return (
     <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[13px] text-text-muted">

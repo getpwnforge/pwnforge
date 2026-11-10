@@ -65,7 +65,8 @@
     "avatar_svg_rejected": "Les images SVG ne sont pas acceptées",
     "avatar_unsupported_format": "Utilisez une image PNG, JPEG ou WebP",
     "avatar_undecodable": "Cette image n'a pas pu être lue",
-    "storage_quota_exceeded": "Le stockage est plein"
+    "storage_quota_exceeded": "Le stockage est plein",
+    "invalid_event_url": "Adresse invalide : une URL complète en http:// ou https://, sans identifiants."
   },
   "field": {
     "invalid": "Cette valeur n'est pas valide",
