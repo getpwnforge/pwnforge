@@ -95,6 +95,17 @@ pub struct UpdateWorkspaceInput {
     pub ends_at: Option<Option<DateTime<Utc>>>,
     pub lock_after_end: Option<bool>,
     pub default_writeup_visibility: Option<WriteupVisibility>,
+    /// Absent leaves it unchanged, null clears it, a platform sets it.
+    /// Required for a `platform` workspace (422 `platform_required`).
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[schema(value_type = Option<Platform>)]
+    pub platform: Option<Option<Platform>>,
+    /// Absent leaves it unchanged, null or a blank string clears it, an
+    /// absolute http(s) URL sets it (422 `invalid_event_url` otherwise).
+    // Checked in `update_workspace`: validator's `url` accepts any scheme.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    #[schema(value_type = Option<String>)]
+    pub event_url: Option<Option<String>>,
 }
 
 /// One workspace in the caller's list.
@@ -137,6 +148,7 @@ pub struct WorkspaceResponse {
     pub avatar_version: Option<Uuid>,
     pub r#type: WorkspaceType,
     pub platform: Option<Platform>,
+    pub event_url: Option<String>,
     pub mode: WorkspaceMode,
     pub team_id: Option<Uuid>,
     pub starts_at: Option<DateTime<Utc>>,
@@ -171,6 +183,7 @@ impl WorkspaceResponse {
             id: model.id,
             slug: model.slug,
             name: model.name,
+            event_url: model.event_url,
             description: model.description,
             // A display field: falls back to Ember like `TeamResponse::from_model`
             // instead of failing the read.

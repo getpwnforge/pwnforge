@@ -22,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261014_121000_members_invited_by::Migration),
             Box::new(m20261014_122000_targeted_workspace_invitations::Migration),
             Box::new(m20261102_090000_team_settings::Migration),
+            Box::new(m20261110_215222_workspace_event_url::Migration),
         ]
     }
 }
@@ -40,3 +41,4 @@ mod m20261014_120000_team_invitations_expire;
 mod m20261014_121000_members_invited_by;
 mod m20261014_122000_targeted_workspace_invitations;
 mod m20261102_090000_team_settings;
+mod m20261110_215222_workspace_event_url;

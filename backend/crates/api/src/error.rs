@@ -728,6 +728,11 @@ fn workspace_response(err: WorkspaceError) -> Response {
             Json(json!({ "error": "ends_before_start" })),
         )
             .into_response(),
+        WorkspaceError::InvalidEventUrl => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": "invalid_event_url" })),
+        )
+            .into_response(),
         WorkspaceError::PlatformRequired => (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "error": "platform_required" })),

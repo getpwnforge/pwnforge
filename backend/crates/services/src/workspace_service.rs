@@ -85,6 +85,9 @@ pub enum WorkspaceError {
 
     #[error("a platform workspace must name its platform")]
     PlatformRequired,
+
+    #[error("event_url is not an absolute http(s) URL of at most 2048 characters")]
+    InvalidEventUrl,
 }
 
 /// Minimum team role required to create a workspace under `team`: Admin, or
@@ -100,6 +103,30 @@ fn min_role_to_create_workspace(team: &teams::Model) -> TeamRole {
     } else {
         TeamRole::Admin
     }
+}
+
+/// Mirrors `ck_workspaces_event_url`; both count characters, not bytes.
+const EVENT_URL_MAX_CHARS: usize = 2048;
+
+/// The URL as it will be stored: parsed and normalised (lowercase scheme and
+/// host, punycode), absolute, http or https, with a host and no credentials.
+/// A blank string clears it. Never a `javascript:` or `data:` link, since the
+/// frontend renders it as one.
+fn normalize_event_url(raw: &str) -> Result<Option<String>, WorkspaceError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let url = reqwest::Url::parse(raw).map_err(|_| WorkspaceError::InvalidEventUrl)?;
+    let valid = matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some_and(|host| !host.is_empty())
+        && url.username().is_empty()
+        && url.password().is_none();
+    let stored = String::from(url);
+    if !valid || stored.chars().count() > EVENT_URL_MAX_CHARS {
+        return Err(WorkspaceError::InvalidEventUrl);
+    }
+    Ok(Some(stored))
 }
 
 /// Creates a workspace, either solo (owned directly by `actor_id`) or under
@@ -456,6 +483,24 @@ pub async fn update_workspace(
     };
     validate_date_range(starts_at, ends_at)?;
 
+    // Only a sent platform is checked, against the stored type: the type
+    // never changes, and a stored row is not re-judged by a PATCH that
+    // leaves its platform alone.
+    let platform = match input.platform {
+        None => None,
+        Some(platform) => {
+            let r#type = WorkspaceType::parse(&workspace.r#type)
+                .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+            validate_platform(r#type, platform)?;
+            Some(platform)
+        }
+    };
+    let event_url = match input.event_url {
+        None => None,             // absent: unchanged
+        Some(None) => Some(None), // null: cleared
+        Some(Some(raw)) => Some(normalize_event_url(&raw)?),
+    };
+
     let mut active_model: workspaces::ActiveModel = workspace.into();
     if let Some(name) = input.name {
         active_model.name = Set(name);
@@ -472,6 +517,12 @@ pub async fn update_workspace(
     if let Some(default_writeup_visibility) = input.default_writeup_visibility {
         active_model.default_writeup_visibility =
             Set(default_writeup_visibility.as_str().to_string());
+    }
+    if let Some(platform) = platform {
+        active_model.platform = Set(platform.map(|p| p.as_str().to_string()));
+    }
+    if let Some(event_url) = event_url {
+        active_model.event_url = Set(event_url);
     }
     active_model.starts_at = Set(starts_at.map(Into::into));
     active_model.ends_at = Set(ends_at.map(Into::into));
@@ -1305,5 +1356,46 @@ fn validate_ownership(mode: WorkspaceMode, team_id: Option<Uuid>) -> Result<(), 
         (WorkspaceMode::Team, Some(_)) => Ok(()),
         (WorkspaceMode::Solo, None) => Ok(()),
         _ => Err(WorkspaceError::InvalidOwnership),
+    }
+}
+
+#[cfg(test)]
+mod event_url_tests {
+    use super::normalize_event_url;
+
+    #[test]
+    fn keeps_http_and_https_normalised() {
+        assert_eq!(
+            normalize_event_url(" HTTPS://Hexagon.CTF/x ")
+                .unwrap()
+                .as_deref(),
+            Some("https://hexagon.ctf/x")
+        );
+        assert!(normalize_event_url("http://ctf.example:8080/").is_ok());
+    }
+
+    #[test]
+    fn clears_on_blank() {
+        assert_eq!(normalize_event_url("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn refuses_other_schemes_credentials_and_relative() {
+        for raw in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "ftp://ctf.example",
+            "https://user:pw@ctf.example",
+            "/relative",
+            "ctf.example",
+        ] {
+            assert!(normalize_event_url(raw).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn refuses_past_the_limit() {
+        let long = format!("https://ctf.example/{}", "a".repeat(2048));
+        assert!(normalize_event_url(&long).is_err());
     }
 }

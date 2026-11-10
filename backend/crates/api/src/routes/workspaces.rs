@@ -133,7 +133,7 @@ async fn get_workspace(
         (status = 404, description = "Workspace not found, or no access to it", body = SimpleErrorResponse),
         (status = 409, description = "The workspace is archived", body = SimpleErrorResponse),
         (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
-        (status = 422, description = "validation_failed, invalid_body or ends_before_start", body = UnprocessableErrorResponse),
+        (status = 422, description = "validation_failed, invalid_body, invalid_event_url, or ends_before_start", body = UnprocessableErrorResponse),
     )
 )]
 async fn update_workspace(

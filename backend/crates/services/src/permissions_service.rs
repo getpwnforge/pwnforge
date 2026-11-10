@@ -160,6 +160,7 @@ mod tests {
             archived: false,
             created_at: now,
             updated_at: now,
+            event_url: None,
         }
     }
 

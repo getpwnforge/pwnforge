@@ -22,7 +22,6 @@ pub struct Model {
     pub description: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub color: String,
-    pub avatar_version: Option<Uuid>,
     #[sea_orm(column_type = "Text")]
     pub r#type: String,
     #[sea_orm(column_type = "Text", nullable)]
@@ -37,6 +36,9 @@ pub struct Model {
     pub archived: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    pub avatar_version: Option<Uuid>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub event_url: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -79,12 +81,6 @@ impl Related<super::teams::Entity> for Entity {
     }
 }
 
-impl Related<super::users::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Users.def()
-    }
-}
-
 impl Related<super::workspace_favorites::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::WorkspaceFavorites.def()
@@ -100,6 +96,12 @@ impl Related<super::workspace_invitations::Entity> for Entity {
 impl Related<super::workspace_members::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::WorkspaceMembers.def()
+    }
+}
+
+impl Related<super::users::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Users.def()
     }
 }
 
