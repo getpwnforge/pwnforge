@@ -100,7 +100,7 @@
     "delete": "Supprimer l'équipe",
     "deleteHint": "Irréversible. Les workspaces de l'équipe sont supprimés avec elle.",
     "deleteTitle": "Supprimer {{team}} ?",
-    "deleteText": "L'équipe et tous ses workspaces sont supprimés définitivement. Tapez {{team}} pour confirmer.",
+    "deleteText": "L'équipe et tous ses workspaces sont supprimés définitivement.",
     "slug": "Slug",
     "slugHint": "Fixé à la création de l'équipe ; il ne change pas.",
     "avatarAdd": "Ajouter une image",

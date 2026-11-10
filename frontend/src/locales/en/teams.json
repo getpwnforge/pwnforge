@@ -100,7 +100,7 @@
     "delete": "Delete the team",
     "deleteHint": "Irreversible. The team's workspaces are deleted with it.",
     "deleteTitle": "Delete {{team}}?",
-    "deleteText": "The team and all its workspaces are deleted for good. Type {{team}} to confirm.",
+    "deleteText": "The team and all its workspaces are deleted for good.",
     "slug": "Slug",
     "slugHint": "Set when the team was created; it does not change.",
     "avatarAdd": "Add an image",

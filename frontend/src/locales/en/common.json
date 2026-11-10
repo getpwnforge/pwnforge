@@ -223,7 +223,7 @@
     "dismiss": "Dismiss alert"
   },
   "confirm": {
-    "typeToConfirm": "Type {{text}} to confirm"
+    "typeToConfirm": "Type <code>{{text}}</code> to confirm"
   },
   "invitations": {
     "title": "Pending invitations",

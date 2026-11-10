@@ -223,7 +223,7 @@
     "dismiss": "Ignorer l'alerte"
   },
   "confirm": {
-    "typeToConfirm": "Saisissez {{text}} pour confirmer"
+    "typeToConfirm": "Tapez <code>{{text}}</code> pour confirmer"
   },
   "invitations": {
     "title": "Invitations en attente",
