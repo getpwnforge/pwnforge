@@ -27,15 +27,4 @@ describe("WorkspaceLayout", () => {
     renderWorkspace("", { [DETAIL]: { status: 503, data: { error: "service_unavailable" } } });
     expect(await screen.findByText(t("errors:api.service_unavailable"))).toBeInTheDocument();
   });
-
-  it("says an archived workspace is read-only", async () => {
-    renderWorkspace("", {}, { workspace: { ...HEXAGON, archived: true } });
-    expect(await screen.findByText(t("workspaces:archived.banner"))).toBeInTheDocument();
-  });
-
-  it("shows no banner on a live workspace", async () => {
-    renderWorkspace("");
-    await screen.findByRole("heading", { name: "CTF Hexagon" });
-    expect(screen.queryByText(t("workspaces:archived.banner"))).not.toBeInTheDocument();
-  });
 });

@@ -1,4 +1,3 @@
-import { ArchiveIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useParams } from "react-router";
 
@@ -34,21 +33,7 @@ export function WorkspaceLayout() {
   }
 
   return (
-    <>
-      {workspace.data.archived ? <ArchivedBanner /> : null}
-      <Outlet context={workspace.data} />
-    </>
-  );
-}
-
-/** Read-only, as the API enforces it: shown on every page of the workspace. */
-function ArchivedBanner() {
-  const { t } = useTranslation(["workspaces"]);
-  return (
-    <output className="flex items-center gap-2.5 border-b border-warning/45 bg-warning-soft px-6 py-2.5 text-[13px] text-warning-text">
-      <ArchiveIcon aria-hidden className="size-4 shrink-0" />
-      {t("workspaces:archived.banner")}
-    </output>
+    <Outlet context={workspace.data} />
   );
 }
 

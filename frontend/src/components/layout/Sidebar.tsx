@@ -444,7 +444,7 @@ function SidebarNav({
   return (
     <>
       <SidebarGroup>
-        <SidebarGroupLabel>
+        <SidebarGroupLabel className="uppercase">
           {t(items === GLOBAL_NAV ? "sections.personalSpace" : "sections.workspace")}
         </SidebarGroupLabel>
         <SidebarMenu>
@@ -461,7 +461,7 @@ function SidebarNav({
 
       {items === GLOBAL_NAV ? (
         recentWorkspaces.length > 0 && <SidebarGroup>
-          <SidebarGroupLabel>{t("sections.recentWorkspaces")}</SidebarGroupLabel>
+          <SidebarGroupLabel className="uppercase">{t("sections.recentWorkspaces")}</SidebarGroupLabel>
           <SidebarMenu>
             {recentWorkspaces.map((w) => (
               <SidebarMenuItem key={w.id}>
@@ -479,7 +479,7 @@ function SidebarNav({
         <>
           {activeTags.length > 0 && (
             <SidebarGroup>
-              <SidebarGroupLabel>{t("sections.activeTags")}</SidebarGroupLabel>
+              <SidebarGroupLabel className="uppercase">{t("sections.activeTags")}</SidebarGroupLabel>
               <div className="flex flex-wrap gap-1 px-2">
                 {activeTags.map((tag) => (
                   <Tag key={tag} variant={systemTags.has(tag) ? "system" : "custom"} className="text-xs">{tag}</Tag>
@@ -490,7 +490,7 @@ function SidebarNav({
 
           <SidebarGroup>
             <Separator className="mb-2" />
-            <SidebarGroupLabel>{t("sections.navigate")}</SidebarGroupLabel>
+            <SidebarGroupLabel className="uppercase">{t("sections.navigate")}</SidebarGroupLabel>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip={t("allWorkspaces")}>
@@ -651,10 +651,12 @@ export function AppSidebar() {
   }
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible="icon" className="absolute h-auto">
       <SidebarHeader>
         <div className={cn("flex w-full items-center", collapsed ? "flex-col gap-2" : "justify-between gap-2.5")}>
-          <Logo size="md" wordmark={!collapsed} />
+          <Link to={ROUTES.workspaces}>
+            <Logo size="md" wordmark={!collapsed} />
+          </Link>
           <div className={cn("flex items-center gap-1", collapsed && "flex-col")}>
             {!collapsed && <PendingInvitationsMenu />}
             <SidebarTrigger />
