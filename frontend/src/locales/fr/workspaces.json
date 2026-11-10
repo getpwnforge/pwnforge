@@ -10,7 +10,11 @@
     "soon": "Bientôt disponible",
     "filters": "Filtres",
     "clearFilters": "Effacer les filtres",
-    "facets": { "type": "Type", "mode": "Mode", "platform": "Plateforme" },
+    "facets": {
+      "type": "Type",
+      "mode": "Mode",
+      "platform": "Plateforme"
+    },
     "tabs": {
       "all": "Tous",
       "active": "Actifs",
@@ -31,7 +35,11 @@
     "subtitle": "Un workspace = une plateforme, un CTF, ou un challenge perso.",
     "cancel": "Annuler",
     "submit": "Créer le workspace",
-    "steps": { "type": "1 · Type", "details": "2 · Détails", "mode": "3 · Mode de travail" },
+    "steps": {
+      "type": "1 · Type",
+      "details": "2 · Détails",
+      "mode": "3 · Mode de travail"
+    },
     "type": {
       "platform": "Plateforme",
       "platformHelp": "Long terme : HTB, THM, Root-Me. Challenges illimités.",
@@ -96,6 +104,26 @@
     "leaveDescription": "Vous perdrez l'accès à ce workspace et à tout son contenu. Cette action ne peut pas être annulée.",
     "leaveConfirm": "Êtes-vous sûr de vouloir quitter ce workspace ?",
     "leaveAction": "Quitter le workspace",
+    "title": "Paramètres",
+    "sectionsLabel": "Sections des paramètres",
+    "soon": "Bientôt",
+    "readOnly": "Seuls les Admins et le Captain peuvent modifier ces réglages.",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saved": "Paramètres enregistrés",
+    "archive": "Archiver",
+    "archiveHint": "Lecture seule pour tous ; les invitations en attente sont annulées.",
+    "archiveTitle": "Archiver {{name}} ?",
+    "archiveText": "Plus personne ne pourra le modifier avant son désarchivage. Les invitations en attente sont annulées et ne reviendront pas.",
+    "archived": "Workspace archivé",
+    "unarchive": "Désarchiver",
+    "unarchiveHint": "L'édition revient ; les invitations annulées le restent.",
+    "unarchived": "Workspace désarchivé",
+    "leaveHint": "Vous perdez l'accès ; seul un Captain ou un Admin peut vous réintégrer.",
+    "delete": "Supprimer le workspace",
+    "deleteHint": "Irréversible : ses challenges, writeups et fichiers partent avec lui.",
+    "deleteTitle": "Supprimer {{name}} ?",
+    "deleteText": "Tout son contenu est supprimé définitivement.",
     "nav": {
       "general": "Général",
       "visibility": "Visibilité",
@@ -112,29 +140,57 @@
       "slug": "Slug",
       "description": "Description",
       "color": "Couleur",
-      "icon": "Icône"
+      "icon": "Icône",
+      "slugHint": "Fixé à la création ; les liens vers le workspace l'utilisent.",
+      "avatarAdd": "Ajouter une image",
+      "avatarChange": "Changer l'image",
+      "avatarRemove": "Retirer"
     },
     "modeTeam": {
       "title": "Mode & équipe",
       "workspaceType": "Type de workspace",
       "workspaceTypeHint": "Solo : vous seul. Équipe : partagé avec une équipe.",
       "associatedTeam": "Équipe associée",
-      "associatedTeamHint": "Les membres et rôles viennent de cette équipe."
+      "associatedTeamHint": "Les membres et rôles viennent de cette équipe.",
+      "type": "Type"
     },
     "event": {
       "title": "Événement",
       "start": "Début",
       "end": "Fin",
       "lockAfterEnd": "Verrouiller après la fin",
-      "lockAfterEndHint": "Empêche l'édition des challenges et writeups après la fin de l'événement."
+      "lockAfterEndHint": "Après la fin : plus de nouveaux challenges ni de modification de leurs infos. Notes, fichiers, writeups et statuts restent modifiables.",
+      "autoArchive": "Archivage automatique",
+      "autoArchiveHint": "Passe le workspace en lecture seule quelques jours après la fin.",
+      "autoArchiveNever": "Jamais"
     },
     "writeupVisibility": {
       "title": "Visibilité des writeups",
-      "defaultLabel": "Par défaut, les writeups sont",
+      "defaultLabel": "Visibilité par défaut",
       "defaultHint": "Vous pouvez toujours publier individuellement par writeup.",
       "draft": "Brouillon",
       "team": "Visibles par l'équipe"
-    }
+    },
+    "navGroups": {
+      "workspace": "Workspace",
+      "connections": "Connexions",
+      "data": "Données",
+      "danger": "Danger"
+    },
+    "unsaved": "Modifications non enregistrées",
+    "unsavedTitle": "Modifications non enregistrées",
+    "unsavedText": "Vos changements sur cette page seront perdus si vous la quittez sans les enregistrer.",
+    "unsavedStay": "Rester",
+    "unsavedDiscard": "Abandonner",
+    "unsavedSave": "Enregistrer et continuer",
+    "roles": {
+      "title": "Accès",
+      "label": "Rôles",
+      "hint": "Hérités de {{team}} : Captain, Admin, Member, Viewer.",
+      "manage": "Gérer dans l'équipe"
+    },
+    "dangerReversible": "Actions réversibles",
+    "dangerDestructive": "Actions destructives"
   },
   "members": {
     "title": "Membres du workspace",

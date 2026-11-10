@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter, Routes, useLocation } from "react-router";
+import { createMemoryRouter, createRoutesFromElements, Outlet, Route, RouterProvider, useLocation } from "react-router";
 import { vi } from "vitest";
 
 import type { UserResponse } from "@/lib/api/types";
@@ -12,6 +12,16 @@ import { testQueryClient, withClient } from "@/test/query";
 function LocationProbe() {
   const { pathname, search } = useLocation();
   return <output data-testid="location">{pathname + search}</output>;
+}
+
+/** Every test route renders under this, so the probe sits inside the router. */
+function ProbeLayout() {
+  return (
+    <>
+      <Outlet />
+      <LocationProbe />
+    </>
+  );
 }
 
 /** What jsdom lacks and Radix menus, selects and dialogs call. */
@@ -27,7 +37,8 @@ type Options = { user?: UserResponse | null };
 
 /**
  * Renders `routes` at `url` with a fresh query client and an auth context.
- * `user: null` renders as an anonymous visitor.
+ * `user: null` renders as an anonymous visitor. A data router, as in the app, so that
+ * useBlocker and useMatches work.
  */
 export function renderRoute(url: string, routes: ReactNode, { user = userResponse() }: Options = {}) {
   stubBrowserGaps();
@@ -44,14 +55,14 @@ export function renderRoute(url: string, routes: ReactNode, { user = userRespons
     reload: vi.fn(),
   };
   const client = testQueryClient();
+  const router = createMemoryRouter(createRoutesFromElements(<Route element={<ProbeLayout />}>{routes}</Route>), {
+    initialEntries: [url],
+  });
   const view = render(
     <AuthContext value={auth}>
-      <MemoryRouter initialEntries={[url]}>
-        <Routes>{routes}</Routes>
-        <LocationProbe />
-      </MemoryRouter>
+      <RouterProvider router={router} />
     </AuthContext>,
     { wrapper: withClient(client) },
   );
-  return { ...view, client };
+  return { ...view, client, router };
 }

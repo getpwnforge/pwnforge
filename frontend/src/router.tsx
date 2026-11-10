@@ -33,6 +33,7 @@ import { TeamPage } from "@/pages/app/teams/TeamPage";
 import { InvitationLinkPage } from "@/pages/invitations/InvitationLinkPage";
 import { WorkspaceDashboardPage } from "@/pages/app/workspace/WorkspaceDashboardPage";
 import { WorkspaceLayout } from "@/pages/app/workspace/WorkspaceLayout";
+import { WorkspaceSettingsPage } from "./pages/app/workspace/WorkspaceSettingsPage";
 
 export const router = createBrowserRouter([
   // Everything sits under the setup gate: on a fresh instance every route
@@ -126,7 +127,7 @@ export const router = createBrowserRouter([
                 children: [
                   { index: true, element: <WorkspaceDashboardPage /> },
                   // F5: { path: "members", element: <WorkspaceMembersPage /> },
-                  // F5: { path: "settings", element: <WorkspaceSettingsPage /> },
+                  { path: "settings", element: <WorkspaceSettingsPage /> },
                 ],
               },
               // { path: ROUTES.challenges(":slug"), element: <Stub name="Challenges" /> },

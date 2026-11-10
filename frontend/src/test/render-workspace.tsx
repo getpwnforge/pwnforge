@@ -3,6 +3,7 @@ import { Route } from "react-router";
 import type { UserResponse, WorkspaceResponse } from "@/lib/api/types";
 import { WorkspaceDashboardPage } from "@/pages/app/workspace/WorkspaceDashboardPage";
 import { WorkspaceLayout } from "@/pages/app/workspace/WorkspaceLayout";
+import { WorkspaceSettingsPage } from "@/pages/app/workspace/WorkspaceSettingsPage";
 import { teamResponse, workspaceResponse } from "@/test/api-fixtures";
 import { fakeApi } from "@/test/fake-api";
 import { renderRoute } from "@/test/render-route";
@@ -17,9 +18,9 @@ export const HEXAGON = workspaceResponse({
 type Options = { workspace?: WorkspaceResponse; user?: UserResponse | null };
 
 /**
- * Mounts /w/:slug as router.tsx does: WorkspaceLayout and its children (F5 adds members and
- * settings here). `path` follows the slug: "" for the dashboard, "/members" later. My teams
- * answer Team Alpha, which the workspace belongs to.
+ * Mounts /w/:slug as router.tsx does: WorkspaceLayout and its pages. `path` follows the slug:
+ * "" for the dashboard, "/settings" for the settings. My teams answer Team Alpha, which the
+ * workspace belongs to.
  */
 export function renderWorkspace(path: string, routes: Parameters<typeof fakeApi>[0] = {}, { workspace = HEXAGON, user }: Options = {}) {
   const server = fakeApi({
@@ -31,6 +32,7 @@ export function renderWorkspace(path: string, routes: Parameters<typeof fakeApi>
     <>
       <Route path="/w/:slug" element={<WorkspaceLayout />}>
         <Route index element={<WorkspaceDashboardPage />} />
+        <Route path="settings" element={<WorkspaceSettingsPage />} />
       </Route>
       <Route path="*" element={null} />
     </>
