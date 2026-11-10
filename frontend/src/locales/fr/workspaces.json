@@ -168,6 +168,8 @@
     "until": "Jusqu'au {{date}}",
     "emptyTitle": "Pas encore de challenges",
     "emptyText": "Les challenges, leur progression et l'activité de l'équipe s'afficheront ici.",
+    "emptyTextReader": "Les challenges apparaîtront ici dès qu'un membre en créera un.",
+    "emptyTextSolo": "Aucun challenge n'a été créé dans ce workspace.",
     "learnMore": "En savoir plus",
     "createChallenge": "Créer un challenge",
     "members_one": "{{count}} membre",

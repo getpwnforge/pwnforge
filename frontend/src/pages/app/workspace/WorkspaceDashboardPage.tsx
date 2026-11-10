@@ -33,6 +33,9 @@ export function WorkspaceDashboardPage() {
   const { t } = useTranslation(["workspaces", "nav"]);
   const workspace = useCurrentWorkspace();
   const canCreate = !workspace.archived && canCreateChallenge(workspace.my_role);
+  let emptyKey = "workspaces:dashboard.emptyTextReader";
+  if (canCreate) emptyKey = "workspaces:dashboard.emptyText";
+  else if (!workspace.team_id) emptyKey = "workspaces:dashboard.emptyTextSolo";
 
   return (
     <>
@@ -61,7 +64,7 @@ export function WorkspaceDashboardPage() {
             </EmptyMedia>
             <EmptyTitle>{t("workspaces:dashboard.emptyTitle")}</EmptyTitle>
             <EmptyDescription>
-              {t(canCreate ? "workspaces:dashboard.emptyText" : "workspaces:dashboard.emptyTextReader")}
+              {t(emptyKey)}
             </EmptyDescription>
           </EmptyHeader>
           {canCreate ? (
