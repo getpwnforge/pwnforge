@@ -64,4 +64,22 @@ describe("RequireAuth", () => {
 
     expect(safeRedirect(from)).toBe("/invitations/team");
   });
+
+  it("waits instead of redirecting while the server does not answer", () => {
+    render(
+      <AuthContext value={{ ...signedOut, status: "unavailable" }}>
+        <MemoryRouter initialEntries={["/w/ctf-2026-cd34"]}>
+          <Routes>
+            <Route element={<RequireAuth />}>
+              <Route path="*" element={<p>protected</p>} />
+            </Route>
+            <Route path={ROUTES.login} element={<Landed />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext>,
+    );
+
+    expect(screen.queryByTestId("landed")).not.toBeInTheDocument();
+    expect(screen.queryByText("protected")).not.toBeInTheDocument();
+  });
 });

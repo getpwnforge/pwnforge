@@ -25,8 +25,12 @@ import type {
 } from "@/types/api";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { Loader2Icon } from "lucide-react";
 
 const AUTH_ME_QUERY_HASH = hashKey(AUTH_ME_QUERY_KEY);
+
+const SERVER_TOAST = "server-unreachable";
+const SERVER_BACK_TOAST = "server-back";
 
 /**
  * Forgets the session client-side: every cached answer goes, so that an
@@ -62,12 +66,17 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     data: user,
     isPending,
     refetch,
+    isError,
   } = useQuery({
     queryKey: AUTH_ME_QUERY_KEY,
     queryFn: fetchCurrentUser,
-    // The interceptor already handles the one recoverable failure (expired
-    // access token); retrying past that only delays the login screen.
-    retry: false,
+    // A 401 never reaches here, fetchCurrentUser turns it into null: what
+    // fails is the server itself (no answer, 5xx). Two quick retries cover a
+    // restart; past that the status reads `unavailable` and the query keeps
+    // asking every few seconds until the server is back.
+    retry: 2,
+    retryDelay: (attempt) => 250 * 2 ** attempt,
+    refetchInterval: (query) => (query.state.status === "error" && query.state.data === undefined ? 5000 : false),
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
@@ -126,9 +135,33 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     status = "loading";
   } else if (user) {
     status = "authenticated";
+  } else if (isError) {
+    // No answer is not "signed out": sending this visitor to the sign-in
+    // page would lose where they were for a server that is only restarting.
+    status = "unavailable";
   } else {
     status = "anonymous";
   }
+
+  // Says why the page waits while the server is away, and when it is back.
+  // The "back" toast is a new one: updating by id merges the options, and it
+  // would keep the endless duration, the spinner and the colors.
+  const wasUnavailable = useRef(false);
+  useEffect(() => {
+    if (status === "unavailable") {
+      wasUnavailable.current = true;
+      toast.warning(t("errors:generic.server_unreachable"), {
+        id: SERVER_TOAST,
+        duration: Infinity,
+        richColors: true,
+        icon: <Loader2Icon aria-hidden className="size-4 animate-spin" />,
+      });
+    } else if (wasUnavailable.current && status !== "loading") {
+      wasUnavailable.current = false;
+      toast.dismiss(SERVER_TOAST);
+      toast.success(t("errors:generic.server_back"), { id: SERVER_BACK_TOAST, richColors: true });
+    }
+  }, [status, t]);
 
   // The cache changes as soon as login or logout answers, but this provider
   // only hears of it on React Query's next batched notification. A caller

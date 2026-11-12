@@ -1,7 +1,7 @@
 // src/lib/api.test.ts
 import { describe, expect, it, vi } from "vitest";
 
-import { api, endSession } from "@/lib/api";
+import { api, endSession, setUnauthenticatedHandler } from "@/lib/api";
 import { deferred, fakeApi, type FakeReply } from "@/test/fake-api";
 
 const logout = () => api.post("/auth/logout", null, { skipAuthRefresh: true });
@@ -123,5 +123,37 @@ describe("the refresh lock", () => {
     await expect(both).resolves.toHaveLength(2);
     // Two 401s at once share one rotation instead of spending the token twice.
     expect(server.count("POST /auth/refresh")).toBe(1);
+  });
+});
+
+describe("a refresh that fails", () => {
+  it("keeps the session when the server does not answer", async () => {
+    const lost = vi.fn();
+    const stop = setUnauthenticatedHandler(lost);
+    fakeApi({
+      "GET /teams": { status: 401 },
+      // A restart: the proxy answers, the backend does not.
+      "POST /auth/refresh": { status: 503 },
+    });
+
+    const error = await api.get("/teams").catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ status: 401 });
+    expect(lost).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("ends it when the server refuses", async () => {
+    const lost = vi.fn();
+    const stop = setUnauthenticatedHandler(lost);
+    fakeApi({
+      "GET /teams": { status: 401 },
+      "POST /auth/refresh": { status: 401 },
+    });
+
+    await api.get("/teams").catch(() => undefined);
+
+    expect(lost).toHaveBeenCalledOnce();
+    stop();
   });
 });

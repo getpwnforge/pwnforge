@@ -121,7 +121,9 @@
     "conflict": "This action conflicts with the current state",
     "server_error": "Something went wrong, please try again",
     "network": "Cannot connect, check your network",
-    "config_unavailable": "This page could not load the instance configuration. Reload it to try again."
+    "config_unavailable": "This page could not load the instance configuration. Reload it to try again.",
+    "server_unreachable": "Server unreachable, trying again…",
+    "server_back": "Connection restored"
   },
   "turnstile": {
     "widget_error": "The bot check could not run. Reload the page. If it keeps failing, make sure no extension or network filter blocks challenges.cloudflare.com.",

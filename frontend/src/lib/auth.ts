@@ -9,8 +9,12 @@ import type {
   User,
 } from "@/types/api";
 
-/** Provider state, not something the API ever returns. */
-export type AuthStatus = "loading" | "authenticated" | "anonymous";
+/**
+ * Provider state, not something the API ever returns. `unavailable`: the
+ * session could not be read at all (no answer, or a 5xx) and none is cached,
+ * so whether someone is signed in is unknown until the server answers.
+ */
+export type AuthStatus = "loading" | "authenticated" | "anonymous" | "unavailable";
 
 export type AuthContextValue = {
   /** `null` while loading and when signed out — check `status` to tell them apart. */

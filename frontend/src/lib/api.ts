@@ -145,6 +145,12 @@ export function setUnauthenticatedHandler(handler: UnauthenticatedHandler): () =
   };
 }
 
+/** The server answered and said no: the only failure that proves the session gone. */
+function isRefusal(error: unknown): boolean {
+  const { status } = toApiError(error);
+  return typeof status === "number" && status >= 400 && status < 500;
+}
+
 type RetriedConfig = InternalAxiosRequestConfig & { retriedAfterRefresh?: boolean };
 
 api.interceptors.response.use(
@@ -172,8 +178,12 @@ api.interceptors.response.use(
 
     try {
       await refreshSession();
-    } catch {
-      onUnauthenticated?.();
+    } catch (refreshError) {
+      // Only an answer ends the session: a refresh refused (4xx) means it is
+      // gone. No answer or a 5xx (server restarting, network down) says
+      // nothing about it, so the user stays signed in and the caller shows
+      // its own error.
+      if (isRefusal(refreshError)) onUnauthenticated?.();
       // Surface the original failure, not the refresh's: the caller asked for
       // the first request.
       throw apiError;

@@ -111,4 +111,20 @@ describe("AuthProvider", () => {
     expect(status()).toBe("anonymous");
     expect(client.getQueryData(AUTH_ME_QUERY_KEY)).toBeNull();
   });
+
+  it("reads a server that does not answer as unavailable, not as signed out", async () => {
+    let up = false;
+    fakeApi({
+      "GET /auth/me": () => (up ? { status: 200, data: { id: "u1", username: "alice" } } : { status: 503 }),
+    });
+    const { status, auth } = mount();
+
+    // Past the quick retries: unknown, so no guard sends anyone to /login.
+    await waitFor(() => expect(status()).toBe("unavailable"), { timeout: 3000 });
+
+    up = true;
+    await act(() => auth().reload());
+
+    await waitFor(() => expect(status()).toBe("authenticated"));
+  });
 });

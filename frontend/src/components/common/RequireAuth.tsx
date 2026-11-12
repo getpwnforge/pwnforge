@@ -20,7 +20,9 @@ export function RequireAuth() {
   const { status } = useAuth();
   const location = useLocation();
 
-  if (status === "loading") {
+  // Unavailable too: signed in or not is unknown, so no redirect. The
+  // provider's toast says why the page waits.
+  if (status === "loading" || status === "unavailable") {
     return <PageLoader />;
   }
 
