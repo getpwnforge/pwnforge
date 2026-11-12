@@ -78,8 +78,9 @@ import type { WorkspaceSummary } from "@/lib/api/types";
 import { avatarUrl } from "@/lib/avatar";
 
 
-function workspaceNav(slug: string): NavItem[] {
-  return [
+
+function workspaceNav(slug: string, solo: boolean): NavItem[] {
+  const items: NavItem[] = [
     { key: "dashboard",  labelKey: "sidebar.dashboard",  icon: Home,              to: ROUTES.workspace(slug), end: true },
     { key: "challenges", labelKey: "sidebar.challenges", icon: Flag,              to: ROUTES.challenges(slug), badgeKey: "challenges" },
     { key: "writeups",   labelKey: "sidebar.writeups",   icon: FileText,          to: ROUTES.writeups(slug), badgeKey: "writeups" },
@@ -87,6 +88,9 @@ function workspaceNav(slug: string): NavItem[] {
     { key: "members",    labelKey: "sidebar.members",    icon: Users,             to: ROUTES.members(slug), badgeKey: "members" },
     { key: "settings",   labelKey: "sidebar.settings",   icon: Settings,          to: ROUTES.settings(slug) },
   ];
+
+  // A solo workspace has nobody else to list.
+  return solo ? items.filter((item) => item.key !== "members") : items;
 }
 
 const GLOBAL_NAV: NavItem[] = [
@@ -95,6 +99,15 @@ const GLOBAL_NAV: NavItem[] = [
   { key: "my-stats",   labelKey: "sidebar.myStats",    icon: ChartNoAxesColumn,  to: ROUTES.myStats },
   { key: "help",       labelKey: "sidebar.help",       icon: CircleQuestionMark, to: ROUTES.help },
 ];
+
+/** The current workspace's nav, without Members on a solo; the global nav outside a workspace. */
+function useNavItems(): NavItem[] {
+  const workspaceSlug = useWorkspaceSlug();
+  const { data: workspaces = [] } = useWorkspaces();
+  if (!workspaceSlug) return GLOBAL_NAV;
+  const current = workspaces.find((w) => w.slug === workspaceSlug);
+  return workspaceNav(workspaceSlug, current?.mode === "solo");
+}
 
 const systemTags = new Set(["web", "crypto", "pwn", "reverse", "forensics", "misc"])
 
@@ -123,12 +136,11 @@ function RailTooltip({ label }: Readonly<{ label: string }>) {
 
 function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const navigate = useNavigate();
-  const workspaceSlug = useWorkspaceSlug();
 
-  const items = workspaceSlug ? workspaceNav(workspaceSlug) : GLOBAL_NAV;
-  // Usually already cached by the list pages and the selector: filtered locally by cmdk.
   const { data: workspaces = [] } = useWorkspaces()
   const { data: teams = [] } = useTeams()
+
+  const items = useNavItems()
 
   const { t } = useTranslation('nav')
 
@@ -637,8 +649,7 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
 }
 
 export function AppSidebar() {
-  const workspaceSlug = useWorkspaceSlug()
-  const items = workspaceSlug ? workspaceNav(workspaceSlug) : GLOBAL_NAV
+  const items = useNavItems()
   const { state, isMobile, setOpenMobile } = useSidebar()
   const collapsed = state === "collapsed"
   // Mounted under RequireAuth only: an anonymous visitor never fires these requests.

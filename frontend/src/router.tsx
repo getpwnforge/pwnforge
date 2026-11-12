@@ -34,6 +34,7 @@ import { InvitationLinkPage } from "@/pages/invitations/InvitationLinkPage";
 import { WorkspaceDashboardPage } from "@/pages/app/workspace/WorkspaceDashboardPage";
 import { WorkspaceLayout } from "@/pages/app/workspace/WorkspaceLayout";
 import { WorkspaceSettingsPage } from "./pages/app/workspace/WorkspaceSettingsPage";
+import { WorkspaceMembersPage } from "./pages/app/workspace/WorkspaceMembersPage";
 
 export const router = createBrowserRouter([
   // Everything sits under the setup gate: on a fresh instance every route
@@ -126,7 +127,7 @@ export const router = createBrowserRouter([
                 element: <WorkspaceLayout />,
                 children: [
                   { index: true, element: <WorkspaceDashboardPage /> },
-                  // F5: { path: "members", element: <WorkspaceMembersPage /> },
+                  { path: "members", element: <WorkspaceMembersPage /> },
                   { path: "settings", element: <WorkspaceSettingsPage /> },
                 ],
               },

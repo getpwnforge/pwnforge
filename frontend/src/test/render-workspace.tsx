@@ -3,6 +3,7 @@ import { Route } from "react-router";
 import type { UserResponse, WorkspaceResponse } from "@/lib/api/types";
 import { WorkspaceDashboardPage } from "@/pages/app/workspace/WorkspaceDashboardPage";
 import { WorkspaceLayout } from "@/pages/app/workspace/WorkspaceLayout";
+import { WorkspaceMembersPage } from "@/pages/app/workspace/WorkspaceMembersPage";
 import { WorkspaceSettingsPage } from "@/pages/app/workspace/WorkspaceSettingsPage";
 import { teamResponse, workspaceResponse } from "@/test/api-fixtures";
 import { fakeApi } from "@/test/fake-api";
@@ -19,7 +20,7 @@ type Options = { workspace?: WorkspaceResponse; user?: UserResponse | null };
 
 /**
  * Mounts /w/:slug as router.tsx does: WorkspaceLayout and its pages. `path` follows the slug:
- * "" for the dashboard, "/settings" for the settings. My teams answer Team Alpha, which the
+ * "" for the dashboard, "/members" for the members, "/settings" for the settings. My teams answer Team Alpha, which the
  * workspace belongs to.
  */
 export function renderWorkspace(path: string, routes: Parameters<typeof fakeApi>[0] = {}, { workspace = HEXAGON, user }: Options = {}) {
@@ -32,6 +33,7 @@ export function renderWorkspace(path: string, routes: Parameters<typeof fakeApi>
     <>
       <Route path="/w/:slug" element={<WorkspaceLayout />}>
         <Route index element={<WorkspaceDashboardPage />} />
+        <Route path="members" element={<WorkspaceMembersPage />} />
         <Route path="settings" element={<WorkspaceSettingsPage />} />
       </Route>
       <Route path="*" element={null} />

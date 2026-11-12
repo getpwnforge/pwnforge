@@ -202,7 +202,7 @@
     }
   },
   "members": {
-    "title": "Workspace members",
+    "title": "Members",
     "subtitle_one": "{{count}} member · team \"{{team}}\" linked.",
     "subtitle_other": "{{count}} members · team \"{{team}}\" linked.",
     "inviteLink": "Invitation link",
@@ -215,7 +215,88 @@
       "role": "Role",
       "solved": "Solved",
       "status": "Status",
-      "joined": "Joined"
+      "joined": "Joined",
+      "access": "Access",
+      "actions": "Actions"
+    },
+    "subtitleTeam": "Roles inherited from the team",
+    "subtitleGuest": "You have access as a guest.",
+    "accessTitle": "Access",
+    "filterLabel": "Show",
+    "filters": {
+      "all": "All",
+      "team": "Team",
+      "guests": "Guests"
+    },
+    "search": "Filter by name or handle",
+    "via": {
+      "team": "Team",
+      "owner": "Owner",
+      "override": "Changed here · team: {{role}}",
+      "overrideUnknown": "Changed here",
+      "guest": "Guest",
+      "invitedBy": "by {{name}}"
+    },
+    "you": "You",
+    "noMatch": "Nobody matches this filter.",
+    "actionsFor": "Actions for {{name}}",
+    "workspaceRole": "Role in this workspace",
+    "guestRole": "Guest role",
+    "resetRole": "Back to the team role ({{role}})",
+    "roleSet": "{{name}} is now {{role}} in this workspace",
+    "roleReset": "{{name}} is back to their team role",
+    "exclude": "Exclude from the workspace",
+    "excludeTitle": "Exclude {{name}}?",
+    "excludeText": "They stay on the team but lose access to this workspace. A Captain or an Admin can bring them back.",
+    "excluded": "{{name}} is excluded from the workspace",
+    "removeGuest": "Remove the guest",
+    "removeGuestTitle": "Remove {{name}}?",
+    "removeGuestText": "They lose access to this workspace. Coming back takes a new invitation.",
+    "guestRemoved": "{{name}} no longer has access to the workspace",
+    "exclusions": {
+      "title": "Excluded",
+      "hint": "Team members without access to this workspace, removed by a Captain or an Admin, or who left it.",
+      "teamRole": "Team role",
+      "lift": "Bring back",
+      "lifted": "{{name}} has the access the team gives back"
+    },
+    "invitations": {
+      "title": "Pending invitations",
+      "hintAll": "Every invitation of the workspace. The address shows only while the invitation waits.",
+      "hintMine": "The invitations you sent.",
+      "authorLabel": "Invitations sent by",
+      "allAuthors": "All authors",
+      "you": "You",
+      "columns": {
+        "recipient": "Recipient",
+        "invitedBy": "Invited by",
+        "expires": "Expires"
+      },
+      "cancel": "Revoke",
+      "cancelTitle": "Revoke the invitation?",
+      "cancelText": "{{who}} will no longer be able to accept it.",
+      "cancelled": "Invitation revoked",
+      "empty": "No pending invitation."
+    },
+    "invite": {
+      "open": "Invite",
+      "title": "Invite to {{name}}",
+      "description": "Someone outside the team, as a guest. They have to accept the invitation, valid for 7 days.",
+      "by": "Invite by",
+      "byUsername": "Username",
+      "byEmail": "Email address",
+      "username": "Username",
+      "email": "Email address",
+      "usernamePlaceholder": "0xkira",
+      "emailPlaceholder": "name@example.com",
+      "usernameRequired": "Enter a username.",
+      "emailRequired": "Enter an address.",
+      "emailInvalid": "This address is not valid.",
+      "role": "Role",
+      "roleHint": "A guest is at most Member. Higher roles come from the team.",
+      "mailHint": "A mail goes out either way. If no account has the address, they sign up and find the invitation.",
+      "submit": "Send the invitation",
+      "sent": "Invitation sent to {{who}}"
     }
   },
   "notFound": {

@@ -202,7 +202,7 @@
     }
   },
   "members": {
-    "title": "Membres du workspace",
+    "title": "Membres",
     "subtitle_one": "{{count}} membre · équipe « {{team}} » associée.",
     "subtitle_other": "{{count}} membres · équipe « {{team}} » associée.",
     "inviteLink": "Lien d'invitation",
@@ -215,7 +215,88 @@
       "role": "Rôle",
       "solved": "Résolus",
       "status": "Statut",
-      "joined": "Rejoint"
+      "joined": "Rejoint",
+      "access": "Accès",
+      "actions": "Actions"
+    },
+    "subtitleTeam": "Rôles hérités de l'équipe",
+    "subtitleGuest": "Vous y avez accès en invité.",
+    "accessTitle": "Accès",
+    "filterLabel": "Afficher",
+    "filters": {
+      "all": "Tous",
+      "team": "Équipe",
+      "guests": "Invités"
+    },
+    "search": "Filtrer par nom ou pseudo",
+    "via": {
+      "team": "Équipe",
+      "owner": "Propriétaire",
+      "override": "Modifié ici · équipe : {{role}}",
+      "overrideUnknown": "Modifié ici",
+      "guest": "Invité",
+      "invitedBy": "par {{name}}"
+    },
+    "you": "Vous",
+    "noMatch": "Personne ne correspond à ce filtre.",
+    "actionsFor": "Actions pour {{name}}",
+    "workspaceRole": "Rôle dans ce workspace",
+    "guestRole": "Rôle d'invité",
+    "resetRole": "Revenir au rôle d'équipe ({{role}})",
+    "roleSet": "{{name}} est maintenant {{role}} dans ce workspace",
+    "roleReset": "{{name}} revient à son rôle d'équipe",
+    "exclude": "Exclure du workspace",
+    "excludeTitle": "Exclure {{name}} ?",
+    "excludeText": "Cette personne reste dans l'équipe mais perd l'accès à ce workspace. Un Captain ou un Admin pourra la réintégrer.",
+    "excluded": "{{name}} est exclu du workspace",
+    "removeGuest": "Retirer l'invité",
+    "removeGuestTitle": "Retirer {{name}} ?",
+    "removeGuestText": "Cette personne perd l'accès à ce workspace. Pour revenir, il lui faudra une nouvelle invitation.",
+    "guestRemoved": "{{name}} n'a plus accès au workspace",
+    "exclusions": {
+      "title": "Exclus",
+      "hint": "Membres de l'équipe sans accès à ce workspace, retirés par un Captain ou un Admin, ou partis d'eux-mêmes.",
+      "teamRole": "Rôle dans l'équipe",
+      "lift": "Réintégrer",
+      "lifted": "{{name}} retrouve l'accès hérité de l'équipe"
+    },
+    "invitations": {
+      "title": "Invitations en attente",
+      "hintAll": "Toutes les invitations du workspace. L'adresse n'est visible que tant que l'invitation attend.",
+      "hintMine": "Les invitations que vous avez envoyées.",
+      "authorLabel": "Invitations envoyées par",
+      "allAuthors": "Tous les auteurs",
+      "you": "Vous",
+      "columns": {
+        "recipient": "Destinataire",
+        "invitedBy": "Invité par",
+        "expires": "Expire"
+      },
+      "cancel": "Révoquer",
+      "cancelTitle": "Révoquer l'invitation ?",
+      "cancelText": "{{who}} ne pourra plus l'accepter.",
+      "cancelled": "Invitation révoquée",
+      "empty": "Aucune invitation en attente."
+    },
+    "invite": {
+      "open": "Inviter",
+      "title": "Inviter dans {{name}}",
+      "description": "Une personne hors de l'équipe, en invité. Elle doit accepter l'invitation, valable 7 jours.",
+      "by": "Inviter par",
+      "byUsername": "Nom d'utilisateur",
+      "byEmail": "Adresse e-mail",
+      "username": "Nom d'utilisateur",
+      "email": "Adresse e-mail",
+      "usernamePlaceholder": "0xkira",
+      "emailPlaceholder": "prenom@exemple.fr",
+      "usernameRequired": "Saisissez un nom d'utilisateur.",
+      "emailRequired": "Saisissez une adresse.",
+      "emailInvalid": "Cette adresse n'est pas valide.",
+      "role": "Rôle",
+      "roleHint": "Un invité est au plus Member. Les rôles supérieurs viennent de l'équipe.",
+      "mailHint": "Un mail part dans les deux cas. Si l'adresse n'a pas de compte, la personne s'inscrit puis retrouve l'invitation.",
+      "submit": "Envoyer l'invitation",
+      "sent": "Invitation envoyée à {{who}}"
     }
   },
   "notFound": {
