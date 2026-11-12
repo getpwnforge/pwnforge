@@ -2,12 +2,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useRef, type ChangeEvent } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { WsIcon } from "@/components/brand/WsIcon";
 import { FormError } from "@/components/common/FormError";
 import { SettingsFormBar } from "@/components/settings/SettingsFormBar";
+import { TeamName, WorkspaceGeneralSummary } from "@/components/settings/settings-summary";
 import { SettingRow, SettingsSection } from "@/components/settings/settings-layout";
 import { UnsavedChangesGuard, type SaveThen } from "@/components/settings/UnsavedChangesGuard";
 import { Button } from "@/components/ui/button";
@@ -17,13 +17,11 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useTeams } from "@/hooks/useTeams";
 import { useDeleteWorkspaceAvatar, useUpdateWorkspace, useUploadWorkspaceAvatar } from "@/hooks/useWorkspaces";
 import { apiErrorKey, fieldErrorKey, isApiError } from "@/lib/api-error";
 import type { WorkspaceResponse } from "@/lib/api/types";
 import { avatarUrl } from "@/lib/avatar";
 import { canEditWorkspace } from "@/lib/permissions";
-import { ROUTES } from "@/lib/routes";
 import {
   PLATFORMS,
   toLocalInput,
@@ -73,8 +71,9 @@ function valuesOf(workspace: WorkspaceResponse): UpdateWorkspaceValues {
 }
 
 /**
- * Identity, type and source, mode and team, and the event's dates, saved together with the bar and only for what
- * changed. Read-only for whoever cannot edit, and for everyone while the workspace is archived.
+ * Identity, type and source, mode and team, and the event's dates, saved together with the bar and
+ * only for what changed. Whoever cannot edit, and everyone while the workspace is archived, gets
+ * the values instead (`WorkspaceGeneralSummary`): no control that would do nothing.
  */
 export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: WorkspaceResponse }>) {
   const { t } = useTranslation(["workspaces", "nav", "errors"]);
@@ -110,12 +109,13 @@ export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: Worksp
   const saveThen: SaveThen = (outcome) => void form.handleSubmit((values) => submit(values, outcome), outcome.onFailed)();
   const unplaced = update.error && !placedErrorOf(update.error) ? update.error : null;
 
+  if (!canEdit) return <WorkspaceGeneralSummary workspace={workspace} />;
+
   return (
     <form noValidate className="flex flex-col gap-7" onSubmit={(event) => void form.handleSubmit((values) => submit(values))(event)}>
       {unplaced ? <FormError error={unplaced} /> : null}
-      {!canEdit && !workspace.archived ? <p className="text-sm text-text-muted">{t("workspaces:settings.readOnly")}</p> : null}
 
-      <fieldset disabled={!canEdit} className="flex min-w-0 flex-col gap-7">
+      <div className="flex min-w-0 flex-col gap-7">
         <SettingsSection id="ws-identity" title={t("workspaces:settings.identity.title")}>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field data-invalid={!!errors.name}>
@@ -183,7 +183,6 @@ export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: Worksp
                   <Select
                     value={field.value ?? (workspace.type === "event" ? NO_PLATFORM : "")}
                     onValueChange={(value) => field.onChange(value === NO_PLATFORM ? null : value)}
-                    disabled={!canEdit}
                   >
                     <SelectTrigger
                       ref={field.ref}
@@ -290,29 +289,11 @@ export function WorkspaceGeneralForm({ workspace }: Readonly<{ workspace: Worksp
             </SettingRow>
           </SettingsSection>
         ) : null}
-      </fieldset>
+      </div>
 
-      {canEdit ? (
-        <>
-          <SettingsFormBar dirty={isDirty} saving={update.isPending} onCancel={() => form.reset(valuesOf(workspace))} />
-          <UnsavedChangesGuard dirty={isDirty} saving={update.isPending} onSave={saveThen} />
-        </>
-      ) : null}
+      <SettingsFormBar dirty={isDirty} saving={update.isPending} onCancel={() => form.reset(valuesOf(workspace))} />
+      <UnsavedChangesGuard dirty={isDirty} saving={update.isPending} onSave={saveThen} />
     </form>
-  );
-}
-
-/** The team the workspace belongs to, from my teams; a guest outside it reads its id's absence. */
-function TeamName({ teamId }: Readonly<{ teamId: string }>) {
-  const { t } = useTranslation(["workspaces"]);
-  const teams = useTeams();
-  const team = teams.data?.find((candidate) => candidate.id === teamId);
-  if (!team) return <span className="text-sm text-text-muted">{t("workspaces:dashboard.team")}</span>;
-  return (
-    <Link to={ROUTES.team(team.slug)} className="flex items-center gap-2 text-sm font-medium text-text hover:underline">
-      <WsIcon name={team.name} color={team.color} size="sm" src={avatarUrl("teams", team.id, team.avatar_version, 64)} />
-      {team.name}
-    </Link>
   );
 }
 

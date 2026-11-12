@@ -123,11 +123,13 @@ describe("WorkspaceSettingsPage", () => {
     expect(await nameField()).toBeInTheDocument();
   });
 
-  it("lets a Member read but not edit, and offers only to leave", async () => {
+  it("shows a Member the values, not controls, and offers only to leave", async () => {
     const user = userEvent.setup();
-    renderWorkspace("/settings", {}, { workspace: { ...HEXAGON, my_role: "member" } });
-    expect(await nameField()).toBeDisabled();
-    expect(screen.getByText(t("workspaces:settings.readOnly"))).toBeInTheDocument();
+    renderWorkspace("/settings", {}, { workspace: { ...HEXAGON, my_role: "member", type: "event", lock_after_end: true } });
+    expect(await screen.findByText(t("workspaces:settings.readOnly"))).toBeInTheDocument();
+    expect(screen.getByText(t("workspaces:settings.enabled"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("workspaces:settings.identity.workspaceName"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(button("workspaces:settings.save")).not.toBeInTheDocument();
 
     await user.click(navLink("dangerZone"));
@@ -184,7 +186,9 @@ describe("WorkspaceSettingsPage", () => {
     const user = userEvent.setup();
     const archived = { ...captain, archived: true };
     const { server } = renderWorkspace("/settings", { [UNARCHIVE]: { status: 200, data: { ...captain, archived: false } } }, { workspace: archived });
-    expect(await nameField()).toBeDisabled();
+    expect(await screen.findByText(archived.slug)).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("workspaces:settings.identity.workspaceName"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("workspaces:settings.readOnly"))).not.toBeInTheDocument();
 
     await user.click(navLink("dangerZone"));
     expect(button("workspaces:settings.archive")).not.toBeInTheDocument();
@@ -197,5 +201,11 @@ describe("WorkspaceSettingsPage", () => {
     renderWorkspace("/settings?section=danger", {}, { workspace: { ...HEXAGON, mode: "solo", team_id: null, my_role: "owner" } });
     expect(await screen.findByRole("button", { name: t("workspaces:settings.delete") })).toBeInTheDocument();
     expect(button("workspaces:settings.leaveAction")).not.toBeInTheDocument();
+  });
+
+  it("shows a Member the writeup visibility as a value", async () => {
+    renderWorkspace("/settings?section=visibility", {}, { workspace: { ...HEXAGON, my_role: "member", default_writeup_visibility: "team" } });
+    expect(await screen.findByText(t("workspaces:settings.writeupVisibility.team"))).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 });

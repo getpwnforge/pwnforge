@@ -199,7 +199,9 @@
       "noPlatform": "Aucune",
       "eventUrl": "URL de l'événement",
       "eventUrlHint": "Page publique du CTF ou de la plateforme, ouverte depuis le dashboard."
-    }
+    },
+    "enabled": "Activé",
+    "disabled": "Désactivé"
   },
   "members": {
     "title": "Membres",
