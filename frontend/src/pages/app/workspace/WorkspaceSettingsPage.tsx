@@ -31,14 +31,20 @@ const GROUPS: readonly { key: string; entries: readonly Entry[] }[] = [
 const NAV_KEY: Record<Section, string> = { general: "general", visibility: "visibility", danger: "dangerZone" };
 const HEADING_KEY: Record<Section, string> = { general: "pageTitle", visibility: "nav.visibility", danger: "nav.dangerZone" };
 
-const ITEM =
-  "flex h-8 items-center justify-between gap-2 rounded-md px-2.5 text-[13px] font-medium text-text-muted transition-colors hover:bg-surface hover:text-text";
+const ITEM = "flex h-8 items-center justify-between gap-2 rounded-md px-2.5 text-[13px] font-medium transition-colors";
 const GROUP_LABEL = "px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-text-subtle uppercase";
 
 /** The danger zone is listed only to whom it offers something. */
 function hasDangerActions(workspace: WorkspaceResponse): boolean {
   const access = workspace.my_role;
   return canArchiveWorkspace(access) || canDeleteWorkspace(access) || canLeaveWorkspace(workspace, access);
+}
+
+/** The open item gets the surface; the danger zone stays red, open, hovered or not. */
+function itemState(target: Section, open: Section): string {
+  const danger = target === "danger";
+  if (target === open) return danger ? "bg-surface-2 text-danger-text" : "bg-surface-2 text-text";
+  return danger ? "text-danger-text hover:bg-surface hover:text-danger" : "text-text-muted hover:bg-surface hover:text-text";
 }
 
 /**
@@ -60,7 +66,7 @@ export function WorkspaceSettingsPage() {
         to={{ search: target === "general" ? "" : `?section=${target}` }}
         replace
         aria-current={target === section ? "page" : undefined}
-        className={cn(ITEM, target === "danger" && "text-danger hover:text-danger", target === section && "bg-surface-2 text-text")}
+        className={cn(ITEM, itemState(target, section))}
       >
         {t(`workspaces:settings.nav.${NAV_KEY[target]}`)}
       </Link>
@@ -68,7 +74,7 @@ export function WorkspaceSettingsPage() {
   );
   const soonItem = (key: string) => (
     <li key={key}>
-      <span aria-disabled="true" className={cn(ITEM, "cursor-default text-text-subtle hover:bg-transparent hover:text-text-subtle")}>
+      <span aria-disabled="true" className={cn(ITEM, "cursor-default text-text-subtle")}>
         {t(`workspaces:settings.nav.${key}`)}
         <span className="text-xs font-normal">{t("workspaces:settings.soon")}</span>
       </span>

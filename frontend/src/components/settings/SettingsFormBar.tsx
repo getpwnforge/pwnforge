@@ -13,7 +13,7 @@ export function SettingsFormBar({ dirty, saving, onCancel }: Props) {
   const { t } = useTranslation(["workspaces"]);
   return (
     <div className="sticky bottom-0 z-10 -mx-6 mt-2 -mb-6 flex items-center gap-2 border-t border-border bg-bg px-6 py-3 md:-mx-8 md:px-8">
-      <p aria-live="polite" className="flex-1 text-xs text-danger">
+      <p aria-live="polite" className="flex-1 text-xs text-danger-text">
         {dirty ? t("workspaces:settings.unsaved") : null}
       </p>
       <Button type="button" variant="ghost" disabled={!dirty || saving} onClick={onCancel}>

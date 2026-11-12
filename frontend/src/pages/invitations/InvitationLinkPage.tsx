@@ -268,6 +268,6 @@ function LoadingCard() {
 function StateIcon({ accent, danger, children }: Readonly<{ accent?: boolean; danger?: boolean; children: ReactNode }>) {
   let tone = "border border-border bg-surface text-text-muted";
   if (accent) tone = "bg-ember-soft text-primary";
-  if (danger) tone = "bg-danger/15 text-danger";
+  if (danger) tone = "bg-danger/15 text-danger-text";
   return <div className={`mx-auto mb-4 grid size-12 place-items-center rounded-xl ${tone}`}>{children}</div>;
 }
