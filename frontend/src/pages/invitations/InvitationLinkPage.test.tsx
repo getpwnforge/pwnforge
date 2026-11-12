@@ -1,7 +1,7 @@
-import { screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Route } from "react-router";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import i18n from "@/lib/i18n";
 import { ROUTES } from "@/lib/routes";
@@ -40,6 +40,8 @@ function renderLink(hash: string, routes: Record<string, FakeRoute> = {}, option
 const withToken = `#token=${TOKEN}`;
 
 describe("InvitationLinkPage", () => {
+  afterEach(() => window.sessionStorage.clear());
+
   it("says the link is incomplete without a token", () => {
     renderLink("");
     expect(screen.getByText(t("common:invitationLink.missing.title"))).toBeInTheDocument();
@@ -48,8 +50,21 @@ describe("InvitationLinkPage", () => {
   it("asks a visitor to sign in, and asks the API nothing", () => {
     const { server } = renderLink(withToken, {}, { user: null });
     expect(screen.getByText(t("common:invitationLink.anonymous.title"))).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: t("common:invitationLink.anonymous.signIn") })).toHaveAttribute("href", ROUTES.login);
+    expect(screen.getByRole("link", { name: t("common:invitationLink.anonymous.signIn") })).toHaveAttribute(
+      "href",
+      `${ROUTES.login}?from=${encodeURIComponent(ROUTES.teamInvitation)}`,
+    );
     expect(server.count(PREVIEW)).toBe(0);
+  });
+
+  it("comes back from signing in with the token", async () => {
+    renderLink(withToken, {}, { user: null });
+    cleanup();
+
+    // Back from /login: the bare path, signed in.
+    renderLink("", { [PREVIEW]: { status: 200, data: PREVIEWED } });
+
+    expect(await screen.findByRole("heading", { name: t("common:invitationLink.team.title", { name: "Les Croquettes" }) })).toBeInTheDocument();
   });
 
   it("shows who invites to which team, with the role given", async () => {
@@ -73,6 +88,8 @@ describe("InvitationLinkPage", () => {
     await user.click(await screen.findByRole("button", { name: t("common:invitationLink.team.join") }));
 
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/teams\/croquettes-k2m4$/));
+    // Used up: nothing left for this tab to replay.
+    expect(window.sessionStorage).toHaveLength(0);
     expect(lastBody(server, JOIN)).toEqual({ token: TOKEN });
   });
 
@@ -90,5 +107,6 @@ describe("InvitationLinkPage", () => {
     renderLink(withToken, { [PREVIEW]: { status: 404, data: { error: "not_found" } } });
     expect(await screen.findByText(t("common:invitationLink.invalid.title"))).toBeInTheDocument();
     expect(screen.getByRole("link", { name: t("common:invitationLink.invalid.pending") })).toHaveAttribute("href", ROUTES.teams);
+    await waitFor(() => expect(window.sessionStorage).toHaveLength(0));
   });
 });

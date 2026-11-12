@@ -1,5 +1,5 @@
 import { CircleHelpIcon, LayoutGridIcon, LinkIcon, LockIcon, LogInIcon, UsersIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -13,7 +13,7 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useJoinTeam, useJoinWorkspace, useTeamInvitationPreview, useWorkspaceInvitationPreview } from "@/hooks/useInvitations";
-import { useLinkToken } from "@/hooks/useLinkToken";
+import { forgetLinkToken, useLinkToken } from "@/hooks/useLinkToken";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { apiErrorKey, isApiError } from "@/lib/api-error";
 import type { TeamRole } from "@/lib/api/types";
@@ -23,14 +23,20 @@ type Kind = "team" | "workspace";
 
 const CARD = "w-full max-w-md gap-0 p-7 text-center";
 
+/** Where a link's token waits across a sign-in, one per kind. */
+const stashOf = (kind: Kind) => `invitation:${kind}`;
+/** The page to come back to after signing in: the path only, never the token. */
+const linkPathOf = (kind: Kind) => (kind === "team" ? ROUTES.teamInvitation : ROUTES.workspaceInvitation);
+
 /**
  * Where the links of invitation mails and shared team links land. Outside RequireAuth: the token
- * lives in the fragment, which a redirect through /login would drop. useLinkToken reads it and
- * takes it out of the address bar; it is then kept in this page's state only.
+ * lives in the fragment, which a redirect through /login would drop. useLinkToken reads it, takes
+ * it out of the address bar and keeps it in this tab's sessionStorage, so signing in from here
+ * comes back with it; it is forgotten once the invitation is joined, refused or put off.
  */
 export function InvitationLinkPage({ kind }: Readonly<{ kind: Kind }>) {
   const { t } = useTranslation(["common"]);
-  const token = useLinkToken();
+  const token = useLinkToken(stashOf(kind));
   const { status, user } = useAuth();
   usePageTitle(t("common:invitationLink.tabTitle"));
 
@@ -54,12 +60,16 @@ function TeamInvitation({ token }: Readonly<{ token: string }>) {
   const name = preview.data.team_name;
   const onJoin = () =>
     join.mutate(token, {
-      onSuccess: (team) => void navigate(ROUTES.team(team.slug), { replace: true }),
+      onSuccess: (team) => {
+        forgetLinkToken(stashOf("team"));
+        void navigate(ROUTES.team(team.slug), { replace: true });
+      },
       onError: (error) => {
         if (!isAlreadyMember(error)) {
           toast.error(t(apiErrorKey(error)));
           return;
         }
+        forgetLinkToken(stashOf("team"));
         // The preview names the team but not its slug: its list is where it can be found.
         toast.info(t("common:invitationLink.alreadyMember", { name }));
         void navigate(ROUTES.teams, { replace: true });
@@ -91,12 +101,16 @@ function WorkspaceInvitation({ token }: Readonly<{ token: string }>) {
   const name = preview.data.workspace_name;
   const onJoin = () =>
     join.mutate(token, {
-      onSuccess: (workspace) => void navigate(ROUTES.workspace(workspace.slug), { replace: true }),
+      onSuccess: (workspace) => {
+        forgetLinkToken(stashOf("workspace"));
+        void navigate(ROUTES.workspace(workspace.slug), { replace: true });
+      },
       onError: (error) => {
         if (!isAlreadyMember(error)) {
           toast.error(t(apiErrorKey(error)));
           return;
         }
+        forgetLinkToken(stashOf("workspace"));
         toast.info(t("common:invitationLink.alreadyMember", { name }));
         void navigate(ROUTES.workspaces, { replace: true });
       },
@@ -155,7 +169,9 @@ function InvitationCard({ kind, name, role, author, expiresAt, pending, onJoin }
           {t(`common:invitationLink.${kind}.join`)}
         </Button>
         <Button asChild variant="ghost">
-          <Link to={ROUTES.workspaces}>{t("common:invitationLink.later")}</Link>
+          <Link to={ROUTES.workspaces} onClick={() => forgetLinkToken(stashOf(kind))}>
+            {t("common:invitationLink.later")}
+          </Link>
         </Button>
       </div>
       <SignedInAs />
@@ -180,7 +196,13 @@ function SignedInAs() {
 
 function PreviewError({ kind, error }: Readonly<{ kind: Kind; error: unknown }>) {
   const { t } = useTranslation(["common"]);
-  if (!isApiError(error) || error.status !== 404) {
+  // A 404 means the token will never serve again: drop it. A 5xx keeps it, the server may come back.
+  const refused = isApiError(error) && error.status === 404;
+  useEffect(() => {
+    if (refused) forgetLinkToken(stashOf(kind));
+  }, [refused, kind]);
+
+  if (!refused) {
     return (
       <Card className={CARD}>
         <FormError error={error} />
@@ -227,7 +249,9 @@ function SignInCard({ kind }: Readonly<{ kind: Kind }>) {
       <p className="mx-auto mt-1.5 max-w-[34ch] text-sm text-text-muted">{t(`common:invitationLink.anonymous.${kind}`)}</p>
       <div className="mt-5 flex flex-col gap-2">
         <Button asChild variant="primary">
-          <Link to={ROUTES.login}>{t("common:invitationLink.anonymous.signIn")}</Link>
+          <Link to={{ pathname: ROUTES.login, search: `?from=${encodeURIComponent(linkPathOf(kind))}` }}>
+            {t("common:invitationLink.anonymous.signIn")}
+          </Link>
         </Button>
         <Button asChild variant="secondary">
           <Link to={ROUTES.register}>{t("common:invitationLink.anonymous.register")}</Link>

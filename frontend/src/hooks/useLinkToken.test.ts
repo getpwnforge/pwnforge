@@ -1,8 +1,8 @@
 // src/hooks/useLinkToken.test.ts
 import { renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useLinkToken } from "@/hooks/useLinkToken";
+import { forgetLinkToken, useLinkToken } from "@/hooks/useLinkToken";
 
 describe("useLinkToken", () => {
   it("reads the token from the fragment, then drops the fragment from the address bar", () => {
@@ -44,5 +44,40 @@ describe("useLinkToken", () => {
     const { result } = renderHook(() => useLinkToken());
 
     expect(result.current).toBeNull();
+  });
+});
+
+describe("useLinkToken across a sign-in", () => {
+  const open = (url: string) => window.history.replaceState(null, "", url);
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+    open("/");
+  });
+
+  it("keeps an invitation's token for the way back, out of the address bar", () => {
+    open("/invitations/team#token=abc");
+    expect(renderHook(() => useLinkToken("invitation:team")).result.current).toBe("abc");
+    expect(window.location.hash).toBe("");
+
+    // Back from /login, with no fragment.
+    open("/invitations/team");
+    expect(renderHook(() => useLinkToken("invitation:team")).result.current).toBe("abc");
+  });
+
+  it("has nothing once the token is forgotten", () => {
+    open("/invitations/team#token=abc");
+    renderHook(() => useLinkToken("invitation:team"));
+    forgetLinkToken("invitation:team");
+
+    open("/invitations/team");
+    expect(renderHook(() => useLinkToken("invitation:team")).result.current).toBeNull();
+  });
+
+  it("keeps nothing for a link that asks for no stash", () => {
+    open("/auth/password/reset#token=secret");
+    renderHook(() => useLinkToken());
+
+    expect(window.sessionStorage).toHaveLength(0);
   });
 });
