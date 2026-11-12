@@ -22,6 +22,9 @@
 #     bind mounts on directories that do not exist here.
 #   - Garage reads a configuration generated with fresh secrets, instead of the
 #     gitignored ops/garage/garage.toml.
+#
+# PRODCHECK_KEEP=1 keeps the stack up until Ctrl-C, for testing by hand;
+# PRODCHECK_HTTP_PORT fixes its port, to reach it through a tunnel.
 
 set -eu
 
@@ -31,6 +34,8 @@ BACKEND_IMAGE=pwnforge-prodcheck-backend:local
 FRONTEND_IMAGE=pwnforge-prodcheck-frontend:local
 TIMEOUT_SECS=${PRODCHECK_TIMEOUT_SECS:-300}
 SERVICES="db redis garage backend frontend"
+# Fixed with PRODCHECK_HTTP_PORT, to reach a kept stack through a tunnel.
+HTTP_PORT=${PRODCHECK_HTTP_PORT:-$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
 
 TMP=$(mktemp -d)
 
@@ -97,7 +102,6 @@ docker build -q -t "$FRONTEND_IMAGE" "$ROOT/frontend" >/dev/null
 
 # Test values for every variable docker-compose.yml requires. PORT is not one:
 # the compose file fixes it to 3000, the port frontend/nginx.conf proxies to.
-HTTP_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 cat > "$TMP/env" <<EOF
 POSTGRES_USER=prodcheck
 POSTGRES_PASSWORD=$(hex 24)
@@ -193,3 +197,12 @@ if [ "$failed" -ne 0 ]; then
 fi
 
 echo "prod-check: every service is healthy"
+
+# PRODCHECK_KEEP=1: stay up for testing by hand; Ctrl-C cleans up as usual.
+if [ "${PRODCHECK_KEEP:-0}" = 1 ]; then
+    echo "prod-check: kept up on http://127.0.0.1:$HTTP_PORT, Ctrl-C to clean up"
+    echo "prod-check: mails (console backend): docker logs -f ${PROJECT}-backend-1"
+    # Ctrl-C is how a kept stack ends: clean up and leave with success.
+    trap 'exit 0' INT TERM
+    while :; do sleep 3600; done
+fi
