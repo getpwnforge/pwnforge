@@ -146,7 +146,7 @@ function InvitationRow({ team, invitation, myId }: Readonly<{
       <TableCell className="text-right">
         <ConfirmDialog
           trigger={
-            <Button variant="ghost" size="sm" className="text-danger" aria-label={t("teams:invitations.table.revokeNamed", { name })}>
+            <Button variant="ghost" size="sm" className="text-danger-text" aria-label={t("teams:invitations.table.revokeNamed", { name })}>
               {t("teams:invitations.table.revoke")}
             </Button>
           }
