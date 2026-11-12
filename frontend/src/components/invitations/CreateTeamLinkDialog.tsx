@@ -79,7 +79,7 @@ export function CreateTeamLinkDialog({ team }: Readonly<{ team: TeamResponse }>)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="secondary">
+        <Button variant="primary">
           <LinkIcon aria-hidden />
           {t("teams:invitations.link.create")}
         </Button>
