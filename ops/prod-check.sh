@@ -94,7 +94,10 @@ step() {
     fi
 }
 
-hex() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
+hex() {
+    bytes=$1
+    od -An -tx1 -N"$bytes" /dev/urandom | tr -d ' \n'
+}
 
 echo "prod-check: building $BACKEND_IMAGE and $FRONTEND_IMAGE"
 docker build -q -t "$BACKEND_IMAGE" "$ROOT/backend" >/dev/null
@@ -163,7 +166,8 @@ echo "prod-check: starting every service"
 step compose up -d --quiet-pull
 
 health() {
-    container=$(compose ps -q "$1")
+    service=$1
+    container=$(compose ps -q "$service")
     [ -n "$container" ] || { echo missing; return; }
     docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$container"
 }
