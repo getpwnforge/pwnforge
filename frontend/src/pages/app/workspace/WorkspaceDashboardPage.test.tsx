@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import i18n from "@/lib/i18n";
@@ -6,6 +7,7 @@ import { effectiveMember } from "@/test/api-fixtures";
 import { HEXAGON, renderWorkspace } from "@/test/render-workspace";
 
 const t = (key: string, options: Record<string, unknown> = {}) => i18n.t(key, options);
+const inviteButton = () => screen.queryByRole("button", { name: t("workspaces:members.invite.open") });
 
 describe("WorkspaceDashboardPage", () => {
   it("names the workspace and links its team", async () => {
@@ -53,5 +55,32 @@ describe("WorkspaceDashboardPage", () => {
     const link = await screen.findByRole("link", { name: /hexagon\.ctf/ });
     expect(link).toHaveAttribute("href", "https://hexagon.ctf/");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("lets a Member of the team open the invitation dialog", async () => {
+    const user = userEvent.setup();
+    renderWorkspace("", {}, { workspace: { ...HEXAGON, my_role: "member" } });
+
+    await user.click(await screen.findByRole("button", { name: t("workspaces:members.invite.open") }));
+
+    expect(await screen.findByRole("dialog", { name: t("workspaces:members.invite.title", { name: HEXAGON.name }) })).toBeInTheDocument();
+  });
+
+  it("keeps the invite button from a Viewer", async () => {
+    renderWorkspace("", {}, { workspace: { ...HEXAGON, my_role: "viewer" } });
+    await screen.findByRole("link", { name: "Team Alpha" });
+    expect(inviteButton()).not.toBeInTheDocument();
+  });
+
+  it("keeps the invite button off a solo workspace", async () => {
+    renderWorkspace("", {}, { workspace: { ...HEXAGON, team_id: null, mode: "solo", my_role: "owner" } });
+    await screen.findByText(t("workspaces:dashboard.solo"));
+    expect(inviteButton()).not.toBeInTheDocument();
+  });
+
+  it("keeps the invite button off an archived workspace", async () => {
+    renderWorkspace("", {}, { workspace: { ...HEXAGON, archived: true, my_role: "captain" } });
+    await screen.findByRole("link", { name: "Team Alpha" });
+    expect(inviteButton()).not.toBeInTheDocument();
   });
 });

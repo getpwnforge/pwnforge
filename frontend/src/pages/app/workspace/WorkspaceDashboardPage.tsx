@@ -1,11 +1,13 @@
-import { ArrowUpRightIcon, FlagIcon, PlusIcon, ExternalLinkIcon  } from "lucide-react";
+import { ArrowUpRightIcon, ExternalLinkIcon, FlagIcon, PlusIcon, UserPlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 
 import { WsIcon } from "@/components/brand/WsIcon";
+import { InviteToWorkspaceDialog } from "@/components/invitations/InviteToWorkspaceDialog";
 import { PageChrome } from "@/components/layout/PageChrome";
 import { AvatarGroup, AvatarGroupCount } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { useCurrentWorkspace } from "@/hooks/useCurrentWorkspace";
@@ -14,16 +16,19 @@ import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { WorkspaceResponse } from "@/lib/api/types";
 import { avatarUrl } from "@/lib/avatar";
 import { displayName } from "@/lib/display-name";
+import { canInviteToWorkspace } from "@/lib/permissions";
 import { EXTERNAL, ROUTES } from "@/lib/routes";
-import { Button } from "@/components/ui/button";
 
 /**
  * NOTE : Temporary function to determine if the user can create a challenge. This will be replaced with a proper permission check in the future.
  * Returns always true for now, but will be updated to check the user's role and the workspace's status.
  */
 function canCreateChallenge(role: WorkspaceResponse["my_role"]): boolean {
-  return !!(role);
+  return !!role;
 }
+
+/** A team as my teams list it. */
+type Team = NonNullable<ReturnType<typeof useTeams>["data"]>[number];
 
 /** The host to show for a link; the API only stores parsed http(s) URLs. */
 function hostOf(url: string): string {
@@ -41,7 +46,12 @@ function hostOf(url: string): string {
 export function WorkspaceDashboardPage() {
   const { t } = useTranslation(["workspaces", "nav"]);
   const workspace = useCurrentWorkspace();
+  const teams = useTeams();
+  // WorkspaceResponse carries only team_id: the name and slug come from my teams. A guest who
+  // is not in the team does not find it there.
+  const team = workspace.team_id ? teams.data?.find((candidate) => candidate.id === workspace.team_id) : undefined;
   const canCreate = !workspace.archived && canCreateChallenge(workspace.my_role);
+  const canInvite = canInviteToWorkspace(workspace, workspace.my_role, !!team);
   let emptyKey = "workspaces:dashboard.emptyTextReader";
   if (canCreate) emptyKey = "workspaces:dashboard.emptyText";
   else if (!workspace.team_id) emptyKey = "workspaces:dashboard.emptyTextSolo";
@@ -59,9 +69,20 @@ export function WorkspaceDashboardPage() {
           />
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-page font-semibold tracking-tight text-text">{workspace.name}</h1>
-            <Facts workspace={workspace} />
+            <Facts workspace={workspace} team={team} />
           </div>
           <Members slug={workspace.slug} />
+          {canInvite ? (
+            <InviteToWorkspaceDialog
+              workspace={workspace}
+              trigger={
+                <Button variant="ghost" size="sm">
+                  <UserPlusIcon aria-hidden />
+                  {t("workspaces:members.invite.open")}
+                </Button>
+              }
+            />
+          ) : null}
         </header>
 
         {workspace.description ? <p className="max-w-prose text-sm text-text-muted">{workspace.description}</p> : null}
@@ -72,9 +93,7 @@ export function WorkspaceDashboardPage() {
               <FlagIcon aria-hidden />
             </EmptyMedia>
             <EmptyTitle>{t("workspaces:dashboard.emptyTitle")}</EmptyTitle>
-            <EmptyDescription>
-              {t(emptyKey)}
-            </EmptyDescription>
+            <EmptyDescription>{t(emptyKey)}</EmptyDescription>
           </EmptyHeader>
           {canCreate ? (
             <EmptyContent>
@@ -93,7 +112,6 @@ export function WorkspaceDashboardPage() {
             </a>
           </Button>
         </Empty>
-
       </div>
     </>
   );
@@ -102,7 +120,7 @@ export function WorkspaceDashboardPage() {
 /** Avatars shown before the "+N". */
 const AVATARS_MAX = 5;
 
-/** Who has access, guests included; the full list and the invitations come with the Members page. */
+/** Who has access, guests included; the full list is on the Members page. */
 function Members({ slug }: Readonly<{ slug: string }>) {
   const { t } = useTranslation(["workspaces"]);
   const members = useWorkspaceMembers(slug);
@@ -127,13 +145,9 @@ function Members({ slug }: Readonly<{ slug: string }>) {
   );
 }
 
-/** Team (or solo), platform and dates, on one line under the name. */
-function Facts({ workspace }: Readonly<{ workspace: WorkspaceResponse }>) {
+/** Team (or solo), platform, dates and event link, on one line under the name. */
+function Facts({ workspace, team }: Readonly<{ workspace: WorkspaceResponse; team: Team | undefined }>) {
   const { t, i18n } = useTranslation(["workspaces", "nav"]);
-  const teams = useTeams();
-  // WorkspaceResponse carries only team_id: the name and slug come from my teams. A guest who
-  // is not in the team does not find it there, and reads "Team" without a name.
-  const team = workspace.team_id ? teams.data?.find((candidate) => candidate.id === workspace.team_id) : undefined;
   const dates = new Intl.DateTimeFormat(i18n.language, { day: "numeric", month: "short", year: "numeric" });
   const start = workspace.starts_at ? dates.format(new Date(workspace.starts_at)) : null;
   const end = workspace.ends_at ? dates.format(new Date(workspace.ends_at)) : null;
