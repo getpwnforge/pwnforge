@@ -17,3 +17,6 @@ overrides:
   qs: '>=6.16.0'
   fast-uri: '>=4.2.3'
   deepmerge: '>=4.3.1'
+  # GHSA-g3hv-75wg-m249: ESLint, already on its latest release, still pulls
+  # minimatch below 11.0.1. Remove once ESLint depends on 11 itself.
+  "minimatch@>=7 <11.0.1": "^11.0.1"
