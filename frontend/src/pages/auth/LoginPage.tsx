@@ -2,7 +2,7 @@ import { useForm } from "react-hook-form";
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { EyeOff, Eye } from "lucide-react";
 
@@ -20,29 +20,12 @@ import { usePageTitle } from "@/hooks/usePageTitle";
 import { useTurnstile } from "@/hooks/useTurnstile";
 import { TurnstileWidget } from "@/components/common/TurnstileWidget";
 
-/**
- * Where to land after signing in.
- *
- * Only same-origin paths are accepted: `//evil.tld` and `https://evil.tld` are
- * both values a browser will happily follow off-site, and this one comes
- * straight from the query string.
- */
-function safeRedirect(target: string | null): string {
-  if (!target || !target.startsWith("/") || target.startsWith("//")) {
-    return ROUTES.workspaces;
-  }
-
-  return target;
-}
-
 export function LoginPage() {
   const { t } = useTranslation(["auth", "common"]);
   const { login, resendVerification } = useAuth();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const resend = useMutation({ mutationFn: resendVerification });
-  const turnstile = useTurnstile();
+  const turnstile = useTurnstile("login");
   usePageTitle(t("auth:login.tabTitle"));
 
   const {
@@ -54,9 +37,10 @@ export function LoginPage() {
     defaultValues: { username_or_email: "", password: "" },
   });
 
+  // No navigation on success: RequireAnonymous sends a signed-in visitor on
+  // to `?from=`, and one who has just signed in is no exception.
   const submit = useMutation({
     mutationFn: (values: LoginValues) => login({ ...values, turnstile_token: turnstile.token ?? "" }),
-    onSuccess: () => navigate(safeRedirect(searchParams.get("from")), { replace: true }),
     onError: () => turnstile.reset(),
   });
   const unverifiedUserId =
@@ -78,8 +62,8 @@ export function LoginPage() {
       </header>
 
       <form onSubmit={handleSubmit((values) => submit.mutate(values))} className="flex flex-col gap-5">
-        {/* Every login failure is deliberately vague server-side — wrong
-            password and unknown account answer the same code — so there is
+        {/* Every login failure is deliberately vague server-side (wrong
+            password and unknown account answer the same code), so there is
             nothing to place under a specific field. */}
         <FormError
           error={submit.error}
@@ -153,7 +137,16 @@ export function LoginPage() {
           </Field>
         </FieldGroup>
 
-        <TurnstileWidget siteKey={turnstile.siteKey} widgetRef={turnstile.ref} onSuccess={turnstile.setToken} />
+        <TurnstileWidget
+          siteKey={turnstile.siteKey}
+          action={turnstile.action}
+          configError={turnstile.configError}
+          issue={turnstile.issue}
+          widgetRef={turnstile.ref}
+          onSuccess={turnstile.onSuccess}
+          onError={turnstile.onError}
+          onExpire={turnstile.onExpire}
+        />
 
         <Button type="submit" size="lg" className="w-full" disabled={submit.isPending || !turnstile.isReady}>
           {submit.isPending ? <Spinner /> : null}

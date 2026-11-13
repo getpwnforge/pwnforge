@@ -2,6 +2,7 @@
 name = "api"
 edition.workspace = true
 version.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 services = { path = "../services" }
@@ -18,11 +19,19 @@ redis.workspace = true
 migration = { path = "../migration" }
 uuid.workspace = true
 domain.workspace = true
-thiserror = "2.0.20"
-jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto"] }
+thiserror = "2.0.21"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
 chrono.workspace = true
 validator.workspace = true
 seed = { path = "../seed" }
 axum-extra = { version = "0.12.6", features = ["cookie"] }
 time = "0.3.55"
 utoipa.workspace = true
+tower-http = { version = "0.7.1", features = ["cors", "timeout"] }
+tower = { version = "0.5.3", features = ["limit"] }
+
+[dev-dependencies]
+# `util` only, for `ServiceExt::oneshot`: the avatar permission tests drive the
+# real router rather than calling the handlers, because the thing under test is
+# the status code a client actually receives.
+tower = { version = "0.5.3", features = ["limit", "util"] }

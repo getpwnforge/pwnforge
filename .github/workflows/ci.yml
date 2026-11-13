@@ -18,7 +18,13 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
+      # Full history: on a push, paths-filter compares against commits it
+      # finds locally and fetches only the ones it does not, which would need
+      # the credentials this checkout no longer keeps.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Filter paths
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -26,8 +32,11 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+            # The spec too: the frontend types are generated from it, and a
+            # spec committed without them must fail the frontend job.
             frontend:
               - 'frontend/**'
+              - 'backend/openapi.json'
 
   backend:
     name: Backend (Rust)
@@ -41,7 +50,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Same image as the compose files: the migrations default keys to
+        # uuidv7(), which only exists from Postgres 18.
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: pwnforge
           # Ephemeral CI-only credential, never used outside this job. Still pulled from
@@ -67,6 +78,8 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -84,14 +97,94 @@ jobs:
 
       - name: Clippy
         working-directory: backend
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      # backend/openapi.json is committed, and the frontend types are generated
+      # from it: it has to be what this code exports. Fails when a route
+      # annotation or a DTO changed without `make api-types`.
+      - name: Check the committed OpenAPI spec
+        working-directory: backend
+        run: |
+          cargo test --locked --all-features -p api openapi::tests::export -- --ignored --exact
+          git diff --exit-code -- openapi.json
+
+      # Garage cannot be a `services:` container: it needs a config file, and
+      # services start before the repository is checked out, so there is
+      # nothing to mount. It is started here instead, after checkout.
+      #
+      # The `object_storage` and `avatars` tests talk to a real object store on
+      # purpose. What they cover is provider behaviour, such as a missing key
+      # surfacing as `NoSuchKey` rather than a generic error and a paged
+      # `ListObjectsV2` terminating, so a double would only assert our
+      # assumptions about S3 rather than S3 itself.
+      - name: Start object storage (Garage)
+        run: |
+          set -euo pipefail
+
+          mkdir -p /tmp/garage
+          cat > /tmp/garage/garage.toml <<'EOF'
+          metadata_dir = "/var/lib/garage/meta"
+          data_dir = "/var/lib/garage/data"
+          db_engine = "sqlite"
+          replication_factor = 1
+          rpc_bind_addr = "[::]:3901"
+          rpc_public_addr = "127.0.0.1:3901"
+          rpc_secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+          [s3_api]
+          s3_region = "garage"
+          api_bind_addr = "[::]:3900"
+          root_domain = ".s3.garage"
+
+          [admin]
+          api_bind_addr = "[::]:3903"
+          admin_token = "cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici"
+          EOF
+
+          # Both secrets above are ephemeral and CI-only. Unlike the database
+          # password they are not pulled from a repo secret: the node is bound
+          # to the runner's own network namespace for the length of one job and
+          # is never reachable from anywhere else, so a repo secret would add
+          # rotation work without removing any exposure.
+          docker run -d --name garage --network host \
+            -v /tmp/garage/garage.toml:/etc/garage.toml:ro \
+            dxflrs/garage:v2.4.1
+
+          for _ in $(seq 1 30); do
+            if curl -sf -H "Authorization: Bearer cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici" \
+                 http://127.0.0.1:3903/v2/GetClusterStatus >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+
+          GARAGE_ADMIN_URL=http://127.0.0.1:3903 \
+          GARAGE_CONFIG_FILE=/tmp/garage/garage.toml \
+          PWNFORGE_S3_ACCESS_KEY_ID=GKcitestkey000000000000000 \
+          PWNFORGE_S3_SECRET_ACCESS_KEY=cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici \
+          PWNFORGE_S3_BUCKET_ATTACHMENTS=pwnforge-attachments \
+          PWNFORGE_S3_BUCKET_AVATARS=pwnforge-avatars \
+            python3 ops/garage/bootstrap.py
+
+      # --no-fail-fast so one failing crate does not hide the others: without
+      # it cargo stops at the first failure and the remaining test binaries
+      # never run, so a PR shows one red crate where several may be broken.
       - name: Run tests
         working-directory: backend
         env:
           DATABASE_URL: postgres://pwnforge:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/pwnforge_test
           REDIS_URL: redis://localhost:6379
-        run: cargo test --all-features
+          PWNFORGE_S3_ENDPOINT: http://127.0.0.1:3900
+          PWNFORGE_S3_REGION: garage
+          PWNFORGE_S3_ACCESS_KEY_ID: GKcitestkey000000000000000
+          PWNFORGE_S3_SECRET_ACCESS_KEY: cicicicicicicicicicicicicicicicicicicicicicicicicicicicicicicici
+          PWNFORGE_S3_BUCKET_ATTACHMENTS: pwnforge-attachments
+          PWNFORGE_S3_BUCKET_AVATARS: pwnforge-avatars
+        run: cargo test --locked --all-features --no-fail-fast
+
+      - name: Object storage logs on failure
+        if: failure()
+        run: docker logs garage || true
 
   frontend:
     name: Frontend (React/TS)
@@ -100,6 +193,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          persist-credentials: false
 
       - name: Enable Corepack
         # Corepack ships with Node itself and reads the "packageManager" field in
@@ -132,9 +227,18 @@ jobs:
         # --ignore-scripts blocks lifecycle scripts (preinstall/install/postinstall) from
         # any dependency, including transitive ones, from running arbitrary code at install
         # time. If a specific trusted package genuinely needs its build script (native
-        # bindings, etc.), allowlist it explicitly via `pnpm.onlyBuiltDependencies` in
-        # package.json instead of dropping this flag.
+        # bindings, etc.), allowlist it explicitly under `allowBuilds` in
+        # frontend/pnpm-workspace.yaml (pnpm 11 replaced `onlyBuiltDependencies` with it)
+        # instead of dropping this flag.
         run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # schema.gen.ts is generated from backend/openapi.json and committed:
+      # fails when it was edited by hand, or not regenerated after the spec.
+      - name: Check the generated API types
+        working-directory: frontend
+        run: |
+          pnpm gen:api
+          git diff --exit-code -- src/lib/api/schema.gen.ts
 
       - name: Lint
         working-directory: frontend

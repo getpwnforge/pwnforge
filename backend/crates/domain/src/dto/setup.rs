@@ -33,11 +33,11 @@ pub struct TestEmailRequest {
 }
 
 /// The administrator half of `SetupRequest`, checked on its own.
-///
-/// Reserved usernames, disposable domains and breached passwords are all
-/// server-side rules. Without this route the wizard could only report them once
-/// every step had been filled, which means sending the operator back two
-/// screens to fix a field they left long ago.
+//
+// Reserved usernames, disposable domains and breached passwords are all
+// server-side rules. Without this route the wizard could only report them once
+// every step had been filled, which means sending the operator back two
+// screens to fix a field they left long ago.
 #[derive(Deserialize, Validate, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ValidateAdminRequest {

@@ -61,6 +61,51 @@ impl Modify for SecurityAddon {
         crate::routes::contact::submit,
         crate::routes::instance::public_config,
         crate::routes::health::health,
+        crate::routes::teams::list_teams,
+        crate::routes::teams::create_team,
+        crate::routes::teams::get_team,
+        crate::routes::teams::update_team,
+        crate::routes::teams::delete_team,
+        crate::routes::teams::list_members,
+        crate::routes::teams::change_member_role,
+        crate::routes::teams::remove_member,
+        crate::routes::teams::transfer_captaincy,
+        crate::routes::teams::list_invitations,
+        crate::routes::teams::create_invitation,
+        crate::routes::teams::revoke_invitation,
+        crate::routes::teams::accept_invitation_by_token,
+        crate::routes::teams::list_pending_invitations,
+        crate::routes::teams::accept_invitation_by_id,
+        crate::routes::teams::reject_invitation_by_id,
+        crate::routes::teams::preview_invitation,
+        crate::routes::avatars::read_avatar,
+        crate::routes::avatars::upload_avatar,
+        crate::routes::avatars::delete_avatar,
+        crate::routes::workspaces::list_workspaces,
+        crate::routes::workspaces::create_workspace,
+        crate::routes::workspaces::get_workspace,
+        crate::routes::workspaces::update_workspace,
+        crate::routes::workspaces::delete_workspace,
+        crate::routes::workspaces::archive_workspace,
+        crate::routes::workspaces::unarchive_workspace,
+        crate::routes::workspaces::add_favorite,
+        crate::routes::workspaces::remove_favorite,
+        crate::routes::workspaces::list_members,
+        crate::routes::workspace_members::list_exclusions,
+        crate::routes::workspace_members::set_role,
+        crate::routes::workspace_members::clear_role_override,
+        crate::routes::workspace_members::exclude,
+        crate::routes::workspace_members::lift_exclusion,
+        crate::routes::workspace_members::remove_guest,
+        crate::routes::workspace_members::leave,
+        crate::routes::workspace_invitations::create_invitation,
+        crate::routes::workspace_invitations::list_invitations,
+        crate::routes::workspace_invitations::cancel_invitation,
+        crate::routes::workspace_invitations::list_pending_invitations,
+        crate::routes::workspace_invitations::preview_invitation,
+        crate::routes::workspace_invitations::accept_invitation_by_token,
+        crate::routes::workspace_invitations::accept_invitation_by_id,
+        crate::routes::workspace_invitations::reject_invitation_by_id,
     ),
     components(schemas(
         domain::dto::auth::RegisterRequest,
@@ -85,8 +130,45 @@ impl Modify for SecurityAddon {
         domain::dto::instance::PublicInstanceConfig,
         domain::dto::health::HealthResponse,
         domain::types::ContactCategory,
+        domain::dto::team::TeamRole,
+        domain::types::AccentColor,
+        domain::dto::team::CreateTeamRequest,
+        domain::dto::team::TeamPatch,
+        domain::dto::team::TeamResponse,
+        domain::dto::team::TeamSummary,
+        domain::dto::team::TeamMemberResponse,
+        domain::dto::team::ChangeMemberRoleRequest,
+        domain::dto::team::TransferCaptaincyRequest,
+        domain::dto::team::CreateInvitationRequest,
+        domain::dto::team::TeamInvitationResponse,
+        domain::dto::team::JoinTeamRequest,
+        domain::dto::team::TeamInvitationPreview,
+        domain::dto::team::TeamLinkResponse,
+        domain::dto::team::CreatedTeamInvitation,
+        domain::dto::invitation::InvitationTokenRequest,
+        domain::dto::invitation::InvitationTarget,
+        domain::dto::workspace::Membership,
+        domain::dto::workspace::WorkspaceType,
+        domain::dto::workspace::WorkspaceMode,
+        domain::dto::workspace::Platform,
+        domain::dto::workspace::WriteupVisibility,
+        domain::dto::workspace::CreateWorkspaceInput,
+        domain::dto::workspace::UpdateWorkspaceInput,
+        domain::dto::workspace::WorkspaceSummary,
+        domain::dto::workspace::WorkspaceResponse,
+        domain::dto::workspace::EffectiveMember,
+        domain::dto::workspace::RoleSource,
+        domain::dto::workspace::ExcludedMember,
+        domain::dto::workspace::WorkspaceRole,
+        domain::dto::workspace::SetMemberRoleRequest,
+        domain::dto::workspace::GuestRole,
+        domain::dto::workspace::CreateWorkspaceInvitationRequest,
+        domain::dto::workspace::InvitationStatus,
+        domain::dto::workspace::CancelReason,
+        domain::dto::workspace::WorkspaceInvitationResponse,
+        domain::dto::workspace::WorkspaceInvitationPreview,
         domain::dto::error_responses::SimpleErrorResponse,
-        domain::dto::error_responses::ValidationErrorResponse,
+        domain::dto::error_responses::UnprocessableErrorResponse,
         domain::dto::error_responses::RateLimitedErrorResponse,
         domain::dto::error_responses::EmailNotVerifiedErrorResponse,
         domain::dto::error_responses::LegalVersionStaleErrorResponse,
@@ -100,6 +182,8 @@ impl Modify for SecurityAddon {
         (name = "Contact", description = "Public contact form"),
         (name = "Instance", description = "Public instance configuration"),
         (name = "Health", description = "Service health probe"),
+        (name = "Teams", description = "Team management: membership, roles, and invitations"),
+        (name = "Workspaces", description = "Workspaces: access, settings, archiving, favourites, members and guest invitations"),
     ),
     info(
         title = "PwnForge API",
@@ -117,6 +201,31 @@ pub struct ApiDoc;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every operation has its own `operationId`, as OpenAPI requires.
+    ///
+    /// utoipa names an operation after its handler unless told otherwise, and
+    /// the team and workspace routes share handler names (`list_members`,
+    /// `create_invitation`, ...). Two operations with one id break the
+    /// frontend types generated from the spec: openapi-typescript keys its
+    /// `operations` interface by id, and the duplicate keys fail `tsc`.
+    #[test]
+    fn operation_ids_are_unique() {
+        let spec = serde_json::to_value(ApiDoc::openapi()).expect("the spec must serialize");
+        let mut seen = std::collections::BTreeMap::new();
+
+        for (path, item) in spec["paths"].as_object().expect("the spec must have paths") {
+            for (method, operation) in item.as_object().expect("a path item is an object") {
+                let Some(id) = operation.get("operationId").and_then(|id| id.as_str()) else {
+                    continue;
+                };
+                let route = format!("{} {path}", method.to_uppercase());
+                if let Some(first) = seen.insert(id.to_owned(), route.clone()) {
+                    panic!("operationId {id:?} is used by {first} and {route}");
+                }
+            }
+        }
+    }
 
     /// Not a real test: writes the spec to disk on demand.
     /// Run with: cargo test -p api openapi::tests::export -- --ignored

@@ -1,0 +1,19 @@
+{# templates/signup_notice.html.j2 #}
+{% extends "layout.html.j2" %}
+
+{% block content %}
+<p style="margin:0 0 12px;">{{ greeting }}</p>
+<p style="margin:0 0 16px;">{{ body }}</p>
+
+{% if let Some(detail) = detail %}
+<p style="margin:0 0 16px;">{{ detail }}</p>
+{% endif %}
+
+{# Plain links to pages of the instance, never a button: nothing here is an
+   action the reader must take, and nothing carries a token. #}
+{% for link in links %}
+<p style="margin:0 0 8px;"><a href="{{ link.href }}" style="color:#EB5927;">{{ link.label }}</a></p>
+{% endfor %}
+
+<p style="margin:16px 0 0;font-size:13px;color:#9a9aa3;">{{ closing }}</p>
+{% endblock %}

@@ -26,31 +26,142 @@ Requirements: Docker, Docker Compose, Git.
 git clone https://github.com/getpwnforge/pwnforge.git
 cd pwnforge
 cp .env.example .env
+
+# The bundled object store needs its own config, which is gitignored because
+# it holds the cluster's admin credentials. Generate the two secrets:
+cp ops/garage/garage.toml.example ops/garage/garage.toml
+openssl rand -hex 32   # -> rpc_secret
+openssl rand -hex 32   # -> admin_token
+
 docker compose -f docker-compose.dev.yml up -d
 ```
+
+The object store (`garage`, `garage-init`) sits behind the `garage` Compose
+profile, which `.env.example` enables by default. If you already run an S3,
+clear `COMPOSE_PROFILES` and fill in the `PWNFORGE_S3_*` variables instead -
+no `garage.toml` is needed then.
 
 `docker-compose.dev.yml` builds from source and enables hot-reload for both backend and frontend. **Do not use `docker-compose.yml` for development.** That file pulls pre-built production images from GHCR and will not reflect your local changes.
 
 - Backend: <http://localhost:3000>
 - Frontend: <http://localhost:5173>
+- Object store (S3 API): <http://127.0.0.1:3900>
+
+### Inspecting object storage
+
+Garage has no web console - this is the one thing lost in the move off MinIO
+(see [ADR 0002](docs/adr/0002-replacing-minio.md)). Two ways to look
+inside a local instance.
+
+**The Garage CLI**, through the running container. The image is `FROM scratch`,
+so there is no shell: invoke the binary directly.
+
+```bash
+# Cluster health, node id, disk available
+docker compose -f docker-compose.dev.yml exec garage /garage status
+
+# Buckets, their size and object count
+docker compose -f docker-compose.dev.yml exec garage /garage bucket list
+docker compose -f docker-compose.dev.yml exec garage /garage bucket info pwnforge-avatars
+
+# Which keys can reach what
+docker compose -f docker-compose.dev.yml exec garage /garage key list
+
+# Cap a bucket's size. Refusals surface as HTTP 507 storage_quota_exceeded,
+# not as a generic outage.
+docker compose -f docker-compose.dev.yml exec garage /garage bucket set-quotas \
+    pwnforge-attachments --max-size 50G
+```
+
+**Any S3 client**, against `http://127.0.0.1:3900`. Note `--region garage`:
+Garage signs SigV4 against the region in `garage.toml`, and the default
+`us-east-1` produces a signature mismatch rather than a useful error.
+
+```bash
+export AWS_ACCESS_KEY_ID=$(grep ^PWNFORGE_S3_ACCESS_KEY_ID .env | cut -d= -f2)
+export AWS_SECRET_ACCESS_KEY=$(grep ^PWNFORGE_S3_SECRET_ACCESS_KEY .env | cut -d= -f2)
+
+aws --endpoint-url http://127.0.0.1:3900 --region garage \
+    s3 ls s3://pwnforge-avatars --recursive
+```
+
+To start over from an empty store, run `make reset-storage`. To reset the
+database, run `make reset-db`; you will want that after a migration is edited
+in place on a branch, since a database that already applied the old version
+never sees the change. Both are destructive and prompt for three seconds first.
 
 ## Running tests
 
 ```bash
-# Backend
-cargo test
+# Backend, against the dev stack
+make test-backend
 
 # Frontend
 pnpm test
 ```
 
+### Frontend tests
+
+`pnpm test` runs [Vitest](https://vitest.dev) once, in a jsdom environment,
+over every `src/**/*.test.ts(x)` file, and fails when a test fails or when it
+finds none. Components are rendered with Testing Library; the network is
+faked at the app's own axios instance (`src/test/fake-api.ts`), never with an
+HTTP mocking library. `src/test/setup.ts` undoes after each test what one
+could leave behind for the next: the rendered tree, the zustand stores, the
+shared query cache, both storages and the address bar. Test files are type
+checked on their own (`tsconfig.test.json`), so their types never reach the
+application code.
+
+Use `make test-backend` rather than `cargo test` directly. Parts of the suite
+talk to a real Postgres, Redis and object store, and the target starts them,
+loads the root `.env` and points the endpoints at the host. A bare `cargo test`
+reads none of that and fails on a missing variable, which reads like a bad
+value rather than a file nothing opened. `make test` runs this plus the
+frontend half.
+
+## API types
+
+The frontend's API types are generated from the backend's OpenAPI spec, and
+both are committed:
+
+- `backend/openapi.json`, written by the ignored `openapi::tests::export` test
+  from the `#[utoipa::path]` annotations and the DTOs listed in
+  `crates/api/src/openapi.rs`;
+- `frontend/src/lib/api/schema.gen.ts`, generated from it by
+  [openapi-typescript](https://openapi-ts.dev) (`pnpm gen:api`).
+
+When you change a route or a DTO:
+
+1. make the change, and list any new handler or DTO in `openapi.rs`;
+2. run `make api-types`, which exports the spec and regenerates the types;
+3. commit both files in the same commit as the change.
+
+CI runs each step again and fails when the result differs from what is
+committed, so a spec left behind by a DTO, or a `schema.gen.ts` edited by
+hand, does not get through. Never edit `schema.gen.ts`: import the named
+aliases in `frontend/src/lib/api/types.ts` instead, and add one there when a
+page needs another schema. Every operation needs its own `operationId`; when
+two handlers share a name, set `operation_id` on both (a backend test checks
+it).
+
 ## Before opening a PR
 
 - [ ] Commits are signed off (`-s`)
-- [ ] `cargo test` and `pnpm test` pass locally
+- [ ] `make test-backend` and `pnpm test` pass locally
 - [ ] `cargo audit` and `pnpm audit` are clean (or documented if not)
 - [ ] New auth/permissions logic includes tests for the relevant role transitions
 - [ ] Lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) are committed if dependencies changed
+- [ ] `make api-types` was run and both generated files are committed if a route or a DTO changed
+
+### Audit exceptions
+
+`pnpm audit` ignores one advisory, listed under `audit.ignore` in
+`frontend/pnpm-workspace.yaml`: GHSA-vfj7-8cjw-p6xm, a stack-exhaustion denial
+of service in `braces` 3.0.3. `braces` reaches the tree only through the
+`shadcn` CLI (via `fast-glob` and `micromatch`), which runs when a developer
+adds a component. It is never executed by the CSS the app imports from
+`shadcn/tailwind.css` and never ends up in the bundle. No patched release of
+`braces` is published; the exception goes as soon as one is.
 
 ## Code style
 

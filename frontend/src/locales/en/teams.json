@@ -1,162 +1,237 @@
 {
   "list": {
     "title": "Teams",
-    "subtitle": "Your permanent groups. A team can be linked to several workspaces.",
-    "newTeam": "New team",
-    "createTeam": "Create a team",
-    "createTeamHint": "Invite with a link afterwards",
-    "meta": "{{members}} members · {{workspaces}} workspaces · active {{lastActive}}",
-    "workspacesButton": "Workspaces",
-    "pendingInvitations": "Pending invitations · {{count}}",
-    "invitedBy": "Invited by @{{handle}} · expires {{expiry}}"
+    "subtitle": "Your permanent groups. A team can own several workspaces.",
+    "new": "New team",
+    "newCard": {
+      "title": "Create a team",
+      "hint": "Invite with a link afterwards"
+    }
+  },
+  "card": {
+    "members_one": "{{count}} member",
+    "members_other": "{{count}} members",
+    "workspaces_one": "{{count}} workspace",
+    "workspaces_other": "{{count}} workspaces",
+    "openWorkspaces": "Workspaces",
+    "settings": "Settings of {{name}}"
+  },
+  "create": {
+    "title": "New team",
+    "subtitle": "You will be its Captain. Invite members once it exists.",
+    "name": "Name",
+    "color": "Color",
+    "cancel": "Cancel",
+    "submit": "Create team"
+  },
+  "validation": {
+    "nameRequired": "Give the team a name."
+  },
+  "notFound": {
+    "title": "Team not found",
+    "description": "It does not exist, or you are not one of its members."
   },
   "detail": {
-    "subtitle": "{{members}} members · {{workspaces}} workspaces · created in {{date}}",
-    "inviteLink": "Invitation link",
+    "tabsLabel": "Team sections",
     "tabs": {
       "members": "Members",
       "workspaces": "Workspaces",
       "roles": "Roles & permissions",
-      "invites": "Invitations",
+      "invitations": "Invitations",
       "settings": "Settings"
     },
-    "membersFilterPlaceholder": "Filter members...",
-    "addMember": "Add a member",
+    "created": "created {{date}}"
+  },
+  "members": {
+    "filter": "Filter members...",
+    "invite": "Invite members",
     "columns": {
       "member": "Member",
       "role": "Role",
-      "workspaces": "Workspaces",
-      "lastActivity": "Last activity"
+      "joined": "Joined",
+      "invitedBy": "Invited by",
+      "actions": "Actions"
     },
-    "editPermissions": "Edit permissions",
-    "linkedWorkspaces": "Linked workspaces"
+    "actionsFor": "Actions for {{name}}",
+    "setRole": "Make {{role}}",
+    "remove": "Remove from the team",
+    "removeTitle": "Remove {{name}}?",
+    "removeText": "They lose access to the team's workspaces. Coming back takes a new invitation.",
+    "leave": "Leave the team",
+    "leaveTitle": "Leave {{team}}?",
+    "leaveText": "You lose access to the team's workspaces. Coming back takes a new invitation.",
+    "noMatch": "No member matches."
   },
-  "roles": {
-    "captain": "Captain",
-    "admin": "Admin",
-    "member": "Member",
-    "viewer": "Viewer",
-    "descriptions": {
-      "captain": "Full control, including deleting the team.",
-      "admin": "Manages members, workspaces and integrations.",
-      "member": "Creates challenges, writes and publishes writeups.",
-      "viewer": "Read-only access to every workspace."
-    },
-    "captainUniqueHint": "The Captain role is unique and cannot be restricted."
-  },
-  "permissions": {
-    "matrixTitle": "Permission matrix",
-    "permission": "Permission",
-    "customRole": "Custom role",
-    "allowed": "Allowed",
-    "notAllowed": "Not allowed",
-    "groups": {
-      "challenges": "Challenges",
-      "writeups": "Writeups",
-      "workspaces": "Workspaces",
-      "members": "Members",
-      "team": "Team",
-      "read": "Read"
-    },
-    "rows": {
-      "challengeCreateEdit": "Create & edit",
-      "challengeClaimSolve": "Claim / mark as solved",
-      "challengeDelete": "Delete",
-      "writeupDraft": "Write a draft",
-      "writeupPublish": "Publish",
-      "writeupDeleteOthers": "Delete other people's",
-      "workspaceCreateLink": "Create & link",
-      "workspaceArchiveUnlink": "Archive / unlink",
-      "memberInvite": "Invite",
-      "memberChangeRoles": "Change roles",
-      "memberRemove": "Remove a member",
-      "teamEditSettings": "Edit settings",
-      "teamManageIntegrations": "Manage integrations",
-      "teamDelete": "Delete the team",
-      "viewChallengesWriteups": "View challenges & writeups"
-    }
-  },
-  "workspacesTab": {
-    "linkedWorkspaces": "Linked workspaces",
-    "linkedWorkspacesHint": "{{active}} active · {{archived}} archived/permanent",
-    "solvedChallenges": "Solved challenges",
-    "involvedMembers": "Involved members",
-    "wholeTeamActive": "The whole team is active",
-    "averageProgress": "Average progress",
-    "acrossAllWorkspaces": "Across all workspaces",
-    "filterPlaceholder": "Filter workspaces...",
-    "linkWorkspace": "Link a workspace",
+  "workspaces": {
+    "new": "New workspace",
+    "empty": "This team has no workspace yet.",
+    "filter": "Filter workspaces...",
+    "status": "Status",
+    "allStatuses": "All statuses",
+    "noMatch": "No workspace matches.",
     "columns": {
       "workspace": "Workspace",
       "status": "Status",
-      "linkedMembers": "Linked members",
-      "progress": "Progress",
-      "lastActivity": "Last activity"
-    },
-    "status": {
-      "inProgress": "In progress",
-      "finished": "Finished",
-      "archived": "Archived",
-      "permanent": "Permanent"
+      "type": "Type",
+      "myRole": "My role"
     }
   },
-  "invitations": {
-    "linkTitle": "Team invitation link",
-    "linkRole": "Role: {{role}}",
-    "linkExpiry": "Expires in {{count}} d",
-    "inviteByEmail": "Invite by email",
-    "inviteByEmailPlaceholder": "email addresses, comma-separated",
-    "pending": "Pending invitations",
-    "columns": {
-      "recipient": "Recipient",
-      "role": "Role",
-      "invitedBy": "Invited by",
-      "sent": "Sent",
-      "expires": "Expires"
-    },
-    "joinedRecentlyViaLink": "Recently joined via link"
-  },
   "settings": {
-    "identity": {
-      "title": "Team identity",
-      "teamName": "Team name",
-      "slug": "Slug",
-      "description": "Description",
-      "colorHint": "Team color, used in the monogram and badges."
+    "identity": "Team identity",
+    "name": "Team name",
+    "color": "Color",
+    "colorHint": "Used in the monogram and badges.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saved": "Team updated.",
+    "danger": "Danger zone",
+    "leave": "Leave the team",
+    "leaveHint": "You lose access to the team's workspaces. Coming back takes a new invitation.",
+    "leaveTitle": "Leave {{team}}?",
+    "leaveText": "You lose access to the team's workspaces. Coming back takes a new invitation.",
+    "transfer": "Transfer the Captain role",
+    "transferHint": "Another member becomes Captain; you become Admin.",
+    "transferTitle": "Transfer the Captain role",
+    "transferText": "The member you choose becomes Captain. You stay in the team as Admin.",
+    "transferTarget": "New Captain",
+    "transferPlaceholder": "Choose a member",
+    "transferConfirm": "Transfer",
+    "transferred": "The Captain role was transferred.",
+    "delete": "Delete the team",
+    "deleteHint": "Irreversible. The team's workspaces are deleted with it.",
+    "deleteTitle": "Delete {{team}}?",
+    "deleteText": "The team and all its workspaces are deleted for good.",
+    "slug": "Slug",
+    "slugHint": "Set when the team was created; it does not change.",
+    "avatarAdd": "Add an image",
+    "avatarChange": "Change the image",
+    "avatarRemove": "Remove",
+    "description": "Description",
+    "membersCreate": "Members can create workspaces",
+    "membersCreateHint": "Otherwise only the Admins and the Captain can. Viewers never can."
+  },
+  "roles": {
+    "title": "Roles & permissions",
+    "seeDetail": "See what each role can do",
+    "short": {
+      "captain": "Every right, deleting the team included.",
+      "admin": "Manages members, invitations and workspaces.",
+      "member": "Works in the workspaces and invites guests.",
+      "viewer": "Reads the workspaces, changes nothing."
     },
-    "membersRoles": {
-      "title": "Members & default roles",
-      "defaultRole": "Default role for new members",
-      "defaultRoleHint": "Applied to anyone joining via the invitation link.",
-      "manualApproval": "Manually approve requests",
-      "manualApprovalHint": "New join requests must be approved by an Admin.",
-      "allowMembersCreateWorkspaces": "Allow members to create workspaces",
-      "allowMembersCreateWorkspacesHint": "Otherwise, only Captain and Admin can create them."
+    "long": {
+      "captain": "Every right on the team and its workspaces, including deleting them. There is one Captain; the role moves only by transfer.",
+      "admin": "Edits the team, invites and manages members below their own role, creates and configures the team's workspaces.",
+      "member": "Works in the team's workspaces and can invite guests into them.",
+      "viewer": "Opens the team's workspaces read-only."
     },
-    "visibility": {
-      "title": "Visibility",
-      "publicProfile": "Public team profile",
-      "publicProfileHint": "Shows a public page with the name, logo and track record.",
-      "discoverable": "Discoverable in search",
-      "discoverableHint": "The team appears in PwnForge search results.",
-      "showLeaderboard": "Show member leaderboard",
-      "showLeaderboardHint": "Publishes the internal leaderboard on the public profile."
+    "matrix": "Permission matrix",
+    "permission": "Permission",
+    "allowed": "Allowed",
+    "denied": "Not allowed",
+    "footnote": "The Captain is unique and cannot be restricted.",
+    "groups": {
+      "team": "Team",
+      "members": "Members",
+      "workspaces": "Workspaces"
     },
-    "notifications": {
-      "title": "Team notifications",
-      "weeklySummary": "Weekly summary",
-      "weeklySummaryHint": "A recap of team activity every Monday morning.",
-      "discordChannel": "Linked Discord channel",
-      "discordChannelHint": "Posts solves and published writeups to the chosen channel."
-    },
-    "dangerZone": {
-      "title": "Danger zone",
-      "leaveTeam": "Leave the team",
-      "leaveTeamHint": "You lose access to all linked workspaces.",
-      "transferOwnership": "Transfer ownership",
-      "transferOwnershipHint": "Designate another member as team Captain.",
+    "rows": {
+      "editTeam": "Edit the name and color",
+      "transfer": "Transfer the Captain role",
       "deleteTeam": "Delete the team",
-      "deleteTeamHint": "Irreversible. Linked workspaces become orphaned."
+      "invite": "Invite to the team",
+      "changeRoles": "Change the role of a lower member",
+      "remove": "Remove a member",
+      "leave": "Leave the team",
+      "view": "Open the team's workspaces",
+      "createWorkspace": "Create a workspace for the team",
+      "editWorkspace": "Edit a workspace's settings",
+      "archiveWorkspace": "Archive or delete a workspace",
+      "inviteGuest": "Invite a guest into a workspace"
+    }
+  },
+  "linked": {
+    "title": "Linked workspaces",
+    "seeAll_one": "See the workspace",
+    "seeAll_other": "See all {{count}} workspaces"
+  },
+  "invitations": {
+    "invite": {
+      "title": "Invite someone",
+      "text": "The invitation waits among their pending invitations until they accept or decline it.",
+      "by": "Invite by",
+      "byUsername": "Username",
+      "byEmail": "Email address",
+      "username": "Username",
+      "email": "Email address",
+      "usernamePlaceholder": "0xkira",
+      "emailPlaceholder": "name@example.com",
+      "role": "Role",
+      "submit": "Invite",
+      "hintInvitation": "Valid for 7 days. One person per invitation.",
+      "sent": "Invitation sent to {{who}}"
+    },
+    "link": {
+      "title": "Invitation link",
+      "text": "To share outside PwnForge (Discord, email). Anyone signed in who opens it can join the team while it is valid.",
+      "factExpiry": "7 days by default, 30 at most",
+      "factUses": "Limited or unlimited uses",
+      "create": "Create a link",
+      "shownOnce": "Shown once, when created.",
+      "dialogTitle": "Create an invitation link",
+      "dialogText": "Whoever opens it joins {{team}} with this role.",
+      "role": "Role given",
+      "expiry": "Expires after",
+      "days_one": "{{count}} day",
+      "days_other": "{{count}} days",
+      "maxUses": "Maximum uses",
+      "unlimited": "Unlimited",
+      "maxUsesHint": "Left empty, the link works as many times as needed until it expires.",
+      "submit": "Create the link",
+      "doneTitle": "Link created",
+      "doneText": "Share it with the people who should join {{team}}.",
+      "url": "Invitation link",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Could not copy: select the link and copy it by hand.",
+      "once": "This link will never be shown again. Copy it now: to get another one, revoke this link and create a new one.",
+      "done": "Done"
+    },
+    "table": {
+      "title": "Pending invitations",
+      "filterLabel": "Show",
+      "all": "All",
+      "mine": "Sent by me",
+      "columns": {
+        "target": "Recipient",
+        "role": "Role",
+        "invitedBy": "Invited by",
+        "created": "Created",
+        "expires": "Expires",
+        "actions": "Actions"
+      },
+      "link": "Invitation link",
+      "uses_one": "{{count}} / {{max}} use",
+      "uses_other": "{{count}} / {{max}} uses",
+      "usesUnlimited_one": "{{count}} use, no limit",
+      "usesUnlimited_other": "{{count}} uses, no limit",
+      "byUsername": "By username",
+      "byEmail": "By email address",
+      "me": "(me)",
+      "revoke": "Revoke",
+      "revokeNamed": "Revoke the invitation for {{name}}",
+      "revokeTitle": "Revoke this invitation?",
+      "revokeLinkText": "The link stops working at once. People who already joined through it stay members.",
+      "revokePersonText": "{{name}} will no longer be able to accept it. You can invite them again.",
+      "revoked": "Invitation revoked",
+      "empty": "No pending invitation. Invite someone by name or address, or create a link.",
+      "emptyMine": "You have no pending invitation. The team's others are under All.",
+      "footnote": "A link's address is not shown after it is created. To get a new one, revoke the link and create another."
+    },
+    "validation": {
+      "whoRequired": "Enter a username or an address.",
+      "emailInvalid": "This address is not valid.",
+      "maxUses": "Enter a whole number of 1 or more, or leave it empty."
     }
   }
 }

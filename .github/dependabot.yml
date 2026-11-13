@@ -57,6 +57,29 @@ updates:
       - "area/deps"
       - "area/docker"
 
+  # Images pinned in the Compose files at the root. The docker-compose
+  # ecosystem matches both docker-compose.yml and docker-compose.dev.yml.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "area/deps"
+      - "area/docker"
+
+  # The Rust toolchain pinned in backend/rust-toolchain.toml. A bump here also
+  # needs the backend Dockerfile image (docker ecosystem above) and
+  # rust-version in backend/Cargo.toml moved to the same release.
+  - package-ecosystem: "rust-toolchain"
+    directory: "/backend"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "area/deps"
+      - "area/backend"
+
   # GitHub Actions workflows themselves
   - package-ecosystem: "github-actions"
     directory: "/"

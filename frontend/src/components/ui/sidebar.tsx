@@ -72,7 +72,7 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; Secure`
     },
     [setOpenProp, open]
   )
@@ -580,6 +580,7 @@ function SidebarMenuSkeleton({
 }) {
   // Random width between 50 to 90%.
   const [width] = React.useState(() => {
+    // eslint-disable-next-line sonarjs/pseudo-random -- skeleton width, not a security
     return `${Math.floor(Math.random() * 40) + 50}%`
   })
 

@@ -21,7 +21,7 @@ Before submitting this PR, please ensure the following:
 - [ ] **DCO Signed-off**: All commits are signed off (`git commit -s`). CI will only pass if the DCO check passes.
 - [ ] **Commit Messages**: Follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) format (`type(scope): summary`)
 - [ ] **Coding Style**: Run `cargo fmt` and `cargo clippy --all-targets --all-features -- -D warnings` (backend), or the project lint config (frontend), to ensure your code meets the style guidelines.
-- [ ] **Local Tests Passed**: Run `cargo test` / `pnpm test` locally and confirm they pass before opening the PR.
+- [ ] **Local Tests Passed**: Run `make test-backend` / `pnpm test` locally and confirm they pass before opening the PR. Use the make target rather than `cargo test`: it starts the services the suite talks to and loads the root `.env` (see [CONTRIBUTING.md](../CONTRIBUTING.md#running-tests)).
 - [ ] **Lockfiles**: `Cargo.lock` / `pnpm-lock.yaml` are committed if dependencies changed.
 - [ ] **Tests added**: New auth/permissions logic includes tests for the relevant role transitions.
 - [ ] **Docs updated**: If user-facing behavior changed, the relevant docs are updated too.

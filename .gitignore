@@ -2,7 +2,6 @@
 target/
 **/*.rs.bk
 Cargo.lock.bak
-openapi.json
 
 # Node / Vite
 node_modules/
@@ -17,6 +16,11 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+
+# Garage node config: holds rpc_secret and the admin token. Same treatment as
+# the MinIO root credential it replaces - never committed, never in the
+# backend's environment. ops/garage/garage.toml.example is the template.
+ops/garage/garage.toml
 
 # IDE
 .vscode/*

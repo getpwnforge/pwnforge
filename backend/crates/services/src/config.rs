@@ -1,4 +1,4 @@
-// crates/api/src/config.rs
+// crates/services/src/config.rs
 use anyhow::{Context, Result};
 use std::fmt;
 
@@ -51,24 +51,98 @@ impl std::str::FromStr for SmtpTls {
     }
 }
 
+/// Region assumed when `PWNFORGE_S3_REGION` is unset.
+///
+/// `garage`, not `us-east-1`: the bundled object store is Garage, which signs
+/// SigV4 against the region named in its own `garage.toml`, and the bundled
+/// store is the only configuration that ever reaches this default. Every
+/// other provider sets the variable explicitly, from the presets in
+/// `.env.example`. Pinned against the example config by
+/// `the_default_region_matches_the_bundled_store_config`.
+const DEFAULT_S3_REGION: &str = "garage";
+
+/// Object storage settings.
+///
+/// There is no `PWNFORGE_STORAGE_BACKEND`: S3 is the only runtime backend and
+/// no filesystem mode exists, so a "which backend" switch would have exactly
+/// one legal value and would only invite someone to add a second one.
+///
+/// Nothing here is read from the object store's own admin credentials. Those
+/// provision the buckets and then belong to the operator, not to this process;
+/// the backend only ever holds the scoped application key. That separation is
+/// the whole point of `ops/garage/bootstrap.py`, and reading the admin token
+/// here would quietly undo it.
+#[derive(Clone)]
+pub struct StorageConfig {
+    /// Empty for AWS S3, where the endpoint is derived from the region.
+    /// Set for Garage, R2, Scaleway and anything else S3-compatible.
+    pub endpoint: Option<String>,
+    pub region: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    /// Path style (`host/bucket/key`) is the default because that is what the
+    /// bundled Garage serves. AWS and Scaleway want virtual-hosted style
+    /// (`bucket.host/key`) instead, so this has to be reachable per provider.
+    pub force_path_style: bool,
+    pub bucket_attachments: String,
+    pub bucket_avatars: String,
+    /// Prefixes every key. Lets one bucket be shared with another tenant or
+    /// another application, which is common on managed S3 where buckets are
+    /// billed or quota'd.
+    pub key_prefix: Option<String>,
+    /// Public CDN origin for avatars. Avatars only: see
+    /// `storage_service::avatar_public_url`, which takes no bucket parameter
+    /// precisely so that an attachment cannot be handed a public URL.
+    pub public_base_url: Option<String>,
+}
+
+/// Same reasoning as `Config`'s: the secret access key must never reach a log
+/// line, and a derived `Debug` would print it in full.
+impl fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageConfig")
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("access_key_id", &"[redacted]")
+            .field("secret_access_key", &"[redacted]")
+            .field("force_path_style", &self.force_path_style)
+            .field("bucket_attachments", &self.bucket_attachments)
+            .field("bucket_avatars", &self.bucket_avatars)
+            .field("key_prefix", &self.key_prefix)
+            .field("public_base_url", &self.public_base_url)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     // --- Server ---
     pub port: u16,
     /// Base URL the instance is reached at, used to build links in emails.
     pub public_url: String,
-    #[allow(dead_code)] // consumed by the CORS layer (1.x)
     pub cors_origin: String,
     pub setup_token: Option<String>,
+    /// How long a shutdown waits for the requests under way and the
+    /// background tasks before stopping anyway (see `api::shutdown`).
+    pub shutdown_grace_secs: u64,
 
     // --- Datastores ---
     pub database_url: String,
+    /// Upper bound on the SeaORM pool. Also the reference the API's
+    /// concurrency limit is derived from, so it is a real capacity knob and
+    /// not just a database detail.
+    pub database_max_connections: u32,
     pub redis_url: String,
 
     // --- Secrets ---
     pub jwt_secret: String,
     #[allow(dead_code)] // consumed by flag encryption (Phase 4)
     pub encryption_key: String,
+    /// The two Turnstile keys go together: both set turns verification on,
+    /// both unset leaves it off, and `validate` refuses anything else. The
+    /// site key is public; the frontend reads it from the instance's public
+    /// configuration at startup.
+    pub turnstile_site_key: Option<String>,
     pub turnstile_secret_key: Option<String>,
 
     // --- Security ---
@@ -95,6 +169,9 @@ pub struct Config {
 
     // --- Email: Resend ---
     pub resend_api_key: String,
+
+    // --- Object storage ---
+    pub storage: StorageConfig,
 }
 
 /// Hand written so secrets never reach the logs: a single `debug!(?config)`
@@ -106,7 +183,9 @@ impl fmt::Debug for Config {
             .field("public_url", &self.public_url)
             .field("cors_origin", &self.cors_origin)
             .field("setup_token", &"[redacted]")
+            .field("shutdown_grace_secs", &self.shutdown_grace_secs)
             .field("database_url", &"[redacted]")
+            .field("database_max_connections", &self.database_max_connections)
             .field("redis_url", &"[redacted]")
             .field("jwt_secret", &"[redacted]")
             .field("encryption_key", &"[redacted]")
@@ -121,6 +200,7 @@ impl fmt::Debug for Config {
             .field("smtp_password", &"[redacted]")
             .field("smtp_tls", &self.smtp_tls)
             .field("resend_api_key", &"[redacted]")
+            .field("storage", &self.storage)
             .finish()
     }
 }
@@ -133,14 +213,20 @@ impl Config {
             public_url: required("PUBLIC_URL")?,
             cors_origin: required("CORS_ORIGIN")?,
             setup_token: std::env::var("SETUP_TOKEN").ok(),
+            shutdown_grace_secs: parse_var("SHUTDOWN_GRACE_SECS", "25")?,
 
             // --- Datastores ---
             database_url: required("DATABASE_URL")?,
+            database_max_connections: parse_var("DATABASE_MAX_CONNECTIONS", "20")?,
             redis_url: required("REDIS_URL")?,
 
             // --- Secrets ---
             jwt_secret: required("JWT_SECRET")?,
-            turnstile_secret_key: std::env::var("TURNSTILE_SECRET_KEY").ok(),
+            // Blank counts as unset, like the S3 settings: a compose file that
+            // passes an empty value would otherwise enable verification with an
+            // empty secret, and every route behind Turnstile would fail.
+            turnstile_secret_key: non_empty("TURNSTILE_SECRET_KEY"),
+            turnstile_site_key: non_empty("TURNSTILE_SITE_KEY"),
             encryption_key: required("ENCRYPTION_KEY")?,
 
             // --- Security ---
@@ -151,7 +237,10 @@ impl Config {
             // --- Email ---
             email_backend: parse_var("EMAIL_BACKEND", "console")?,
             email_from: optional("EMAIL_FROM"),
-            support_email: std::env::var("SUPPORT_EMAIL").ok(),
+            // Blank counts as unset: the compose files pass an unset
+            // SUPPORT_EMAIL as an empty one, which would replace EMAIL_FROM
+            // as the contact form's recipient with no address at all.
+            support_email: non_empty("SUPPORT_EMAIL"),
 
             // --- Email: SMTP ---
             smtp_host: optional("SMTP_HOST"),
@@ -162,6 +251,9 @@ impl Config {
 
             // --- Email: Resend ---
             resend_api_key: optional("RESEND_API_KEY"),
+
+            // --- Object storage ---
+            storage: StorageConfig::from_env()?,
         };
 
         config.validate()?;
@@ -173,6 +265,8 @@ impl Config {
     /// boot is deliberate: an instance that silently sends no mail is worse
     /// than one that refuses to start.
     fn validate(&self) -> Result<()> {
+        refuse_console_in_production(&self.email_backend, &self.public_url)?;
+
         match self.email_backend {
             EmailBackend::Console => {}
 
@@ -193,6 +287,26 @@ impl Config {
 
         if self.email_backend != EmailBackend::Console && self.email_from.is_empty() {
             anyhow::bail!("EMAIL_FROM must be set unless EMAIL_BACKEND is 'console'");
+        }
+
+        // The SMTP backend parses both at every send: one it refuses fails
+        // every mail, the contact form's included, with nothing the visitor
+        // did wrong.
+        if self.email_backend == EmailBackend::Smtp {
+            validate_mailbox("EMAIL_FROM", &self.email_from)?;
+            if let Some(support) = &self.support_email {
+                validate_mailbox("SUPPORT_EMAIL", support)?;
+            }
+        }
+
+        validate_cors_origin(&self.cors_origin)?;
+        validate_shutdown_grace(self.shutdown_grace_secs)?;
+
+        // A zero-sized pool deadlocks on the first query instead of failing at
+        // boot, and the API derives its concurrency limit from this, so a zero
+        // would also wedge the router.
+        if self.database_max_connections == 0 {
+            anyhow::bail!("DATABASE_MAX_CONNECTIONS must be at least 1");
         }
 
         // A short token weakens the only thing standing between a fresh instance and
@@ -216,8 +330,289 @@ impl Config {
             anyhow::bail!("ENCRYPTION_KEY must be at least 32 characters");
         }
 
+        // One key without the other is a half-configured Turnstile. A secret
+        // alone verifies tokens no browser can obtain, which locks every user
+        // out of the protected forms; a site key alone shows a widget whose
+        // tokens nothing checks. Neither is a state to boot into.
+        if self.turnstile_site_key.is_some() != self.turnstile_secret_key.is_some() {
+            anyhow::bail!(
+                "TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must be set together, \
+                 or both left empty to disable Turnstile"
+            );
+        }
+
         Ok(())
     }
+
+    /// Whether `public_url` is an `https://` address. Not refused at boot, as
+    /// a local instance runs on plain HTTP, but warned about (see `main`):
+    /// without TLS in front, the setup token, every password and the session
+    /// cookies cross the network in clear.
+    pub fn public_url_is_https(&self) -> bool {
+        is_https(&self.public_url)
+    }
+}
+
+/// The shortest and the longest a shutdown may wait, in seconds. Zero would
+/// abandon every mail under way; past five minutes, an operator stopping the
+/// instance is better served by Docker's own kill, and the compose files'
+/// `stop_grace_period` has to stay above this value anyway.
+const SHUTDOWN_GRACE_RANGE: std::ops::RangeInclusive<u64> = 1..=300;
+
+fn validate_shutdown_grace(secs: u64) -> Result<()> {
+    if !SHUTDOWN_GRACE_RANGE.contains(&secs) {
+        anyhow::bail!(
+            "SHUTDOWN_GRACE_SECS must be between {} and {} (got {secs})",
+            SHUTDOWN_GRACE_RANGE.start(),
+            SHUTDOWN_GRACE_RANGE.end()
+        );
+    }
+    Ok(())
+}
+
+fn validate_mailbox(key: &str, value: &str) -> Result<()> {
+    if !crate::email_service::is_valid_mailbox(value) {
+        anyhow::bail!(
+            "{key} must be an address, or a name and an address as \"Name <address>\" (got {value:?})"
+        );
+    }
+    Ok(())
+}
+
+fn is_https(url: &str) -> bool {
+    url.get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+}
+
+/// The console backend prints every mail to the logs, its links and their
+/// tokens included: a password reset waiting for whoever reads them. Fine on
+/// a developer machine. An https PUBLIC_URL is how an instance says it is
+/// served for real, and there the backend is refused.
+fn refuse_console_in_production(backend: &EmailBackend, public_url: &str) -> Result<()> {
+    if backend == &EmailBackend::Console && is_https(public_url) {
+        anyhow::bail!(
+            "EMAIL_BACKEND 'console' prints every mail and its links to the logs: \
+             choose 'smtp' or 'resend' when PUBLIC_URL is https"
+        );
+    }
+    Ok(())
+}
+
+impl StorageConfig {
+    /// Fail-fast like the rest of `Config::from_env`: an instance that boots
+    /// with unusable storage settings would only discover it on a user's first
+    /// upload, which is the worst possible place to find out.
+    fn from_env() -> Result<Self> {
+        let config = StorageConfig {
+            endpoint: non_empty("PWNFORGE_S3_ENDPOINT"),
+            region: parse_var("PWNFORGE_S3_REGION", DEFAULT_S3_REGION)?,
+            access_key_id: required("PWNFORGE_S3_ACCESS_KEY_ID")?,
+            secret_access_key: required("PWNFORGE_S3_SECRET_ACCESS_KEY")?,
+            force_path_style: parse_var("PWNFORGE_S3_FORCE_PATH_STYLE", "true")?,
+            bucket_attachments: required("PWNFORGE_S3_BUCKET_ATTACHMENTS")?,
+            bucket_avatars: required("PWNFORGE_S3_BUCKET_AVATARS")?,
+            key_prefix: non_empty("PWNFORGE_S3_KEY_PREFIX"),
+            public_base_url: non_empty("PWNFORGE_S3_PUBLIC_BASE_URL"),
+        };
+
+        config.validate()?;
+
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.region.trim().is_empty() {
+            anyhow::bail!("PWNFORGE_S3_REGION must not be empty");
+        }
+
+        // Credentials are `required`, so they exist, but an operator who
+        // exported them as empty strings gets the same anonymous-request
+        // failure far downstream. Name it here instead.
+        if self.access_key_id.trim().is_empty() {
+            anyhow::bail!("PWNFORGE_S3_ACCESS_KEY_ID must not be empty");
+        }
+        if self.secret_access_key.trim().is_empty() {
+            anyhow::bail!("PWNFORGE_S3_SECRET_ACCESS_KEY must not be empty");
+        }
+
+        validate_bucket_name("PWNFORGE_S3_BUCKET_ATTACHMENTS", &self.bucket_attachments)?;
+        validate_bucket_name("PWNFORGE_S3_BUCKET_AVATARS", &self.bucket_avatars)?;
+
+        // Pointing both names at one bucket is legal S3 and would mostly work,
+        // which is exactly why it is worth refusing: the two buckets carry
+        // different access regimes (avatars are re-encoded and may be served
+        // from a CDN, attachments are never public), and collapsing them makes
+        // `Bucket::Avatars` and `Bucket::Attachments` resolve to the same
+        // place while the type system still claims they are separate.
+        if self.bucket_attachments == self.bucket_avatars {
+            anyhow::bail!(
+                "PWNFORGE_S3_BUCKET_ATTACHMENTS and PWNFORGE_S3_BUCKET_AVATARS must name different buckets (both are {:?})",
+                self.bucket_attachments
+            );
+        }
+
+        if let Some(endpoint) = &self.endpoint {
+            validate_http_url("PWNFORGE_S3_ENDPOINT", endpoint)?;
+        }
+
+        if let Some(base) = &self.public_base_url {
+            validate_http_url("PWNFORGE_S3_PUBLIC_BASE_URL", base)?;
+        }
+
+        if let Some(prefix) = &self.key_prefix {
+            validate_key_prefix(prefix)?;
+        }
+
+        Ok(())
+    }
+
+    /// The prefix as it is joined onto a key: no leading slash, exactly one
+    /// trailing slash, or empty when unset. Normalising here rather than at
+    /// every call site is what keeps `a/b` and `a/b/` from producing two
+    /// different keyspaces for the same configured value.
+    pub fn normalized_key_prefix(&self) -> String {
+        match &self.key_prefix {
+            Some(prefix) => format!("{}/", prefix.trim_matches('/')),
+            None => String::new(),
+        }
+    }
+}
+
+/// Bucket names are concatenated into a request path in path-style mode, so a
+/// name carrying a `/` would silently move part of itself into the key. The
+/// rules below are S3's own naming restrictions, enforced here because a
+/// provider's rejection of a bad name arrives as an opaque signing or 400
+/// error at first use rather than as a sentence naming the variable.
+fn validate_bucket_name(key: &str, name: &str) -> Result<()> {
+    if !(3..=63).contains(&name.len()) {
+        anyhow::bail!("{key} must be between 3 and 63 characters (got {name:?})");
+    }
+
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+    {
+        anyhow::bail!(
+            "{key} must contain only lowercase letters, digits, '-' and '.' (got {name:?})"
+        );
+    }
+
+    let first = name.as_bytes()[0];
+    let last = name.as_bytes()[name.len() - 1];
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit())
+        || !(last.is_ascii_lowercase() || last.is_ascii_digit())
+    {
+        anyhow::bail!("{key} must start and end with a letter or a digit (got {name:?})");
+    }
+
+    Ok(())
+}
+
+/// Shared by `PWNFORGE_S3_ENDPOINT` and `PWNFORGE_S3_PUBLIC_BASE_URL`: both are
+/// origins the process will concatenate onto, so both have to be an origin and
+/// nothing more.
+fn validate_http_url(key: &str, raw: &str) -> Result<()> {
+    if raw.chars().any(|c| !c.is_ascii_graphic()) {
+        anyhow::bail!("{key} must contain only printable ASCII, with no spaces (got {raw:?})");
+    }
+
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        anyhow::bail!("{key} must include a scheme, as in https://s3.example.com (got {raw:?})");
+    };
+
+    if scheme != "http" && scheme != "https" {
+        anyhow::bail!("{key} scheme must be http or https (got {scheme:?})");
+    }
+
+    if rest.is_empty() {
+        anyhow::bail!("{key} must name a host after the scheme (got {raw:?})");
+    }
+
+    // A trailing slash is the mistake people make, and it is the one that
+    // produces `https://cdn.example.com//avatars/...` - which some CDNs treat
+    // as a distinct path and others normalise, so it breaks inconsistently.
+    if rest.ends_with('/') {
+        anyhow::bail!("{key} must not end with a slash (got {raw:?})");
+    }
+
+    Ok(())
+}
+
+/// The prefix is attacker-adjacent only in the sense that an operator typing
+/// `../` into it would quietly reach outside the intended keyspace. S3 keys
+/// have no path semantics, so `..` is not traversal the way it is on a
+/// filesystem, but it still produces keys nothing else in the system can name,
+/// which is its own kind of unreachable data.
+fn validate_key_prefix(prefix: &str) -> Result<()> {
+    if prefix.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        anyhow::bail!(
+            "PWNFORGE_S3_KEY_PREFIX must not contain whitespace or control characters (got {prefix:?})"
+        );
+    }
+
+    if prefix.split('/').any(|segment| segment == "..") {
+        anyhow::bail!("PWNFORGE_S3_KEY_PREFIX must not contain a '..' segment (got {prefix:?})");
+    }
+
+    if prefix.trim_matches('/').is_empty() {
+        anyhow::bail!("PWNFORGE_S3_KEY_PREFIX must name at least one segment (got {prefix:?})");
+    }
+
+    Ok(())
+}
+
+/// Checks that `CORS_ORIGIN` is something a browser could actually match.
+///
+/// An origin is a scheme, a host and an optional port, and nothing more: no
+/// path, no trailing slash, no query. A browser compares the `Origin` header
+/// against this byte for byte, so `https://app.example.test/` matches nothing
+/// and quietly breaks every cross-origin request. Caught here it is one line in
+/// the startup log instead of a support thread.
+///
+/// Rejecting anything outside visible ASCII is also what lets the CORS layer
+/// parse this into a `HeaderValue` without a fallible path of its own: that
+/// character set is exactly what a header value allows. The check lives here
+/// rather than in the router so a bad value produces a readable startup error,
+/// the way every other rule in `validate` does, rather than a panic and a
+/// backtrace.
+fn validate_cors_origin(raw: &str) -> Result<()> {
+    if raw.is_empty() {
+        anyhow::bail!("CORS_ORIGIN must be set to the origin the frontend is served from");
+    }
+
+    if raw.chars().any(|c| !c.is_ascii_graphic()) {
+        anyhow::bail!(
+            "CORS_ORIGIN must contain only printable ASCII, with no spaces or control characters (got {raw:?})"
+        );
+    }
+
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        anyhow::bail!(
+            "CORS_ORIGIN must include a scheme, as in https://ctf.example.com (got {raw:?})"
+        );
+    };
+
+    if scheme != "http" && scheme != "https" {
+        anyhow::bail!("CORS_ORIGIN scheme must be http or https (got {scheme:?})");
+    }
+
+    if rest.is_empty() {
+        anyhow::bail!("CORS_ORIGIN must name a host after the scheme (got {raw:?})");
+    }
+
+    // Covers a trailing slash and a path in one check: both leave a `/` behind,
+    // and a trailing slash is the mistake people actually make.
+    if rest.contains('/') {
+        anyhow::bail!(
+            "CORS_ORIGIN must be a bare origin, with no path or trailing slash (got {raw:?})"
+        );
+    }
+
+    if rest.contains('?') || rest.contains('#') {
+        anyhow::bail!("CORS_ORIGIN must not carry a query or a fragment (got {raw:?})");
+    }
+
+    Ok(())
 }
 
 fn required(key: &str) -> Result<String> {
@@ -228,6 +623,21 @@ fn optional(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
 
+/// `None` for both an unset variable and one set to the empty string.
+///
+/// The distinction matters for the storage settings specifically: Compose
+/// substitutes an unset `${PWNFORGE_S3_ENDPOINT}` into an empty string rather
+/// than omitting the variable, so `std::env::var().ok()` would hand back
+/// `Some("")` and the AWS client would try to reach an endpoint with no host.
+/// Empty means "not configured" here, which is also how `.env.example`
+/// documents the AWS preset.
+fn non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 fn parse_var<T>(key: &str, default: &str) -> Result<T>
 where
     T: std::str::FromStr,
@@ -236,4 +646,350 @@ where
     let raw = std::env::var(key).unwrap_or_else(|_| default.to_owned());
     raw.parse::<T>()
         .map_err(|err| anyhow::anyhow!("{key} is invalid: {err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The default and the bounds pass; zero and anything past five minutes
+    /// do not.
+    #[test]
+    fn the_shutdown_grace_is_bounded() {
+        for secs in [1, 25, 300] {
+            assert!(validate_shutdown_grace(secs).is_ok(), "{secs} is accepted");
+        }
+        for secs in [0, 301, u64::MAX] {
+            assert!(validate_shutdown_grace(secs).is_err(), "{secs} is refused");
+        }
+    }
+
+    /// A configuration `validate` accepts, on the SMTP backend.
+    fn smtp(email_from: &str, support_email: Option<&str>) -> Config {
+        Config {
+            port: 0,
+            public_url: "https://ctf.example.test".to_owned(),
+            cors_origin: "https://ctf.example.test".to_owned(),
+            setup_token: None,
+            shutdown_grace_secs: 25,
+            database_url: String::new(),
+            database_max_connections: 1,
+            redis_url: String::new(),
+            jwt_secret: "x".repeat(32),
+            encryption_key: "x".repeat(32),
+            turnstile_site_key: None,
+            turnstile_secret_key: None,
+            cookie_secure: true,
+            trusted_proxy_count: 1,
+            block_disposable_emails: true,
+            check_pwned_passwords: true,
+            email_backend: EmailBackend::Smtp,
+            email_from: email_from.to_owned(),
+            support_email: support_email.map(str::to_owned),
+            smtp_host: "smtp.example.test".to_owned(),
+            smtp_port: 587,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            smtp_tls: SmtpTls::StartTls,
+            resend_api_key: String::new(),
+            storage: StorageConfig {
+                endpoint: None,
+                region: "unused".to_owned(),
+                access_key_id: "unused".to_owned(),
+                secret_access_key: "unused".to_owned(),
+                force_path_style: true,
+                bucket_attachments: "unused".to_owned(),
+                bucket_avatars: "unused".to_owned(),
+                key_prefix: None,
+                public_base_url: None,
+            },
+        }
+    }
+
+    /// The boot check runs both addresses through it on the SMTP backend:
+    /// either one that makes no mailbox stops the boot.
+    #[test]
+    fn the_smtp_backend_refuses_to_boot_on_an_unusable_address() {
+        let from = "PwnForge <noreply@ctf.example.test>";
+        assert!(smtp(from, None).validate().is_ok());
+        assert!(
+            smtp(from, Some("support@ctf.example.test"))
+                .validate()
+                .is_ok()
+        );
+
+        let err = smtp("a..b@ctf.example.test", None)
+            .validate()
+            .expect_err("refused");
+        assert!(err.to_string().starts_with("EMAIL_FROM "), "{err}");
+        let err = smtp(from, Some("support")).validate().expect_err("refused");
+        assert!(err.to_string().starts_with("SUPPORT_EMAIL "), "{err}");
+    }
+
+    /// What the SMTP backend can send from and to passes; an empty atom and
+    /// a name without an address do not, and the message names the variable.
+    #[test]
+    fn a_mail_address_setting_must_make_a_mailbox() {
+        for value in [
+            "noreply@ctf.example.test",
+            "PwnForge <noreply@ctf.example.test>",
+        ] {
+            assert!(
+                validate_mailbox("EMAIL_FROM", value).is_ok(),
+                "{value} is accepted"
+            );
+        }
+        for value in ["a..b@ctf.example.test", "PwnForge", "PwnForge <>"] {
+            let err = validate_mailbox("SUPPORT_EMAIL", value).expect_err("refused");
+            assert!(err.to_string().starts_with("SUPPORT_EMAIL "), "{err}");
+        }
+    }
+
+    /// An `https://` address in any case passes; plain HTTP, a missing
+    /// scheme or an empty value do not.
+    #[test]
+    fn only_an_https_public_url_counts_as_https() {
+        for url in ["https://ctf.example.test", "HTTPS://ctf.example.test:8443"] {
+            assert!(is_https(url), "{url} is https");
+        }
+        for url in ["http://localhost:5173", "ctf.example.test", "https:/x", ""] {
+            assert!(!is_https(url), "{url:?} is not https");
+        }
+    }
+
+    /// The console backend runs wherever the instance is not served over
+    /// https, development and prod-check included, and nowhere else.
+    #[test]
+    fn the_console_backend_is_refused_on_an_https_instance() {
+        assert!(
+            refuse_console_in_production(&EmailBackend::Console, "https://ctf.example.test")
+                .is_err()
+        );
+        for url in ["http://localhost:5173", "http://127.0.0.1:18080"] {
+            assert!(
+                refuse_console_in_production(&EmailBackend::Console, url).is_ok(),
+                "{url}"
+            );
+        }
+        assert!(
+            refuse_console_in_production(&EmailBackend::Smtp, "https://ctf.example.test").is_ok()
+        );
+    }
+
+    /// Positive: the shapes an operator legitimately configures, from local
+    /// development to a host on a non-standard port.
+    #[test]
+    fn a_bare_origin_is_accepted() {
+        for origin in [
+            "http://localhost:5173",
+            "https://ctf.example.test",
+            "https://ctf.example.test:8443",
+            "http://127.0.0.1:3000",
+        ] {
+            assert!(
+                validate_cors_origin(origin).is_ok(),
+                "{origin} must be accepted"
+            );
+        }
+    }
+
+    /// Negative: the trailing slash, which is the mistake that actually
+    /// happens. A browser matches the `Origin` header byte for byte, so this
+    /// would match nothing and break every cross-origin request without
+    /// anything in the logs pointing at the cause.
+    #[test]
+    fn a_trailing_slash_is_refused() {
+        let err = validate_cors_origin("https://ctf.example.test/")
+            .expect_err("a trailing slash must be refused");
+
+        assert!(
+            err.to_string().contains("trailing slash"),
+            "the message must name the problem, got {err}"
+        );
+    }
+
+    /// Negative: everything else that is not an origin.
+    #[test]
+    fn a_malformed_origin_is_refused() {
+        for origin in [
+            "",                              // unset
+            "ctf.example.test",              // no scheme
+            "ftp://ctf.example.test",        // wrong scheme
+            "https://",                      // no host
+            "https://ctf.example.test/app",  // path
+            "https://ctf.example.test?a=1",  // query
+            "https://ctf.example.test#frag", // fragment
+            "https://ctf.example.test ",     // trailing space
+            "https://ctf example.test",      // inner space
+            "https://ctf.example.test\n",    // control character
+        ] {
+            assert!(
+                validate_cors_origin(origin).is_err(),
+                "{origin:?} must be refused"
+            );
+        }
+    }
+
+    /// The default region and the bundled store's configured region must be
+    /// the same string, checked against the actual file rather than a copy.
+    ///
+    /// Garage signs SigV4 against the region named in its own `garage.toml`.
+    /// If these two drift apart, every request fails with a signature
+    /// mismatch, which names neither the region nor the file. Nothing else in
+    /// the system would catch it, because both values are individually valid.
+    #[test]
+    fn the_default_region_matches_the_bundled_store_config() {
+        const EXAMPLE: &str = include_str!("../../../../ops/garage/garage.toml.example");
+
+        let configured = EXAMPLE
+            .lines()
+            .find_map(|line| {
+                let line = line.trim();
+                let rest = line.strip_prefix("s3_region")?.trim_start();
+                let rest = rest.strip_prefix('=')?.trim();
+                rest.trim_matches('"').to_owned().into()
+            })
+            .expect("garage.toml.example must set s3_region");
+
+        assert_eq!(
+            configured, DEFAULT_S3_REGION,
+            "ops/garage/garage.toml.example sets s3_region={configured:?} but the \
+             PWNFORGE_S3_REGION default is {DEFAULT_S3_REGION:?}; a mismatch fails \
+             every request with an opaque signature error"
+        );
+    }
+
+    /// Positive: the bucket names people actually use, across providers.
+    #[test]
+    fn a_valid_bucket_name_is_accepted() {
+        for name in [
+            "pwnforge-attachments",
+            "pwnforge-avatars",
+            "ctf",
+            "my.bucket.name",
+            "bucket123",
+            "a-very-long-but-still-legal-bucket-name-under-sixty-three-ch",
+        ] {
+            assert!(
+                validate_bucket_name("PWNFORGE_S3_BUCKET_AVATARS", name).is_ok(),
+                "{name} must be accepted"
+            );
+        }
+    }
+
+    /// Negative: the one that matters is the slash.
+    ///
+    /// In path-style addressing the bucket name is concatenated into the
+    /// request path, so `evil/../../other` would move part of itself into the
+    /// key and address a bucket the configuration does not name. The rest are
+    /// S3's own naming rules, caught here so the failure is a sentence naming
+    /// the variable rather than an opaque signing error at first use.
+    #[test]
+    fn a_malformed_bucket_name_is_refused() {
+        for name in [
+            "with/slash",     // escapes into the key namespace
+            "a/b",            // same, shorter
+            "..",             // too short and meaningless
+            "UPPERCASE",      // S3 refuses uppercase
+            "under_score",    // not a legal character
+            "-leading-dash",  // must start alphanumeric
+            "trailing-dash-", // must end alphanumeric
+            ".leading-dot",   //
+            "ab",             // under three characters
+            "",               // unset
+            "has space",      //
+            "back\\slash",    //
+            "a-very-long-and-definitely-illegal-bucket-name-that-runs-past-sixty-three",
+        ] {
+            assert!(
+                validate_bucket_name("PWNFORGE_S3_BUCKET_AVATARS", name).is_err(),
+                "{name:?} must be refused"
+            );
+        }
+    }
+
+    /// Positive: the endpoint shapes from the four documented presets.
+    #[test]
+    fn a_valid_endpoint_is_accepted() {
+        for url in [
+            "http://garage:3900",
+            "https://s3.fr-par.scw.cloud",
+            "https://abc123.r2.cloudflarestorage.com",
+            "http://127.0.0.1:9000",
+            "https://cdn.example.test",
+        ] {
+            assert!(
+                validate_http_url("PWNFORGE_S3_ENDPOINT", url).is_ok(),
+                "{url} must be accepted"
+            );
+        }
+    }
+
+    /// Negative: chiefly the trailing slash, which produces a double slash
+    /// once something is concatenated onto it - normalised by some CDNs,
+    /// treated as a distinct path by others, so it breaks inconsistently.
+    #[test]
+    fn a_malformed_endpoint_is_refused() {
+        for url in [
+            "http://garage:3900/",       // trailing slash
+            "https://cdn.example.test/", // same
+            "garage:3900",               // no scheme
+            "ftp://garage:3900",         // wrong scheme
+            "https://",                  // no host
+            "http://garage :3900",       // inner space
+            "http://garage:3900\n",      // control character
+        ] {
+            assert!(
+                validate_http_url("PWNFORGE_S3_ENDPOINT", url).is_err(),
+                "{url:?} must be refused"
+            );
+        }
+    }
+
+    /// Negative: a prefix that would address keys nothing else in the system
+    /// can name. S3 keys have no path semantics, so `..` is not traversal the
+    /// way it is on a filesystem, but the objects it writes are unreachable
+    /// by every other code path, which is its own kind of lost data.
+    #[test]
+    fn a_malformed_key_prefix_is_refused() {
+        for prefix in [
+            "..",
+            "a/../b",
+            "../escape",
+            "with space",
+            "tab\there",
+            "/",
+            "//",
+        ] {
+            assert!(
+                validate_key_prefix(prefix).is_err(),
+                "{prefix:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_valid_key_prefix_is_accepted() {
+        for prefix in ["tenant-1", "a/b", "/tenant-1/", "deep/nested/prefix"] {
+            assert!(
+                validate_key_prefix(prefix).is_ok(),
+                "{prefix:?} must be accepted"
+            );
+        }
+    }
+
+    /// Whatever passes here is safe to turn into a `HeaderValue` in the router,
+    /// which is what lets that conversion stay infallible in practice. Pinned
+    /// as a property rather than trusted: the router's `expect` is only
+    /// unreachable for as long as this holds.
+    #[test]
+    fn an_accepted_origin_is_a_usable_header_value() {
+        for origin in ["http://localhost:5173", "https://ctf.example.test:8443"] {
+            assert!(validate_cors_origin(origin).is_ok());
+            assert!(
+                origin.bytes().all(|b| (0x21..=0x7e).contains(&b)),
+                "{origin} must be within the byte range a header value allows"
+            );
+        }
+    }
 }

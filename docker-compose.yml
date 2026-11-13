@@ -1,17 +1,23 @@
 services:
   db:
-    image: postgres:17-alpine
+    # Major tag on purpose: security fixes arrive with the next pull. The 18
+    # image keeps its data under /var/lib/postgresql (PGDATA is
+    # /var/lib/postgresql/18/docker) and declares that directory as its
+    # volume, hence the mount point below.
+    image: postgres:18-alpine
     restart: unless-stopped
     user: "1001:1001"
+    # No capability added back: started as uid 1001, the entrypoint skips its
+    # chown and user switch, and a non-root process does not keep added
+    # capabilities across exec anyway.
     cap_drop: [ALL]
-    cap_add: [CHOWN, FOWNER, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -27,10 +33,18 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # The image's own redis user (uid 999, gid 1000). Started as root, the
+    # entrypoint drops to it with setpriv, which needs CAP_SETUID and so fails
+    # under cap_drop: [ALL]. Started as that user, the entrypoint skips the
+    # drop and needs no capability. Not 1001 like the other services: /data
+    # belongs to uid 999 in the image, and a redis that cannot write its
+    # snapshot there refuses writes.
+    user: "999:1000"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -41,23 +55,79 @@ services:
     networks:
       - internal
 
-  minio:
-    image: minio/minio:latest
+  # The bundled object store. Behind the `garage` profile, so an operator who
+  # already has an S3 (AWS, R2, Scaleway) clears COMPOSE_PROFILES and this
+  # never starts; they fill in the PWNFORGE_S3_* variables instead.
+  #
+  # Garage replaced MinIO, whose Community Edition is end of life: repository
+  # archived 13/02/2026 with no further upstream security fixes, Docker Hub
+  # images removed 09/2026. The rationale and the measurements behind the
+  # choice are in docs/adr/0002-replacing-minio.md.
+  #
+  # No `ports`: Garage is reachable only from the internal network, which is
+  # what makes "nothing is served by a presigned URL" enforceable rather than
+  # merely intended. The dev compose exposes it for debugging.
+  #
+  # Requires ops/garage/garage.toml, which is gitignored and holds the RPC
+  # secret and the admin token. Copy ops/garage/garage.toml.example and fill
+  # it in before the first start.
+  garage:
+    image: dxflrs/garage:v2.4.1
+    profiles: ["garage"]
     restart: unless-stopped
     user: "1001:1001"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
     volumes:
-      - minio-data:/data
+      - ./ops/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # Exec form with no shell: the image is FROM scratch and contains the
+      # `garage` binary and nothing else.
+      test: ["CMD", "/garage", "status"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+
+  # One-shot provisioning: assigns the cluster layout, creates the two buckets
+  # and the scoped application key, then exits. The only container besides
+  # `garage` itself that ever sees the admin token.
+  #
+  # Re-run it after changing the application key in .env:
+  #   docker compose run --rm garage-init
+  #
+  # Note the rotation procedure is NOT "same id, new secret": Garage refuses to
+  # change a key's secret and refuses to reuse an access key id ever again. The
+  # full sequence is in the docstring of ops/garage/bootstrap.py.
+  garage-init:
+    # Official image, standard library only: the Garage image has no shell to
+    # run a script in, and remote `garage` CLI needs a node id that is not
+    # knowable before the node starts. So this drives the admin HTTP API from
+    # Python instead - no image to build, nothing installed at start.
+    image: python:3.13-alpine
+    profiles: ["garage"]
+    restart: "no"
+    user: "1001:1001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      garage:
+        condition: service_healthy
+    environment:
+      GARAGE_ADMIN_URL: http://garage:3903
+      PWNFORGE_GARAGE_CAPACITY: ${PWNFORGE_GARAGE_CAPACITY:-100G}
+      PWNFORGE_GARAGE_ZONE: ${PWNFORGE_GARAGE_ZONE:-pwnforge}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID:?PWNFORGE_S3_ACCESS_KEY_ID must be set}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY:?PWNFORGE_S3_SECRET_ACCESS_KEY must be set}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS:?PWNFORGE_S3_BUCKET_ATTACHMENTS must be set}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS:?PWNFORGE_S3_BUCKET_AVATARS must be set}
+    command: ["python3", "/init/bootstrap.py"]
+    volumes:
+      - ./ops/garage/bootstrap.py:/init/bootstrap.py:ro
+      - ./ops/garage/garage.toml:/etc/garage.toml:ro
     networks:
       - internal
 
@@ -70,34 +140,65 @@ services:
       - /tmp:size=64m,noexec
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # Above SHUTDOWN_GRACE_SECS: on SIGTERM the backend answers the requests
+    # under way and sends the mails still going out before it exits, and
+    # Docker must not kill it first.
+    stop_grace_period: 30s
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      PORT: ${PORT}
-      CORS_ORIGIN: ${CORS_ORIGIN}
-      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
-      PUBLIC_URL: ${PUBLIC_URL}
-      EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
-      EMAIL_FROM: ${EMAIL_FROM:-noreply@localhost}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER must be set}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:?POSTGRES_DB must be set}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      # Fixed, not an operator setting: frontend/nginx.conf proxies to
+      # backend:3000, so the two must stay aligned. The instance is exposed
+      # through HTTP_PORT on the frontend, never through this port.
+      PORT: "3000"
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set}
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL must be set}
+      # Required, no default: the development value, `console`, prints every
+      # mail to the logs, password reset links included. A forgotten setting
+      # must stop the deployment rather than leave it running like that.
+      EMAIL_BACKEND: ${EMAIL_BACKEND:?EMAIL_BACKEND must be set}
+      EMAIL_FROM: ${EMAIL_FROM:?EMAIL_FROM must be set}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      # No value on purpose: each is passed through only when set. Turnstile
+      # is on when both are, off when neither is, and the backend refuses to
+      # start with only one. The frontend reads the site key from the backend
+      # at startup, so the published images need no rebuild to turn it on.
+      TURNSTILE_SITE_KEY:
+      TURNSTILE_SECRET_KEY:
       CHECK_PWNED_PASSWORDS: ${CHECK_PWNED_PASSWORDS:-true}
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # Scoped application credential, never the Garage admin token. Defaults
+      # point at the bundled Garage; an operator on AWS/R2/Scaleway overrides
+      # these in .env and clears COMPOSE_PROFILES. See .env.example for the
+      # per-provider presets.
+      PWNFORGE_S3_ENDPOINT: ${PWNFORGE_S3_ENDPOINT-http://garage:3900}
+      PWNFORGE_S3_REGION: ${PWNFORGE_S3_REGION:-garage}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID:?PWNFORGE_S3_ACCESS_KEY_ID must be set}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY:?PWNFORGE_S3_SECRET_ACCESS_KEY must be set}
+      PWNFORGE_S3_FORCE_PATH_STYLE: ${PWNFORGE_S3_FORCE_PATH_STYLE:-true}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS:?PWNFORGE_S3_BUCKET_ATTACHMENTS must be set}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS:?PWNFORGE_S3_BUCKET_AVATARS must be set}
+      PWNFORGE_S3_KEY_PREFIX: ${PWNFORGE_S3_KEY_PREFIX:-}
+      PWNFORGE_S3_PUBLIC_BASE_URL: ${PWNFORGE_S3_PUBLIC_BASE_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-starttls}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       BLOCK_DISPOSABLE_EMAILS: ${BLOCK_DISPOSABLE_EMAILS:-true}
       RUST_LOG: ${RUST_LOG:-info}
       BACKEND_ENV: ${BACKEND_ENV:-production}
+      # Below stop_grace_period above.
+      SHUTDOWN_GRACE_SECS: ${SHUTDOWN_GRACE_SECS:-25}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${PORT}/api/v1/health"]
+      # The binary probes itself: the runtime image has no curl. It reads PORT
+      # from the container's environment and asks /api/v1/health on the
+      # loopback (see crates/api/src/healthcheck.rs).
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -107,8 +208,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      # Deliberately no `garage` dependency. Since Compose 2.20 depending on
+      # a profiled service re-enables that profile, so this edge would start
+      # Garage for an operator running against AWS. The backend does a
+      # HeadBucket on both buckets at boot and fails fast instead.
     deploy:
       resources:
         limits:
@@ -126,14 +229,21 @@ services:
       - /tmp
       - /var/cache/nginx:size=32m
       - /var/run
+    # nginx listens on 8080, so it needs no NET_BIND_SERVICE.
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      # Static files only: this says whether nginx serves the app, not whether
+      # the backend is up, which has its own check. The image ships wget.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       backend:
         condition: service_healthy
     ports:
-      - "${HTTP_PORT}:8080"
+      - "${HTTP_PORT:?HTTP_PORT must be set}:8080"
     deploy:
       resources:
         limits:
@@ -152,9 +262,15 @@ networks:
 
 volumes:
   db-data:
-  minio-data:
+  garage-meta:
     driver: local
     driver_opts:
       type: none
-      device: /data/pwnforge/minio
+      device: /data/pwnforge/garage/meta
+      o: bind,noexec,nosuid,nodev
+  garage-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/pwnforge/garage/data
       o: bind,noexec,nosuid,nodev

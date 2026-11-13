@@ -34,7 +34,7 @@ pub struct LegalStatusDto {
     pub state: LegalState,
     pub current_terms_version: &'static str,
     pub current_privacy_version: &'static str,
-    /// Versions currently on record, `None` if never accepted.
+    /// Versions currently on record, `null` if never accepted.
     pub accepted_terms_version: Option<String>,
     pub accepted_privacy_version: Option<String>,
     /// RFC 3339, present only while a revision is published but not yet

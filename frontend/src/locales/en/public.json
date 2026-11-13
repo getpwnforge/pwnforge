@@ -9,6 +9,7 @@
     "submit": "Send message",
     "sending": "Sending...",
     "error": "Something went wrong. Please try again.",
+    "sendFailed": "Your message could not be delivered right now. Please try again in a few minutes.",
     "successTitle": "Message sent",
     "successBody": "Thanks for reaching out, we'll get back to you soon.",
     "securityNotice": "Found a security issue? Email",

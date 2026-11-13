@@ -5,7 +5,16 @@
     "searchPlaceholder": "Rechercher un workspace...",
     "newWorkspace": "Nouveau workspace",
     "import": "Importer",
+    "importCtftime": "Importer depuis CTFtime",
+    "importBackup": "Importer depuis un backup",
+    "soon": "Bientôt disponible",
     "filters": "Filtres",
+    "clearFilters": "Effacer les filtres",
+    "facets": {
+      "type": "Type",
+      "mode": "Mode",
+      "platform": "Plateforme"
+    },
     "tabs": {
       "all": "Tous",
       "active": "Actifs",
@@ -13,6 +22,9 @@
     },
     "favorites": "Favoris",
     "allWorkspaces": "Tous les workspaces",
+    "empty": "Aucun workspace pour l'instant",
+    "noMatch": "Aucun workspace ne correspond",
+    "noArchived": "Aucun workspace archivé pour l'instant",
     "newCard": {
       "title": "Nouveau workspace",
       "hint": "Plateforme, CTF ou perso"
@@ -21,6 +33,7 @@
   "create": {
     "title": "Nouveau workspace",
     "subtitle": "Un workspace = une plateforme, un CTF, ou un challenge perso.",
+    "cancel": "Annuler",
     "submit": "Créer le workspace",
     "steps": {
       "type": "1 · Type",
@@ -29,29 +42,89 @@
     },
     "type": {
       "platform": "Plateforme",
-      "platformHint": "Continu : HTB, THM, Root-Me. Pas de date de fin.",
-      "ctfEvent": "CTF / Événement",
-      "ctfEventHint": "Durée limitée : scoreboard live et fin d'événement."
+      "platformHelp": "Long terme : HTB, THM, Root-Me. Challenges illimités.",
+      "event": "CTF / Événement",
+      "eventHelp": "Durée limitée : scoreboard et fin d'événement."
     },
-    "platformSource": "Plateforme / source",
-    "platformOptions": {
-      "other": "Autre"
+    "details": {
+      "name": "Nom",
+      "description": "Description",
+      "color": "Couleur",
+      "platform": "Plateforme / source",
+      "platformPlaceholder": "Choisir une plateforme",
+      "noPlatform": "Aucune",
+      "startsAt": "Début",
+      "endsAt": "Fin",
+      "timezone": "Les heures sont dans votre fuseau horaire ({{zone}}).",
+      "lockAfterEnd": "Verrouiller après la fin",
+      "lockAfterEndHelp": "Empêche de modifier les challenges et les writeups après la fin de l'événement."
     },
     "mode": {
       "solo": "Solo",
-      "soloHint": "Vous seul. Notes privées par défaut.",
+      "soloHelp": "Vous seul. Vous pourrez inviter des personnes plus tard.",
       "team": "Équipe",
-      "teamHint": "Partagé avec une équipe existante. Permissions par rôle."
-    },
-    "associatedTeam": "Équipe associée",
-    "teamMeta": "{{count}} membres · Vous êtes {{role}}"
+      "teamHelp": "Partagé avec une équipe existante. Permissions par rôle.",
+      "noEligibleTeam": "Il faut être admin ou capitaine d'une équipe pour lui créer un workspace.",
+      "pickTeam": "Équipe associée",
+      "pickTeamPlaceholder": "Choisir une équipe",
+      "searchTeam": "Rechercher une équipe...",
+      "noTeamFound": "Aucune équipe trouvée.",
+      "teamMeta_one": "{{count}} membre · Vous êtes {{role}}",
+      "teamMeta_other": "{{count}} membres · Vous êtes {{role}}"
+    }
+  },
+  "validation": {
+    "nameRequired": "Donnez un nom au workspace.",
+    "platformRequired": "Choisissez une plateforme.",
+    "teamRequired": "Choisissez une équipe.",
+    "endsBeforeStart": "La fin doit être après le début.",
+    "eventUrl": "Entrez une adresse complète en http:// ou https://."
   },
   "card": {
     "solvedRatio": "{{solved}} / {{total}} résolus",
-    "you": "Vous"
+    "noChallenges": "Aucun challenge créé pour l'instant",
+    "you": "Vous",
+    "favorite": "Ajouter aux favoris",
+    "unfavorite": "Retirer des favoris",
+    "menu": "Actions pour {{name}}",
+    "settings": "Paramètres",
+    "archive": "Archiver",
+    "unarchive": "Désarchiver",
+    "leave": "Quitter le workspace"
+  },
+  "status": {
+    "live": "En cours",
+    "upcoming": "À venir",
+    "ended": "Terminé",
+    "permanent": "Permanent",
+    "archived": "Archivé"
   },
   "settings": {
     "pageTitle": "Paramètres généraux",
+    "leaveTitle": "Quitter le workspace",
+    "leaveDescription": "Vous perdrez l'accès à ce workspace et à tout son contenu. Cette action ne peut pas être annulée.",
+    "leaveConfirm": "Êtes-vous sûr de vouloir quitter ce workspace ?",
+    "leaveAction": "Quitter le workspace",
+    "title": "Paramètres",
+    "sectionsLabel": "Sections des paramètres",
+    "soon": "Bientôt",
+    "readOnly": "Seuls les Admins et le Captain peuvent modifier ces réglages.",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saved": "Paramètres enregistrés",
+    "archive": "Archiver",
+    "archiveHint": "Lecture seule pour tous ; les invitations en attente sont annulées.",
+    "archiveTitle": "Archiver {{name}} ?",
+    "archiveText": "Plus personne ne pourra le modifier avant son désarchivage. Les invitations en attente sont annulées et ne reviendront pas.",
+    "archived": "Workspace archivé",
+    "unarchive": "Désarchiver",
+    "unarchiveHint": "L'édition revient ; les invitations annulées le restent.",
+    "unarchived": "Workspace désarchivé",
+    "leaveHint": "Vous perdez l'accès ; seul un Captain ou un Admin peut vous réintégrer.",
+    "delete": "Supprimer le workspace",
+    "deleteHint": "Irréversible : ses challenges, writeups et fichiers partent avec lui.",
+    "deleteTitle": "Supprimer {{name}} ?",
+    "deleteText": "Tout son contenu est supprimé définitivement.",
     "nav": {
       "general": "Général",
       "visibility": "Visibilité",
@@ -68,7 +141,11 @@
       "slug": "Slug",
       "description": "Description",
       "color": "Couleur",
-      "icon": "Icône"
+      "icon": "Icône",
+      "slugHint": "Fixé à la création ; les liens vers le workspace l'utilisent.",
+      "avatarAdd": "Ajouter une image",
+      "avatarChange": "Changer l'image",
+      "avatarRemove": "Retirer"
     },
     "modeTeam": {
       "title": "Mode & équipe",
@@ -82,19 +159,54 @@
       "start": "Début",
       "end": "Fin",
       "lockAfterEnd": "Verrouiller après la fin",
-      "lockAfterEndHint": "Empêche l'édition des challenges et writeups après la fin de l'événement."
+      "lockAfterEndHint": "Après la fin : plus de nouveaux challenges ni de modification de leurs infos. Notes, fichiers, writeups et statuts restent modifiables.",
+      "autoArchive": "Archivage automatique",
+      "autoArchiveHint": "Passe le workspace en lecture seule quelques jours après la fin.",
+      "autoArchiveNever": "Jamais"
     },
     "writeupVisibility": {
       "title": "Visibilité des writeups",
-      "defaultLabel": "Par défaut, les writeups sont",
+      "defaultLabel": "Visibilité par défaut",
       "defaultHint": "Vous pouvez toujours publier individuellement par writeup.",
       "draft": "Brouillon",
-      "teamVisible": "Visibles par l'équipe"
-    }
+      "team": "Visibles par l'équipe"
+    },
+    "navGroups": {
+      "workspace": "Workspace",
+      "connections": "Connexions",
+      "data": "Données",
+      "danger": "Danger"
+    },
+    "unsaved": "Modifications non enregistrées",
+    "unsavedTitle": "Modifications non enregistrées",
+    "unsavedText": "Vos changements sur cette page seront perdus si vous la quittez sans les enregistrer.",
+    "unsavedStay": "Rester",
+    "unsavedDiscard": "Abandonner",
+    "unsavedSave": "Enregistrer et continuer",
+    "roles": {
+      "title": "Accès",
+      "label": "Rôles",
+      "hint": "Hérités de {{team}} : Captain, Admin, Member, Viewer.",
+      "manage": "Gérer dans l'équipe"
+    },
+    "dangerReversible": "Actions réversibles",
+    "dangerDestructive": "Actions destructives",
+    "source": {
+      "title": "Type et source",
+      "type": "Type",
+      "typeHint": "Fixé à la création.",
+      "platform": "Plateforme",
+      "noPlatform": "Aucune",
+      "eventUrl": "URL de l'événement",
+      "eventUrlHint": "Page publique du CTF ou de la plateforme, ouverte depuis le dashboard."
+    },
+    "enabled": "Activé",
+    "disabled": "Désactivé"
   },
   "members": {
-    "title": "Membres du workspace",
-    "subtitle": "{{count}} membres · équipe « {{team}} » associée.",
+    "title": "Membres",
+    "subtitle_one": "{{count}} membre · équipe « {{team}} » associée.",
+    "subtitle_other": "{{count}} membres · équipe « {{team}} » associée.",
     "inviteLink": "Lien d'invitation",
     "activeInviteLink": "Lien d'invitation actif",
     "linkRole": "Rôle : {{role}}",
@@ -105,7 +217,111 @@
       "role": "Rôle",
       "solved": "Résolus",
       "status": "Statut",
-      "joined": "Rejoint"
+      "joined": "Rejoint",
+      "access": "Accès",
+      "actions": "Actions"
+    },
+    "subtitleTeam": "Rôles hérités de l'équipe",
+    "subtitleGuest": "Vous y avez accès en invité.",
+    "accessTitle": "Accès",
+    "filterLabel": "Afficher",
+    "filters": {
+      "all": "Tous",
+      "team": "Équipe",
+      "guests": "Invités"
+    },
+    "search": "Filtrer par nom ou pseudo",
+    "via": {
+      "team": "Équipe",
+      "owner": "Propriétaire",
+      "override": "Modifié ici · équipe : {{role}}",
+      "overrideUnknown": "Modifié ici",
+      "guest": "Invité",
+      "invitedBy": "par {{name}}"
+    },
+    "you": "Vous",
+    "noMatch": "Personne ne correspond à ce filtre.",
+    "actionsFor": "Actions pour {{name}}",
+    "workspaceRole": "Rôle dans ce workspace",
+    "guestRole": "Rôle d'invité",
+    "resetRole": "Revenir au rôle d'équipe ({{role}})",
+    "roleSet": "{{name}} est maintenant {{role}} dans ce workspace",
+    "roleReset": "{{name}} revient à son rôle d'équipe",
+    "exclude": "Exclure du workspace",
+    "excludeTitle": "Exclure {{name}} ?",
+    "excludeText": "Cette personne reste dans l'équipe mais perd l'accès à ce workspace. Un Captain ou un Admin pourra la réintégrer.",
+    "excluded": "{{name}} est exclu du workspace",
+    "removeGuest": "Retirer l'invité",
+    "removeGuestTitle": "Retirer {{name}} ?",
+    "removeGuestText": "Cette personne perd l'accès à ce workspace. Pour revenir, il lui faudra une nouvelle invitation.",
+    "guestRemoved": "{{name}} n'a plus accès au workspace",
+    "exclusions": {
+      "title": "Exclus",
+      "hint": "Membres de l'équipe sans accès à ce workspace, retirés par un Captain ou un Admin, ou partis d'eux-mêmes.",
+      "teamRole": "Rôle dans l'équipe",
+      "lift": "Réintégrer",
+      "lifted": "{{name}} retrouve l'accès hérité de l'équipe"
+    },
+    "invitations": {
+      "title": "Invitations en attente",
+      "hintAll": "Toutes les invitations du workspace. L'adresse n'est visible que tant que l'invitation attend.",
+      "hintMine": "Les invitations que vous avez envoyées.",
+      "authorLabel": "Invitations envoyées par",
+      "allAuthors": "Tous les auteurs",
+      "you": "Vous",
+      "columns": {
+        "recipient": "Destinataire",
+        "invitedBy": "Invité par",
+        "expires": "Expire"
+      },
+      "cancel": "Révoquer",
+      "cancelTitle": "Révoquer l'invitation ?",
+      "cancelText": "{{who}} ne pourra plus l'accepter.",
+      "cancelled": "Invitation révoquée",
+      "empty": "Aucune invitation en attente."
+    },
+    "invite": {
+      "open": "Inviter",
+      "title": "Inviter dans {{name}}",
+      "description": "Une personne hors de l'équipe, en invité. Elle doit accepter l'invitation, valable 7 jours.",
+      "by": "Inviter par",
+      "byUsername": "Nom d'utilisateur",
+      "byEmail": "Adresse e-mail",
+      "username": "Nom d'utilisateur",
+      "email": "Adresse e-mail",
+      "usernamePlaceholder": "0xkira",
+      "emailPlaceholder": "prenom@exemple.fr",
+      "usernameRequired": "Saisissez un nom d'utilisateur.",
+      "emailRequired": "Saisissez une adresse.",
+      "emailInvalid": "Cette adresse n'est pas valide.",
+      "role": "Rôle",
+      "roleHint": "Un invité est au plus Member. Les rôles supérieurs viennent de l'équipe.",
+      "mailHint": "Un mail part dans les deux cas. Si l'adresse n'a pas de compte, la personne s'inscrit puis retrouve l'invitation.",
+      "submit": "Envoyer l'invitation",
+      "sent": "Invitation envoyée à {{who}}"
     }
+  },
+  "notFound": {
+    "title": "Workspace introuvable",
+    "description": "Il n'existe pas, ou vous n'y avez plus accès."
+  },
+  "archived": {
+    "banner": "Ce workspace est archivé : il est en lecture seule."
+  },
+  "dashboard": {
+    "solo": "Solo",
+    "team": "Équipe",
+    "dates": "{{start}} → {{end}}",
+    "from": "À partir du {{date}}",
+    "until": "Jusqu'au {{date}}",
+    "emptyTitle": "Pas encore de challenges",
+    "emptyText": "Les challenges, leur progression et l'activité de l'équipe s'afficheront ici.",
+    "emptyTextReader": "Les challenges apparaîtront ici dès qu'un membre en créera un.",
+    "emptyTextSolo": "Aucun challenge n'a été créé dans ce workspace.",
+    "learnMore": "En savoir plus",
+    "createChallenge": "Créer un challenge",
+    "members_one": "{{count}} membre",
+    "members_other": "{{count}} membres",
+    "eventLinkHint": "(ouvre la page de l'événement dans un nouvel onglet)"
   }
 }

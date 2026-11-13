@@ -4,6 +4,7 @@ use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Once;
 
 /// The client's IP address, resolved according to `trusted_proxy_count`.
 ///
@@ -54,6 +55,9 @@ impl FromRequestParts<AppState> for ClientIp {
 /// honest, a forged one is not.
 fn resolve(forwarded_for: Option<&str>, remote: IpAddr, trusted: usize) -> Option<IpAddr> {
     if trusted == 0 {
+        if forwarded_for.is_some() {
+            warn_proxy_header_ignored();
+        }
         return Some(remote);
     }
 
@@ -75,6 +79,35 @@ fn resolve(forwarded_for: Option<&str>, remote: IpAddr, trusted: usize) -> Optio
 
     let client_entry = chain[chain.len() - trusted];
     client_entry.parse::<IpAddr>().ok()
+}
+
+/// Flags the one misconfiguration that silently disarms every per-IP limit.
+///
+/// `TRUSTED_PROXY_COUNT=0` means the header is ignored and the TCP peer is
+/// used instead. Behind a reverse proxy that peer is the proxy itself, so
+/// every caller collapses into a single bucket: one attacker exhausting the
+/// login window then locks out the whole instance. An arriving
+/// `X-Forwarded-For` is the signal that a proxy is in fact in front, which
+/// makes the zero a mistake rather than a deliberate direct-exposure setup.
+///
+/// Logged once per process, not per request: this fires on every request once
+/// it starts, and an attacker who can set the header could otherwise turn it
+/// into a log-flooding primitive. Warning rather than refusing to boot: the
+/// header is request-scoped, so the condition simply cannot be evaluated at
+/// startup, and taking a running instance down over a header a client fully
+/// controls would hand that same attacker a kill switch.
+fn warn_proxy_header_ignored() {
+    static ONCE: Once = Once::new();
+
+    ONCE.call_once(|| {
+        tracing::warn!(
+            "TRUSTED_PROXY_COUNT is 0 but requests carry X-Forwarded-For: \
+             every client resolves to the proxy address, so all per-IP rate \
+             limits now share one bucket. Set TRUSTED_PROXY_COUNT to the \
+             number of proxies in front of this backend (1 for the bundled \
+             docker-compose)."
+        );
+    });
 }
 
 #[cfg(test)]

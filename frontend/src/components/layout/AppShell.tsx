@@ -3,6 +3,7 @@ import { AppSidebar } from "@/components/layout/Sidebar";
 import { InstanceAlertBanner } from "@/components/layout/InstanceAlertBanner";
 import { LegalRevisionBanner } from "@/components/layout/LegalRevisionBanner";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { WorkspaceArchivedBanner } from "./WorkspaceArchivedBanner";
 
 export function AppShell() {
   return (
@@ -14,8 +15,9 @@ export function AppShell() {
           already flexible, so each banner keeps its own height and the shell
           absorbs the rest. */}
       <InstanceAlertBanner />
+      <WorkspaceArchivedBanner />
       <LegalRevisionBanner />
-      <SidebarProvider className="flex-1 min-h-0">
+      <SidebarProvider className="relative flex-1 min-h-0">
         <AppSidebar />
         <SidebarInset className="overflow-y-auto">
           <header className="flex h-12 items-center gap-2 border-b border-border px-3 md:hidden">

@@ -2,6 +2,7 @@
 name = "admin-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "pwnforge-admin"
@@ -12,7 +13,7 @@ domain = { path = "../domain" }
 services = { path = "../services" }
 seed = { path = "../seed" }
 
-clap = { version = "4.6.6", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 sea-orm.workspace = true
 dotenvy.workspace = true
@@ -23,4 +24,4 @@ uuid.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 dialoguer = "0.12.0"                      # interactive confirmation prompts
-tabled = "0.21.0"
+tabled = "0.22.0"

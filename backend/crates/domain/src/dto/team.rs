@@ -1,0 +1,492 @@
+// backend/crates/domain/src/dto/team.rs
+
+use crate::dto::invitation::InvitationTarget;
+use crate::entities::teams;
+use crate::serde_helpers::deserialize_some_trimmed;
+use crate::types::AccentColor;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use utoipa::openapi::schema::{AnyOfBuilder, Schema};
+use utoipa::openapi::{Ref, RefOr};
+use uuid::Uuid;
+use validator::{Validate, ValidationError};
+
+/// A member's role within a team.
+//
+// Stored in the database as raw TEXT (`team_members.role`,
+// `team_invitations.default_role`). The String <-> TeamRole conversion
+// happens in the service layer, not via `DeriveActiveEnum` on the generated
+// entity, to avoid depending on a manual edit after
+// `sea-orm-cli generate entity`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TeamRole {
+    Captain,
+    Admin,
+    Member,
+    Viewer,
+}
+
+impl TeamRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TeamRole::Captain => "captain",
+            TeamRole::Admin => "admin",
+            TeamRole::Member => "member",
+            TeamRole::Viewer => "viewer",
+        }
+    }
+
+    /// Ordinal used to compare roles by seniority (higher = more privileged).
+    pub fn level(&self) -> u8 {
+        match self {
+            TeamRole::Viewer => 0,
+            TeamRole::Member => 1,
+            TeamRole::Admin => 2,
+            TeamRole::Captain => 3,
+        }
+    }
+}
+
+impl std::str::FromStr for TeamRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "captain" => Ok(TeamRole::Captain),
+            "admin" => Ok(TeamRole::Admin),
+            "member" => Ok(TeamRole::Member),
+            "viewer" => Ok(TeamRole::Viewer),
+            _ => Err("Invalid team role".into()),
+        }
+    }
+}
+
+// ---- Teams --------------------------------------------------------------
+
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateTeamRequest {
+    // Bounded like every other free-text field in the API (see
+    // `dto/auth.rs`): the column is unbounded TEXT, so without a ceiling a
+    // single request could store the whole body limit, once per team, with no
+    // cap on how many teams a user creates.
+    #[validate(length(min = 1, max = 60))]
+    pub name: String,
+    pub color: AccentColor,
+}
+
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TeamPatch {
+    #[validate(length(min = 1, max = 60))]
+    pub name: Option<String>,
+    pub color: Option<AccentColor>,
+    /// Absent leaves it unchanged, null clears it, a string sets it. Trimmed,
+    /// and a string empty once trimmed clears it too. At most 500 characters
+    /// once trimmed.
+    // Same double Option and `value_type` as `UpdateWorkspaceInput.description`.
+    // Trimmed at deserialization, so the bound measures what is stored, as
+    // `ck_teams_description_length` does: both count characters.
+    #[serde(default, deserialize_with = "deserialize_some_trimmed")]
+    #[schema(value_type = Option<String>)]
+    #[validate(length(max = 500))]
+    pub description: Option<Option<String>>,
+    /// Whether a Member may create workspaces under the team. An Admin and
+    /// the Captain always may, a Viewer never does. Turning it off leaves the
+    /// workspaces already created as they are.
+    pub members_can_create_workspaces: Option<bool>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamResponse {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    /// `null` when the team has none.
+    pub description: Option<String>,
+    pub color: AccentColor,
+    /// `null` when the team has no avatar. Otherwise the cache-busting version
+    /// the client puts in the avatar URL, which it builds from the id:
+    /// `/api/v1/avatars/teams/{id}/{avatar_version}/256.webp`.
+    //
+    // The URL is built client side rather than stored, so no row ever names
+    // an object in the bucket.
+    pub avatar_version: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    /// Whether a Member may create workspaces under the team, besides the
+    /// Admins and the Captain, who always may.
+    pub members_can_create_workspaces: bool,
+    /// Current user's role in this team, avoids an extra frontend round trip
+    /// to know which actions to show.
+    pub my_role: TeamRole,
+    /// How many members the team has, its Captain included.
+    pub member_count: u64,
+}
+
+impl TeamResponse {
+    /// Builds the response from a stored row plus the caller's role and the
+    /// team's member count.
+    ///
+    /// Single place where `teams.color` is read back into `AccentColor`, so the
+    /// fallback for an out-of-palette value cannot drift between the six call
+    /// sites that used to construct this by hand.
+    pub fn from_model(team: teams::Model, my_role: TeamRole, member_count: u64) -> Self {
+        Self {
+            id: team.id,
+            slug: team.slug,
+            name: team.name,
+            description: team.description,
+            color: team.color.parse().unwrap_or_default(),
+            avatar_version: team.avatar_version,
+            created_at: team.created_at.into(),
+            members_can_create_workspaces: team.members_can_create_workspaces,
+            my_role,
+            member_count,
+        }
+    }
+}
+
+/// A team as another resource names it: enough to show its name and
+/// monogram, nothing about its members.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct TeamSummary {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+    pub color: AccentColor,
+    /// Same contract as `TeamResponse.avatar_version`, and `null` as well
+    /// for a reader who is not on the team: the avatar is served to its
+    /// members only.
+    pub avatar_version: Option<Uuid>,
+}
+
+impl TeamSummary {
+    pub fn from_model(team: &teams::Model) -> Self {
+        Self {
+            id: team.id,
+            slug: team.slug.clone(),
+            name: team.name.clone(),
+            color: team.color.parse().unwrap_or_default(),
+            avatar_version: team.avatar_version,
+        }
+    }
+}
+
+// ---- Members --------------------------------------------------------------
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamMemberResponse {
+    pub user_id: Uuid,
+    pub username: String,
+    pub first_name: String,
+    pub last_name: String,
+    /// Same contract as `TeamResponse.avatar_version`, under
+    /// `/api/v1/avatars/users/{user_id}/{avatar_version}/64.webp`.
+    pub avatar_version: Option<Uuid>,
+    pub role: TeamRole,
+    pub joined_at: DateTime<Utc>,
+    /// The author of the invitation this member accepted, when they joined
+    /// by one. `null` for the team's creator, for members from before this
+    /// was recorded, and once the author's account is gone.
+    pub invited_by: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeMemberRoleRequest {
+    pub role: TeamRole,
+}
+
+/// Names the member who becomes Captain. The current Captain becomes an
+/// Admin in the same step.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TransferCaptaincyRequest {
+    pub user_id: Uuid,
+}
+
+// ---- Invitations ----------------------------------------------------------
+
+/// Rejects an invitation that names a person *and* an address.
+///
+/// The two are different ways to say who the invitation is for, and letting
+/// both through produced a row whose targeting fields disagreed: the id said
+/// one account, the address said another, and the three acceptance paths did
+/// not consult the same one. An Admin could then issue an invitation that read
+/// as addressed to a colleague while actually granting the team to whoever
+/// controlled the mailbox.
+///
+/// There is no need for the caller to supply an address alongside a username:
+/// the service looks up where to write to the named account itself.
+fn invitee_is_named_once(request: &CreateInvitationRequest) -> Result<(), ValidationError> {
+    if request.username.is_some() && request.invited_email.is_some() {
+        return Err(ValidationError::new("invitee_named_twice"));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[validate(schema(function = invitee_is_named_once))]
+pub struct CreateInvitationRequest {
+    pub default_role: TeamRole,
+    /// Seven days from now when left out, at most thirty
+    /// (`invitation_expiry_too_far` beyond).
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Ignored, and set to 1, when `username` or `invited_email` is given.
+    pub max_uses: Option<i32>,
+    /// The only account allowed to accept, by username. Left out for a
+    /// generic invitation link, which anyone holding the token may accept.
+    /// Mutually exclusive with `invited_email`.
+    //
+    // A username rather than a raw user id: the id is an internal handle the
+    // caller has no legitimate way to obtain for someone outside their team,
+    // and accepting one invited probing for valid accounts by identifier.
+    // UUIDv7 encodes a timestamp, so that guessing game is cheaper than it
+    // looks. A username is already a public identifier in this project,
+    // since registration answers `username_taken` outright, so resolving by
+    // name adds no enumeration surface that does not already exist.
+    //
+    // Mutual exclusion is `invitee_is_named_once`. The service finds the
+    // account's own verified address to write to, so there is nothing for
+    // the caller to supply here beyond the name.
+    //
+    // Same bounds as `RegisterRequest::username`: an unbounded string would
+    // otherwise reach the lookup untouched.
+    #[validate(length(min = 3, max = 32), regex(path = *crate::dto::auth::USERNAME_RE))]
+    pub username: Option<String>,
+    /// Invites whoever holds this address: an account with it verified sees
+    /// the invitation among its pending ones and accepts it there, or by the
+    /// link the mail carries; anyone else can create an account with it
+    /// first. Nothing is joined without that step.
+    ///
+    /// Mutually exclusive with `username`. The answer is the same whether an
+    /// account holds the address or not: it is matched when the invitee
+    /// reads their invitations, never here.
+    #[validate(email)]
+    pub invited_email: Option<String>,
+}
+
+/// Body of `POST /teams/join`.
+//
+// The token travels in the body rather than the path so it stays out of the
+// `tracing` request span (which records `path` at info level on every
+// request) and out of nginx's access log. Same bounds as the other opaque
+// tokens in `dto/auth.rs`: a generated one is 43 characters, the ceiling only
+// exists to bound what reaches the hashing step.
+#[derive(Debug, Deserialize, Validate, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JoinTeamRequest {
+    #[validate(length(min = 1, max = 128))]
+    pub token: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamInvitationResponse {
+    pub id: Uuid,
+    pub team_id: Uuid,
+    pub team_name: String,
+    /// The team's colour, for its monogram next to `team_name`.
+    pub team_color: AccentColor,
+    /// Same contract as `TeamResponse.avatar_version`, and `null` as well
+    /// for a reader who is not on the team: the avatar is served to its
+    /// members only, so an invitee is announced none until they join.
+    pub team_avatar_version: Option<Uuid>,
+    pub default_role: TeamRole,
+    pub target: InvitationTarget,
+    /// The account named by username. `null` for an invitation by address,
+    /// whether or not an account holds it.
+    pub invited_user_id: Option<Uuid>,
+    pub invited_username: Option<String>,
+    pub invited_email: Option<String>,
+    /// The author, `null` once their account is gone.
+    pub invited_by: Option<Uuid>,
+    pub invited_by_username: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub max_uses: Option<i32>,
+    pub uses: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+/// The answer to the creation of a generic link: the invitation and the
+/// token its link carries. The only answer that ever holds a token: a
+/// targeted invitation's goes to its invitee's mail alone, and no listing
+/// shows one.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamLinkResponse {
+    #[serde(flatten)]
+    pub invitation: TeamInvitationResponse,
+    pub token: String,
+}
+
+/// What `POST /teams/{slug}/invitations` answers: a generic link with its
+/// token, or a targeted invitation, which has no token field at all.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum CreatedTeamInvitation {
+    Link(TeamLinkResponse),
+    Targeted(TeamInvitationResponse),
+}
+
+// Written by hand for `anyOf`: the derive renders an untagged enum as
+// `oneOf`, which a link's answer would fail, since it is a valid
+// `TeamInvitationResponse` as well as a `TeamLinkResponse`.
+impl utoipa::PartialSchema for CreatedTeamInvitation {
+    fn schema() -> RefOr<Schema> {
+        AnyOfBuilder::new()
+            .item(Ref::from_schema_name("TeamLinkResponse"))
+            .item(Ref::from_schema_name("TeamInvitationResponse"))
+            .description(Some(
+                "A generic link with its token (TeamLinkResponse), or a targeted \
+                 invitation without one (TeamInvitationResponse)",
+            ))
+            .into()
+    }
+}
+
+impl utoipa::ToSchema for CreatedTeamInvitation {
+    fn schemas(schemas: &mut Vec<(String, RefOr<Schema>)>) {
+        schemas.push((
+            "TeamLinkResponse".to_owned(),
+            <TeamLinkResponse as utoipa::PartialSchema>::schema(),
+        ));
+        schemas.push((
+            "TeamInvitationResponse".to_owned(),
+            <TeamInvitationResponse as utoipa::PartialSchema>::schema(),
+        ));
+    }
+}
+
+/// What the invitee sees before accepting by the link: enough for the
+/// confirmation screen, and nothing about anyone else.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TeamInvitationPreview {
+    pub team_name: String,
+    pub invited_by_username: Option<String>,
+    pub role: TeamRole,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Negative: deserialization refuses an unknown colour outright, which is
+    /// what turns a bad request into a 422 without any explicit check.
+    #[test]
+    fn create_team_request_rejects_an_unknown_color() {
+        let body = r##"{"name":"Team","color":"#EB5927"}"##;
+        assert!(serde_json::from_str::<CreateTeamRequest>(body).is_err());
+    }
+
+    /// Negative: an unexpected field is refused rather than silently dropped,
+    /// matching `deny_unknown_fields` on the auth DTOs. `icon` is the field
+    /// that was just removed, so this also pins that it stays gone.
+    #[test]
+    fn create_team_request_rejects_an_unknown_field() {
+        let body = r#"{"name":"Team","color":"ember","icon":"skull"}"#;
+        assert!(serde_json::from_str::<CreateTeamRequest>(body).is_err());
+    }
+
+    /// Positive: a well-formed body deserializes and validates.
+    #[test]
+    fn create_team_request_accepts_a_palette_color() {
+        let body = r#"{"name":"Team","color":"violet"}"#;
+        let parsed: CreateTeamRequest =
+            serde_json::from_str(body).expect("a palette colour must be accepted");
+
+        assert_eq!(parsed.color, AccentColor::Violet);
+        assert!(parsed.validate().is_ok());
+    }
+
+    /// Negative: the name ceiling is enforced, so an unbounded TEXT column
+    /// cannot be filled from a single request.
+    #[test]
+    fn create_team_request_rejects_an_overlong_name() {
+        let parsed = CreateTeamRequest {
+            name: "a".repeat(61),
+            color: AccentColor::Ember,
+        };
+
+        assert!(parsed.validate().is_err());
+    }
+
+    /// The description's three states on a PATCH, trimmed on the way in:
+    /// blank reads as null, and the bound measures the trimmed text, which is
+    /// what `ck_teams_description_length` measures once stored.
+    #[test]
+    fn team_patch_trims_the_description_and_bounds_what_is_stored() {
+        let parse = |body: &str| serde_json::from_str::<TeamPatch>(body).unwrap();
+
+        assert_eq!(parse("{}").description, None);
+        assert_eq!(parse(r#"{"description":null}"#).description, Some(None));
+        assert_eq!(parse(r#"{"description":" \n\t "}"#).description, Some(None));
+        assert_eq!(
+            parse(r#"{"description":"  Red team  "}"#).description,
+            Some(Some("Red team".to_owned()))
+        );
+
+        let padded = parse(&format!(r#"{{"description":"  {}  "}}"#, "a".repeat(500)));
+        assert!(
+            padded.validate().is_ok(),
+            "500 characters once trimmed is the ceiling, not past it"
+        );
+        let too_long = parse(&format!(r#"{{"description":"{}"}}"#, "a".repeat(501)));
+        assert!(too_long.validate().is_err());
+    }
+
+    fn invitation(username: Option<&str>, email: Option<&str>) -> CreateInvitationRequest {
+        CreateInvitationRequest {
+            default_role: TeamRole::Member,
+            expires_at: None,
+            max_uses: None,
+            username: username.map(str::to_owned),
+            invited_email: email.map(str::to_owned),
+        }
+    }
+
+    /// Negative: naming a person *and* an address is refused.
+    ///
+    /// Accepting both produced a row whose two targeting columns disagreed,
+    /// and the three acceptance paths did not all consult the same one. An
+    /// invitation could read as addressed to a colleague while granting the
+    /// team to whoever controlled the mailbox.
+    #[test]
+    fn invitation_naming_both_a_username_and_an_email_is_refused() {
+        let errors = invitation(Some("alice"), Some("someone@example.test"))
+            .validate()
+            .expect_err("naming the invitee twice must not validate");
+
+        assert!(
+            format!("{errors:?}").contains("invitee_named_twice"),
+            "the rejection must carry its own code, got {errors:?}"
+        );
+    }
+
+    /// Positive: each way of naming an invitee is fine on its own, and a
+    /// generic link names nobody at all.
+    #[test]
+    fn invitation_naming_the_invitee_once_or_not_at_all_is_accepted() {
+        assert!(invitation(Some("alice"), None).validate().is_ok());
+        assert!(
+            invitation(None, Some("someone@example.test"))
+                .validate()
+                .is_ok()
+        );
+        assert!(invitation(None, None).validate().is_ok());
+    }
+
+    /// The username bounds match `RegisterRequest`, so a name that could never
+    /// have been registered is refused before it reaches the lookup.
+    #[test]
+    fn invitation_rejects_a_username_that_could_not_exist() {
+        for bad in ["ab", &"a".repeat(33), "_leading", "has space", "has/slash"] {
+            assert!(
+                invitation(Some(bad), None).validate().is_err(),
+                "{bad:?} must not be accepted as a username"
+            );
+        }
+    }
+}

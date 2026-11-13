@@ -1,5 +1,6 @@
 // src/lib/query-client.ts
 import { QueryClient } from "@tanstack/react-query";
+import { isApiError } from "@/lib/api-error";
 
 /**
  * Shared query client.
@@ -18,3 +19,12 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * `retry` for a query naming one resource: a 404 is an answer, that it does
+ * not exist or that the caller has no access to it, and asking again would
+ * not change it. Anything else gets the default's one second chance.
+ */
+export function retryUnlessNotFound(failureCount: number, error: unknown): boolean {
+  return !(isApiError(error) && error.status === 404) && failureCount < 1;
+}

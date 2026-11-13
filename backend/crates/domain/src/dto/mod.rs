@@ -4,5 +4,8 @@ pub mod contact;
 pub mod error_responses;
 pub mod health;
 pub mod instance;
+pub mod invitation;
 pub mod legal;
 pub mod setup;
+pub mod team;
+pub mod workspace;

@@ -104,7 +104,8 @@
       "docs": "Docs",
       "api": "Référence API",
       "selfhosted": "Auto-hébergement",
-      "changelog": "Changelog"
+      "changelog": "Changelog",
+      "status": "Statut"
     },
     "community": {
       "title": "Communauté",

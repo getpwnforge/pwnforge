@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { CheckCircle2, XCircle, Eye, EyeOff } from "lucide-react";
 
@@ -17,12 +17,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { ROUTES } from "@/lib/routes";
 import { InputGroup, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { useLinkToken } from "@/hooks/useLinkToken";
 
 export function ResetPasswordPage() {
 	const { t } = useTranslation(["auth", "common"]);
 	const { resetPassword } = useAuth();
-	const [searchParams] = useSearchParams();
-	const token = searchParams.get("token");
+	const token = useLinkToken();
 	const [isReset, setIsReset] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   usePageTitle(t("auth:resetPassword.tabTitle"));

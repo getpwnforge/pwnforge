@@ -11,9 +11,11 @@ pub fn router() -> Router<AppState> {
 /// Public, unauthenticated. Returns every currently active alert, highest
 /// priority first.
 ///
-/// An empty array replaces the previous 204: the client dismisses alerts one
-/// at a time and needs to see what comes next, and "no alert" is a list of
-/// length zero rather than a separate status code to special-case.
+/// An empty array when no alert is active.
+//
+// The empty array replaces the previous 204: the client dismisses alerts one
+// at a time and needs to see what comes next, and "no alert" is a list of
+// length zero rather than a separate status code to special-case.
 // Private: only reachable through router() above.
 #[utoipa::path(
     get,

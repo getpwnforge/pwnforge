@@ -1,9 +1,9 @@
 // src/components/layout/InstanceAlertBanner.tsx
 import { useQuery } from "@tanstack/react-query";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { Button } from "../ui/button";
+import { Banner } from "@/components/ui/banner";
+import type { BannerVariant } from "@/components/ui/banner-variants";
 import { useSessionDismissal } from "@/hooks/useSessionDismissal";
 
 type AlertKind = "info" | "warning" | "danger" | "maintenance";
@@ -19,11 +19,12 @@ interface InstanceAlert {
 
 const DISMISSED_KEY = "pwnforge:dismissed-alert-ids";
 
-const KIND_STYLES: Record<AlertKind, string> = {
-  info: "bg-info-soft text-info-text border-info",
-  warning: "bg-warning-soft text-warning-text border-warning",
-  danger: "bg-danger-soft text-danger-text border-danger",
-  maintenance: "bg-info-soft text-info-text border-info",
+/** Maintenance reads as information: it is announced, not an incident. */
+const KIND_VARIANT: Record<AlertKind, BannerVariant> = {
+  info: "info",
+  warning: "warning",
+  danger: "danger",
+  maintenance: "info",
 };
 
 /** Public, unauthenticated route. An empty array means no alert is active. */
@@ -55,29 +56,13 @@ export function InstanceAlertBanner() {
   if (!alert) return null;
 
   return (
-    <output
-      className={`flex shrink-0 items-center justify-center gap-3 border-b px-4 h-(--banner-h) text-[13px] font-medium ${KIND_STYLES[alert.kind]}`}
-    >
+    <Banner variant={KIND_VARIANT[alert.kind]} onDismiss={() => dismiss(alert.id)} dismissLabel={t("alerts.dismiss")}>
       <span className="truncate">{alert.message}</span>
-
-      {alert.link_url && (
-        <a
-          href={alert.link_url}
-          className="shrink-0 underline underline-offset-2 hover:no-underline"
-        >
+      {alert.link_url ? (
+        <a href={alert.link_url} className="shrink-0 underline underline-offset-2 hover:no-underline">
           {t("alerts.readMore")}
         </a>
-      )}
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className="shrink-0 p-1"
-        onClick={() => dismiss(alert.id)}
-        aria-label={t("alerts.dismiss")}
-      >
-        <X className="h-4 w-4" />
-      </Button>
-    </output>
+      ) : null}
+    </Banner>
   );
 }

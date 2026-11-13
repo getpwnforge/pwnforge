@@ -5,6 +5,7 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::{NotSet, Set},
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    sea_query::OnConflict,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -64,6 +65,12 @@ pub async fn check_domain(
 
 /// Adds a domain to the blocked list as a manual entry.
 /// `added_by` is `None` when the action comes from the CLI.
+///
+/// A domain already on the list becomes a manual entry, with this reason:
+/// one the disposable list holds would otherwise refuse the insert, and stay
+/// a block the allowlist can lift and that only applies while the disposable
+/// check is on. The list's refresh never downgrades it back, since it only
+/// ever adds.
 pub async fn block_domain(
     db: &DatabaseConnection,
     domain: &str,
@@ -72,15 +79,27 @@ pub async fn block_domain(
 ) -> Result<(), BlockedEmailError> {
     let domain = domain.trim().to_lowercase();
 
-    blocked_emails_domains::ActiveModel {
+    let entry = blocked_emails_domains::ActiveModel {
         domain: Set(domain),
         reason: Set(Some(reason.to_owned())),
         source: Set(BlockSource::Manual.as_str().to_owned()),
         added_by: Set(added_by),
         ..Default::default()
-    }
-    .insert(db)
-    .await?;
+    };
+
+    blocked_emails_domains::Entity::insert(entry)
+        .on_conflict(
+            OnConflict::column(blocked_emails_domains::Column::Domain)
+                .update_columns([
+                    blocked_emails_domains::Column::Source,
+                    blocked_emails_domains::Column::Reason,
+                    blocked_emails_domains::Column::AddedBy,
+                    blocked_emails_domains::Column::AddedAt,
+                ])
+                .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
 
     Ok(())
 }

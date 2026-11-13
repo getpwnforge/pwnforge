@@ -5,10 +5,11 @@
 //! Two distinct mechanisms live here, and conflating them is the mistake to
 //! avoid:
 //!
-//! - **Formation.** Registration requires an explicit checkbox. An account
-//!   that never accepted anything is blocked until it does, because the very
-//!   clause allowing tacit acceptance sits inside the document it never
-//!   agreed to.
+//! - **Formation.** Registration requires an explicit checkbox, recorded in
+//!   the transaction that creates the account, and setup records the
+//!   operator's baseline the same way. No account exists without an
+//!   acceptance on record, which matters: the clause allowing tacit
+//!   acceptance sits inside the document, so it cannot form the agreement.
 //! - **Revision.** Once formed, article 23 of the terms makes continued use
 //!   count as acceptance after the notice period. No modal, but the tacit
 //!   acceptance is recorded so it can be proven.
@@ -17,7 +18,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use domain::entities::{legal_acceptances, users};
-use sea_orm::sea_query::Expr;
+use sea_orm::sea_query::{Expr, LockType};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
@@ -42,12 +43,6 @@ pub enum LegalError {
     /// re-prompts instead of silently accepting.
     #[error("submitted legal version is superseded")]
     VersionStale,
-
-    /// The account has never accepted the documents. Mapped to 403
-    /// `legal_acceptance_required`. Only reachable for accounts created
-    /// outside the registration form.
-    #[error("legal acceptance required")]
-    AcceptanceRequired,
 
     #[error(transparent)]
     Db(#[from] DbErr),
@@ -152,6 +147,7 @@ pub async fn record<C: ConnectionTrait>(
     .await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(
             match document {
                 LegalDocument::Terms => users::Column::LegalTermsVersion,
@@ -202,16 +198,52 @@ pub async fn record_both(
     Ok(())
 }
 
-/// Opens a transaction, delegates to `record_both`, commits.
+/// Records an explicit acceptance of both documents, for an existing account.
 /// Used by `POST /legal/accept`, which has no ambient transaction.
+///
+/// A document whose latest acceptance is already the submitted version gets
+/// no new row: a request replayed, or sent twice, records nothing more. The
+/// account's row is locked first, so two requests landing together cannot
+/// both read the version as new.
 pub async fn accept(
     conn: &DatabaseConnection,
     user_id: Uuid,
     input: &LegalAcceptanceInput,
     ctx: &SessionContext,
 ) -> Result<(), LegalError> {
+    validate_input(input)?;
+
     let txn = conn.begin().await?;
-    record_both(&txn, user_id, input, ctx).await?;
+
+    users::Entity::find_by_id(user_id)
+        .select_only()
+        .column(users::Column::Id)
+        .lock(LockType::NoKeyUpdate)
+        .into_tuple::<Uuid>()
+        .one(&txn)
+        .await?;
+
+    let accepted = latest_accepted(&txn, user_id).await?;
+
+    for (document, version) in [
+        (LegalDocument::Terms, &input.terms_version),
+        (LegalDocument::Privacy, &input.privacy_version),
+    ] {
+        if accepted.get(&document) == Some(version) {
+            continue;
+        }
+
+        record(
+            &txn,
+            user_id,
+            document,
+            version,
+            AcceptanceMethod::Explicit,
+            ctx,
+        )
+        .await?;
+    }
+
     txn.commit().await?;
 
     Ok(())

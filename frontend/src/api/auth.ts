@@ -1,5 +1,5 @@
 // src/api/auth.ts
-import { api } from "@/lib/api";
+import { api, endSession } from "@/lib/api";
 import { isUnauthorized, toApiError } from "@/lib/api-error";
 import type {
   ForgotPasswordPayload,
@@ -35,17 +35,20 @@ export async function login(payload: LoginPayload): Promise<User> {
 }
 
 /**
- * Creates the account. Deliberately does **not** open a session: the backend
- * returns 201 without cookies, the user must verify their email first.
+ * Creates the account, or not: the backend answers 202 with no body and no
+ * cookie whether the address was free or already had an account, and the
+ * address learns which by mail. Never opens a session either way.
  */
-export async function register(payload: RegisterPayload): Promise<User> {
-  const { data } = await api.post<User>("/auth/register", payload);
-  return data;
+export async function register(payload: RegisterPayload): Promise<void> {
+  await api.post("/auth/register", payload);
 }
 
-/** Revokes the refresh token server-side and clears the cookies. */
+/**
+ * Revokes the refresh token server-side and clears the cookies, once any
+ * refresh in flight has landed (see `endSession`).
+ */
 export async function logout(): Promise<void> {
-  await api.post("/auth/logout", null, { skipAuthRefresh: true });
+  await endSession(() => api.post("/auth/logout", null, { skipAuthRefresh: true }));
 }
 
 /**

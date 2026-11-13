@@ -75,7 +75,7 @@ const resources = {
 
 const namespaces = Object.keys(resources.en);
 
-i18n
+void i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({

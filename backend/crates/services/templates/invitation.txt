@@ -1,0 +1,16 @@
+{{ title }}
+
+{{ greeting }}
+
+{{ body }}
+
+{{ cta }}:
+{{ link }}
+
+{{ expiry }}
+{{ ignore_notice }}
+
+--
+{{ footer }}
+{{ footer_instance }} {{ public_url }}
+{{ footer_note }}

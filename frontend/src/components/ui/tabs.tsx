@@ -18,7 +18,7 @@ const TabsListContext: React.Context<TabsSize> =
 export function Tabs({
   className,
   ...props
-}: TabsPrimitive.Root.Props): React.ReactElement {
+}: Readonly<TabsPrimitive.Root.Props>): React.ReactElement {
   return (
     <TabsPrimitive.Root
       className={cn(
@@ -99,7 +99,7 @@ export function TabsTab({
 export function TabsPanel({
   className,
   ...props
-}: TabsPrimitive.Panel.Props): React.ReactElement {
+}: Readonly<TabsPrimitive.Panel.Props>): React.ReactElement {
   return (
     <TabsPrimitive.Panel
       className={cn("flex-1 outline-none", className)}

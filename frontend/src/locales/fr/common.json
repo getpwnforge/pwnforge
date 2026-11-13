@@ -123,6 +123,25 @@
     "permission": "Permission",
     "permissions": "Permissions"
   },
+  "roles": {
+    "owner": "Owner",
+    "captain": "Captain",
+    "admin": "Admin",
+    "member": "Member",
+    "viewer": "Viewer"
+  },
+  "roleSources": {
+    "override": "Rôle fixé sur ce workspace, à la place de celui de l'équipe",
+    "guest": "Invité : ne fait pas partie de l'équipe du workspace"
+  },
+  "colors": {
+    "ember": "Braise",
+    "blue": "Bleu",
+    "violet": "Violet",
+    "teal": "Bleu canard",
+    "rose": "Rose",
+    "amber": "Ambre"
+  },
   "state": {
     "active": "Actif",
     "activeFeminine": "Active",
@@ -203,6 +222,19 @@
     "readMore": "En savoir plus",
     "dismiss": "Ignorer l'alerte"
   },
+  "confirm": {
+    "typeToConfirm": "Tapez <code>{{text}}</code> pour confirmer"
+  },
+  "invitations": {
+    "title": "Invitations en attente",
+    "none": "Aucune invitation en attente",
+    "by": "Invité par {{who}}",
+    "expires": "Expire",
+    "accept": "Accepter",
+    "reject": "Refuser",
+    "acceptNamed": "Accepter l'invitation dans {{name}}",
+    "rejectNamed": "Refuser l'invitation dans {{name}}"
+  },
   "legal": {
     "lastUpdated": "Dernière mise à jour :",
     "version": "version",
@@ -215,5 +247,55 @@
     "read": "Lire",
     "acceptNow": "Accepter maintenant",
     "dismiss": "Fermer"
+  },
+  "notFound": {
+    "title": "Page introuvable",
+    "description": "La page que vous recherchez n'existe pas ou a été déplacée.",
+    "back": "Retour à la page précédente",
+    "home": "Retour à l'accueil"
+  },
+  "invitationLink": {
+    "tabTitle": "Invitation",
+    "team": {
+      "eyebrow": "Invitation à une équipe",
+      "title": "Rejoindre {{name}}",
+      "lead": "{{author}} vous invite à rejoindre l'équipe.",
+      "leadNoAuthor": "Vous êtes invité à rejoindre l'équipe.",
+      "join": "Rejoindre l'équipe"
+    },
+    "workspace": {
+      "eyebrow": "Invitation à un workspace",
+      "title": "Rejoindre {{name}}",
+      "lead": "{{author}} vous invite comme invité de ce workspace.",
+      "leadNoAuthor": "Vous êtes invité comme invité de ce workspace.",
+      "join": "Rejoindre le workspace"
+    },
+    "expires": "Expire",
+    "later": "Plus tard",
+    "home": "Retour à l'app",
+    "signedInAs": "Connecté en tant que",
+    "switchAccount": "Changer de compte",
+    "alreadyMember": "Vous faites déjà partie de {{name}}.",
+    "anonymous": {
+      "title": "Vous avez reçu une invitation",
+      "team": "Connectez-vous pour voir qui vous invite et rejoindre l'équipe.",
+      "workspace": "Connectez-vous pour voir qui vous invite et rejoindre le workspace.",
+      "signIn": "Se connecter",
+      "register": "Créer un compte",
+      "hint": "Une fois connecté, rouvrez ce lien. Une invitation reçue par mail vous attend aussi dans vos invitations en attente."
+    },
+    "invalid": {
+      "title": "Ce lien ne fonctionne plus",
+      "text": "Il ne mène à aucune invitation que vous pouvez accepter.",
+      "reasons": "Cela arrive quand le lien :",
+      "expired": "a expiré ou a été révoqué ;",
+      "usedUp": "a déjà servi autant de fois que prévu ;",
+      "otherAccount": "était destiné à un autre compte.",
+      "pending": "Voir mes invitations en attente"
+    },
+    "missing": {
+      "title": "Ce lien est incomplet",
+      "text": "Il manque la fin du lien. Copiez-le en entier depuis le mail ou le message reçu, puis rouvrez-le."
+    }
   }
 }

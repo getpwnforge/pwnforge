@@ -1,0 +1,18 @@
+# Build context of the frontend image (docker compose and docker-build.yml use
+# ./frontend as the context). Keeps local artifacts, secrets and history out of
+# it: a local node_modules copied by `COPY . .` makes `pnpm install` in the
+# build stage refuse to replace it, and an .env would end up in a layer.
+
+# Local install and build output.
+node_modules
+**/node_modules
+dist
+
+# Local configuration and secrets; the examples stay, they hold no values.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Version control.
+.git
+**/.git

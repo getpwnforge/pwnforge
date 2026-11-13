@@ -2,17 +2,26 @@ use crate::{
     audit_service::{self, AuditContext, AuditError},
     auth_service,
     auth_token_service::{self, AuthTokenError},
+    background::Shutdown,
     config::Config,
     email_service::{self, EmailError},
     password_service::{self, PasswordError},
     session_service::{self, SessionError, revoke_all},
+    storage_service::{AvatarKind, ObjectStore, ObjectsToPurge},
+    suspension_cache,
+    team_service::{self, Succession, TeamError},
+    workspace_service::{self, WorkspaceError},
 };
-use chrono::{Duration, Utc};
-use domain::entities::users;
-use redis::{AsyncCommands, aio::ConnectionManager};
+use chrono::{DateTime, Duration, Utc};
+use domain::dto::workspace::WorkspaceMode;
+use domain::entities::{legal_acceptances, user_emails, users, workspaces};
+use domain::legal::AcceptanceMethod;
+use redis::aio::ConnectionManager;
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait,
-    QueryFilter, QuerySelect, TransactionTrait, prelude::DateTimeWithTimeZone, sea_query::Expr,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, ExprTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select, Statement, TransactionTrait,
+    prelude::DateTimeWithTimeZone,
+    sea_query::{Expr, Query},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -35,6 +44,16 @@ pub enum AdminError {
     #[error("self target")]
     SelfTarget,
 
+    /// An account selected by `purge_unverified_accounts` that no longer
+    /// meets its criteria once locked: verified, or promoted, meanwhile.
+    #[error("account no longer meets the purge criteria")]
+    NoLongerPurgeable,
+
+    /// A deletion request for the Captain of teams that have other members,
+    /// named here by slug: each needs its Captain role transferred first.
+    #[error("captain of teams with other members, transfer first: {}", .teams.join(", "))]
+    CaptainMustTransfer { teams: Vec<String> },
+
     #[error(transparent)]
     Session(#[from] SessionError),
 
@@ -52,6 +71,14 @@ pub enum AdminError {
 
     #[error(transparent)]
     Password(#[from] PasswordError),
+
+    /// Deleting an account's solo workspaces failed.
+    #[error(transparent)]
+    Workspace(#[from] WorkspaceError),
+
+    /// Handing on or deleting a team the account is Captain of failed.
+    #[error(transparent)]
+    Team(#[from] TeamError),
 }
 
 /// Suspends an account, optionally until a date.
@@ -78,6 +105,7 @@ pub async fn suspend_user(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::SuspendedAt, Expr::current_timestamp())
         .col_expr(users::Column::SuspendedUntil, Expr::value(until))
         .col_expr(
@@ -125,7 +153,9 @@ pub async fn suspend_user(
 
     txn.commit().await?;
 
-    invalidate_suspension_cache(redis, user.id).await;
+    // The suspended state, not a deletion of the entry: a request that read
+    // the account before this commit could otherwise cache it as active again.
+    suspension_cache::store_blocked(db, redis, user.id).await;
 
     // Send an email alert to the user, if they have a primary email. This is best-effort: the account is already suspended, and the transaction has committed.
     if let Some(email) = primary_email {
@@ -179,6 +209,7 @@ pub async fn unsuspend_user(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(
             users::Column::SuspendedAt,
             Expr::value(None::<DateTimeWithTimeZone>),
@@ -217,7 +248,7 @@ pub async fn unsuspend_user(
 
     txn.commit().await?;
 
-    invalidate_suspension_cache(redis, user.id).await;
+    suspension_cache::clear(redis, user.id).await;
 
     if let Some(primary_email) = primary_email
         && let Err(err) = email_service::send_account_notice(
@@ -239,6 +270,7 @@ pub async fn unsuspend_user(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeletionKind {
     Standard,
     IllicitContent,
@@ -255,21 +287,34 @@ impl DeletionKind {
     }
 }
 
+/// What an administrator asks for when deleting an account.
+pub struct DeletionRequest<'a> {
+    pub kind: DeletionKind,
+    pub reason: Option<&'a str>,
+}
+
 /// Deletes or schedules the deletion of an account, depending on `kind`.
 /// `Standard` opens the 30-day grace period promised in the Terms (§16.5):
 /// the row is marked, not removed, and a cron job (`purge_scheduled_deletions`)
 /// performs the actual cascade delete once `purge_scheduled_at` is reached.
 /// `IllicitContent`/`SecurityThreat` bypass the grace period entirely, same
 /// immediate cascade as before.
+///
+/// A `Standard` request is refused while the account is the Captain of a
+/// team that has other members: the role goes to one of them by transfer
+/// first. An immediate deletion does not wait for that, and hands each such
+/// team to a successor itself (see `delete_account_rows`).
 pub async fn delete_user(
     db: &DatabaseConnection,
     redis: &mut ConnectionManager,
+    store: &ObjectStore,
     config: &Config,
     ctx: &AuditContext,
     user_id: Uuid,
-    kind: DeletionKind,
-    reason: Option<&str>,
+    request: DeletionRequest<'_>,
 ) -> Result<(), AdminError> {
+    let DeletionRequest { kind, reason } = request;
+
     let user = users::Entity::find_by_id(user_id)
         .one(db)
         .await?
@@ -279,19 +324,35 @@ pub async fn delete_user(
         return Err(AdminError::SelfTarget);
     }
 
-    if user.is_instance_admin && admin_count(db).await? == 1 {
-        return Err(AdminError::LastAdmin);
-    }
-
     let primary_email = auth_service::primary_email(db, user.id).await?;
-
-    let txn = db.begin().await?;
 
     let purge_date: Option<DateTimeWithTimeZone> = match kind {
         DeletionKind::Standard => {
+            let txn = db.begin().await?;
+
+            // A scheduled account leaves the administrator count.
+            ensure_not_last_admin(&txn, user.id).await?;
+
+            // Locked before the check: a transfer naming this account Captain
+            // takes the same row, so it either lands first and is refused
+            // here, or waits and then finds the account scheduled.
+            users::Entity::find_by_id(user.id)
+                .lock_exclusive()
+                .one(&txn)
+                .await?
+                .ok_or(AdminError::UserNotFound)?;
+
+            let captained = team_service::captained_teams_with_others(&txn, user.id).await?;
+            if !captained.is_empty() {
+                return Err(AdminError::CaptainMustTransfer {
+                    teams: captained.into_iter().map(|team| team.slug).collect(),
+                });
+            }
+
             let purge_scheduled_at = (Utc::now() + Duration::days(30)).fixed_offset();
 
             users::Entity::update_many()
+                .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
                 .col_expr(
                     users::Column::PurgeScheduledAt,
                     Expr::value(purge_scheduled_at),
@@ -322,36 +383,27 @@ pub async fn delete_user(
             )
             .await?;
 
+            txn.commit().await?;
             Some(purge_scheduled_at)
         }
         DeletionKind::IllicitContent | DeletionKind::SecurityThreat => {
-            audit_service::record(
-                &txn,
-                domain::types::AuditAction::UserDeleteByAdmin,
+            let record = DeletionRecord {
+                action: domain::types::AuditAction::UserDeleteByAdmin,
                 ctx,
-                audit_service::AuditTarget {
-                    user_id: Some(user.id),
-                    team_id: None,
-                    workspace_id: None,
-                },
                 reason,
-                serde_json::json!({
-                    "kind": kind.as_str(),
-                    "username": user.username,
+                kind: DeletionCause::Requested(kind),
+                details: serde_json::json!({
                     "is_instance_admin": user.is_instance_admin,
                     "created_at": user.created_at,
                 }),
-            )
-            .await?;
+            };
 
-            users::Entity::delete_by_id(user.id).exec(&txn).await?;
+            delete_account(db, store, user.id, record).await?;
             None
         }
     };
 
-    txn.commit().await?;
-
-    invalidate_suspension_cache(redis, user.id).await;
+    suspension_cache::store_blocked(db, redis, user.id).await;
 
     if let Some(primary_email) = primary_email {
         let event_kind = match kind {
@@ -402,6 +454,7 @@ pub async fn cancel_deletion(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(
             users::Column::PurgeScheduledAt,
             Expr::value(None::<DateTimeWithTimeZone>),
@@ -474,6 +527,7 @@ pub async fn promote_admin(
     let txn = db.begin().await?;
 
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::IsInstanceAdmin, Expr::value(true))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
@@ -538,19 +592,22 @@ pub async fn demote_admin(
 
     let primary_email = auth_service::primary_email(db, user.id).await?;
 
-    let count = admin_count(db).await?;
-    if count == 1 {
-        return Err(AdminError::LastAdmin);
+    // Transaction: clear is_instance_admin, record UserDemoteAdmin.
+    let txn = db.begin().await?;
+
+    let (user, count) = ensure_not_last_admin(&txn, user.id).await?;
+    // Demoted by another operation while this one waited on the lock.
+    if !user.is_instance_admin {
+        return Ok(());
     }
+    let counted = is_counted_admin(&user);
 
     if Some(user.id) == ctx.actor_id {
         return Err(AdminError::SelfTarget);
     }
 
-    // 4. Transaction: clear is_instance_admin, record UserDemoteAdmin.
-    let txn = db.begin().await?;
-
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::IsInstanceAdmin, Expr::value(false))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
@@ -568,7 +625,7 @@ pub async fn demote_admin(
         reason,
         serde_json::json!({
             "previous": { "is_instance_admin": user.is_instance_admin },
-            "admin_count_after": count - 1,
+            "admin_count_after": if counted { count - 1 } else { count },
         }),
     )
     .await?;
@@ -616,10 +673,23 @@ pub async fn force_password_reset(
 
     let txn = db.begin().await?;
 
+    // The account first, as every session write takes it (see
+    // `session_service::lock_user`): a reset by link in progress either
+    // finishes before this one, which then overrides it, or waits and finds
+    // its link spent below.
+    session_service::lock_user(&txn, user.id).await?;
+
     users::Entity::update_many()
+        .col_expr(users::Column::UpdatedAt, Expr::current_timestamp())
         .col_expr(users::Column::PasswordHash, Expr::value(locked_hash))
         .filter(users::Column::Id.eq(user.id))
         .exec(&txn)
+        .await?;
+
+    // In this transaction, not in `issue` after the commit: a reset link that
+    // outlived the forced reset, because the replacement could not be issued,
+    // would hand the account back to whoever held the old one.
+    auth_token_service::invalidate_pending(&txn, user.id, domain::types::TokenKind::PasswordReset)
         .await?;
 
     let session_count = revoke_all(
@@ -704,8 +774,12 @@ pub async fn revoke_sessions(
     Ok(revoked_count)
 }
 
-pub fn suspension_cache_key(user_id: Uuid) -> String {
-    format!("user:{user_id}:suspension")
+/// What one pass of `purge_scheduled_deletions` or
+/// `purge_unverified_accounts` did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PurgeOutcome {
+    pub purged: u64,
+    pub failed: u64,
 }
 
 /// Deletes every account past its purge deadline. Called from the periodic
@@ -713,59 +787,444 @@ pub fn suspension_cache_key(user_id: Uuid) -> String {
 ///
 /// Cannot be a single bulk DELETE like the token cleanups: each row needs its
 /// own UserPurged audit entry, same granularity as every other action here.
-pub async fn purge_scheduled_deletions(db: &DatabaseConnection) -> Result<u64, AdminError> {
+///
+/// Each account is deleted on its own. One that fails is logged and left for
+/// the next pass, and the accounts after it are still purged: the walk goes
+/// by id, past the failures, so one account that cannot be deleted can
+/// neither stop the pass nor be selected again until it ends.
+pub async fn purge_scheduled_deletions(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    shutdown: &Shutdown,
+) -> Result<PurgeOutcome, AdminError> {
+    let due = Utc::now();
+
+    purge_each(
+        db,
+        store,
+        shutdown,
+        users::Entity::find().filter(users::Column::PurgeScheduledAt.lte(due)),
+        domain::types::AuditAction::UserPurged,
+        // The request that scheduled it was a standard one.
+        DeletionCause::Requested(DeletionKind::Standard),
+    )
+    .await
+}
+
+/// How many days a new account has to verify an address before
+/// `purge_unverified_accounts` deletes it.
+pub const UNVERIFIED_ACCOUNT_DAYS: i32 = 7;
+
+/// Deletes every account that never verified an address in time, so that an
+/// address registered by someone who does not own it is not held forever:
+/// the owner could neither register with it nor sign in with it. Called from
+/// the periodic task in api/src/tasks/cleanup.rs.
+///
+/// The criteria are those of `never_verified`, checked again inside each
+/// deletion, under the account's locks: an address verified meanwhile keeps
+/// the account. Each deletion goes through `delete_account`, with an audit
+/// entry that names the account by id only. Like the scheduled purge, one
+/// account that fails does not stop the others.
+///
+/// It assumes that verifying an address is mandatory. An account signs in
+/// only with a verified address (`auth_service::authenticate` refuses any
+/// other, whatever the configuration), every session and access token comes
+/// from that sign-in, and an address stays verified once it is: an account
+/// this deletes has never been usable. Any future setting that relaxes the
+/// verification, or another way in such as an OAuth sign-in, must disable
+/// this purge as well.
+pub async fn purge_unverified_accounts(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    shutdown: &Shutdown,
+) -> Result<PurgeOutcome, AdminError> {
+    purge_each(
+        db,
+        store,
+        shutdown,
+        never_verified(),
+        domain::types::AuditAction::UserUnverifiedPurged,
+        DeletionCause::NeverVerified,
+    )
+    .await
+}
+
+/// The accounts `purge_unverified_accounts` deletes, on the database clock:
+/// those of `awaiting_verification` created more than
+/// `UNVERIFIED_ACCOUNT_DAYS` days ago.
+fn never_verified() -> Select<users::Entity> {
+    awaiting_verification().filter(Expr::col((users::Entity, users::Column::CreatedAt)).lt(
+        Expr::cust_with_values(
+            "now() - make_interval(days => $1)",
+            [UNVERIFIED_ACCOUNT_DAYS],
+        ),
+    ))
+}
+
+/// Every criterion of the purge but the age: the accounts it deletes once
+/// they are old enough.
+/// - with none of their addresses verified, ever: an address is never
+///   unverified once verified, so `verified_at` on each of them is the whole
+///   history, and an address added but not verified yet counts as none;
+/// - not an administrator;
+/// - not the account the setup created: it alone holds the operator's
+///   acceptance (`AcceptanceMethod::Operator`), which registration never
+///   records. The admin CLI creates no account.
+fn awaiting_verification() -> Select<users::Entity> {
+    users::Entity::find()
+        .filter(
+            users::Column::Id.not_in_subquery(
+                Query::select()
+                    .column(user_emails::Column::UserId)
+                    .from(user_emails::Entity)
+                    .and_where(user_emails::Column::VerifiedAt.is_not_null())
+                    .to_owned(),
+            ),
+        )
+        .filter(users::Column::IsInstanceAdmin.eq(false))
+        .filter(
+            users::Column::Id.not_in_subquery(
+                Query::select()
+                    .column(legal_acceptances::Column::UserId)
+                    .from(legal_acceptances::Entity)
+                    .and_where(
+                        legal_acceptances::Column::Method.eq(AcceptanceMethod::Operator.as_str()),
+                    )
+                    .to_owned(),
+            ),
+        )
+}
+
+/// When `purge_unverified_accounts` deletes this account, or `None` if it
+/// never will: verified, an administrator, or the setup's account. The pass
+/// runs every hour, so the account is gone within the hour that follows.
+pub async fn unverified_deletion_date(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<Option<DateTime<Utc>>, DbErr> {
+    let created_at: Option<DateTimeWithTimeZone> = awaiting_verification()
+        .filter(users::Column::Id.eq(user_id))
+        .select_only()
+        .column(users::Column::CreatedAt)
+        .into_tuple()
+        .one(db)
+        .await?;
+
+    Ok(
+        created_at
+            .map(|at| at.with_timezone(&Utc) + Duration::days(UNVERIFIED_ACCOUNT_DAYS.into())),
+    )
+}
+
+/// Deletes, one by one, every account `selection` finds, walking by id past
+/// the failures (see `purge_scheduled_deletions`), until `shutdown` is
+/// requested.
+async fn purge_each(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    shutdown: &Shutdown,
+    selection: Select<users::Entity>,
+    action: domain::types::AuditAction,
+    cause: DeletionCause,
+) -> Result<PurgeOutcome, AdminError> {
     const BATCH_SIZE: u64 = 1000;
-    let mut total = 0;
+    let mut outcome = PurgeOutcome::default();
+    let mut after: Option<Uuid> = None;
+
+    // System-initiated: no human actor behind a purge.
+    let ctx = AuditContext {
+        actor_id: None,
+        ip_address: None,
+        user_agent: None,
+    };
 
     loop {
-        let ids: Vec<Uuid> = users::Entity::find()
-            .select_only()
-            .column(users::Column::Id)
-            .filter(users::Column::PurgeScheduledAt.lte(Utc::now()))
-            .limit(BATCH_SIZE)
-            .into_tuple()
-            .all(db)
-            .await?;
-
-        if ids.is_empty() {
+        // A shutdown starts no new batch.
+        if shutdown.requested() {
             break;
         }
 
+        let mut batch = selection
+            .clone()
+            .select_only()
+            .column(users::Column::Id)
+            .order_by_asc(users::Column::Id)
+            .limit(BATCH_SIZE);
+        if let Some(after) = after {
+            batch = batch.filter(users::Column::Id.gt(after));
+        }
+        let ids: Vec<Uuid> = batch.into_tuple().all(db).await?;
+
+        let Some(last) = ids.last().copied() else {
+            break;
+        };
+
         for user_id in ids {
-            let txn = db.begin().await?;
-            // System-initiated: no human actor behind a scheduled purge.
-            let ctx = AuditContext {
-                actor_id: None,
-                ip_address: None,
-                user_agent: None,
+            // Nor a new account: each deletion is a transaction of its own,
+            // so the ones done so far stay done.
+            if shutdown.requested() {
+                return Ok(outcome);
+            }
+
+            let record = DeletionRecord {
+                action,
+                ctx: &ctx,
+                reason: None,
+                kind: cause,
+                details: serde_json::json!({}),
             };
 
-            audit_service::record(
-                &txn,
-                domain::types::AuditAction::UserPurged,
-                &ctx,
-                audit_service::AuditTarget {
-                    user_id: Some(user_id),
-                    team_id: None,
-                    workspace_id: None,
-                },
-                None,
-                serde_json::json!({}),
-            )
-            .await?;
-
-            users::Entity::delete_by_id(user_id).exec(&txn).await?;
-            txn.commit().await?;
-            total += 1;
+            match delete_account(db, store, user_id, record).await {
+                Ok(()) => outcome.purged += 1,
+                // Selected, then changed before its deletion: nothing failed.
+                Err(AdminError::NoLongerPurgeable) => {}
+                Err(error) => {
+                    tracing::error!(
+                        %user_id,
+                        ?error,
+                        cause = cause.as_str(),
+                        "purge of this account failed, moving on to the next"
+                    );
+                    outcome.failed += 1;
+                }
+            }
         }
 
+        after = Some(last);
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    Ok(total)
+    Ok(outcome)
 }
 
-/// Counts remaining administrators, used by demote_admin.
+/// Why `delete_account` deletes an account, as its audit entry records it.
+#[derive(Debug, Clone, Copy)]
+enum DeletionCause {
+    /// An administrator's request, carried out now or once its grace period
+    /// is over.
+    Requested(DeletionKind),
+    /// No address verified in time (see `purge_unverified_accounts`).
+    NeverVerified,
+}
+
+impl DeletionCause {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested(kind) => kind.as_str(),
+            Self::NeverVerified => "unverified",
+        }
+    }
+}
+
+/// The audit entry an account deletion writes, in the same transaction as
+/// the deletion itself.
+struct DeletionRecord<'a> {
+    action: domain::types::AuditAction,
+    ctx: &'a AuditContext,
+    reason: Option<&'a str>,
+    kind: DeletionCause,
+    /// More about the account, as a JSON object; `delete_account` adds its
+    /// id and `kind`. Never a username or an address: the entry outlives
+    /// the account, and must not keep what the deletion removes.
+    details: serde_json::Value,
+}
+
+/// Deletes one account and what is only its own, in one transaction, then
+/// purges their objects once it is committed. The only path that deletes a
+/// user row: the purges and the immediate deletions all come here.
+async fn delete_account(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    user_id: Uuid,
+    record: DeletionRecord<'_>,
+) -> Result<(), AdminError> {
+    let txn = db.begin().await?;
+
+    ensure_not_last_admin(&txn, user_id).await?;
+
+    if let DeletionCause::NeverVerified = record.kind {
+        ensure_still_never_verified(&txn, user_id).await?;
+    }
+
+    // The account's id goes in the entry's own data, not only in its target:
+    // `target_user_id` is set to NULL with the account, and the entry would
+    // no longer say whom it was about.
+    let mut meta = record.details;
+    meta["user_id"] = serde_json::json!(user_id);
+    meta["kind"] = serde_json::json!(record.kind.as_str());
+
+    audit_service::record(
+        &txn,
+        record.action,
+        record.ctx,
+        audit_service::AuditTarget {
+            user_id: Some(user_id),
+            team_id: None,
+            workspace_id: None,
+        },
+        record.reason,
+        meta,
+    )
+    .await?;
+
+    let objects = delete_account_rows(&txn, user_id, record.ctx).await?;
+    txn.commit().await?;
+
+    store.purge(objects).await;
+    Ok(())
+}
+
+/// The database half of `delete_account`: the account's solo workspaces, the
+/// teams it is still Captain of, then the account. Returns every object to
+/// purge once the caller has committed.
+///
+/// A team it is still Captain of goes with it when it was the only member,
+/// and otherwise gets a successor (`team_service::succeed_captain`), each
+/// promotion audited under `ctx`. For the scheduled purge this is a safety
+/// net: the request was refused while the account captained a team with
+/// other members, but the team may have changed since. A team the account
+/// merely belongs to is not touched; its membership goes with the account
+/// through the cascade.
+async fn delete_account_rows<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+    ctx: &AuditContext,
+) -> Result<ObjectsToPurge, AdminError> {
+    // Locked first: a solo workspace or a team created for this account
+    // meanwhile waits on this row, then fails on its foreign key, rather than
+    // landing between the lookups below and the delete.
+    users::Entity::find_by_id(user_id)
+        .lock_exclusive()
+        .one(conn)
+        .await?
+        .ok_or(AdminError::UserNotFound)?;
+
+    let mut objects = ObjectsToPurge::default();
+
+    let solo_workspaces: Vec<Uuid> = workspaces::Entity::find()
+        .select_only()
+        .column(workspaces::Column::Id)
+        .filter(workspaces::Column::Mode.eq(WorkspaceMode::Solo.as_str()))
+        .filter(workspaces::Column::OwnerId.eq(user_id))
+        .into_tuple()
+        .all(conn)
+        .await?;
+    for workspace_id in solo_workspaces {
+        objects.add(workspace_service::delete_workspace_rows(conn, workspace_id).await?);
+    }
+
+    for team_id in team_service::captained_teams(conn, user_id).await? {
+        match team_service::succeed_captain(conn, team_id, user_id).await? {
+            Succession::TeamDeleted(team_objects) => objects.add(team_objects),
+            Succession::NoLongerCaptain => {}
+            Succession::Promoted(successor) => {
+                audit_service::record(
+                    conn,
+                    domain::types::AuditAction::TeamCaptainPromoted,
+                    ctx,
+                    audit_service::AuditTarget {
+                        user_id: Some(successor),
+                        team_id: Some(team_id),
+                        workspace_id: None,
+                    },
+                    None,
+                    // The departing Captain is named here only, by id: the
+                    // account is gone once this commits.
+                    serde_json::json!({ "previous_captain": user_id }),
+                )
+                .await?;
+            }
+        }
+    }
+
+    objects.add(ObjectsToPurge::avatar(AvatarKind::User, user_id));
+    users::Entity::delete_by_id(user_id).exec(conn).await?;
+
+    Ok(objects)
+}
+
+/// Refuses, with `NoLongerPurgeable`, to purge an account that no longer
+/// meets the criteria of `never_verified`, read again in the deletion's own
+/// transaction. The account's row and its addresses are locked first: a
+/// promotion or a verification landing now either commits before, and is
+/// seen here, or waits and finds the account gone.
+async fn ensure_still_never_verified<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<(), AdminError> {
+    users::Entity::find_by_id(user_id)
+        .select_only()
+        .column(users::Column::Id)
+        .lock_exclusive()
+        .into_tuple::<Uuid>()
+        .one(conn)
+        .await?;
+    user_emails::Entity::find()
+        .select_only()
+        .column(user_emails::Column::Id)
+        .filter(user_emails::Column::UserId.eq(user_id))
+        .lock_exclusive()
+        .into_tuple::<Uuid>()
+        .all(conn)
+        .await?;
+
+    let still = never_verified()
+        .filter(users::Column::Id.eq(user_id))
+        .select_only()
+        .column(users::Column::Id)
+        .into_tuple::<Uuid>()
+        .one(conn)
+        .await?;
+
+    still.map(|_| ()).ok_or(AdminError::NoLongerPurgeable)
+}
+
+/// Key of the advisory lock that every operation taking an administrator out
+/// of the count holds for its transaction (see `ensure_not_last_admin`).
+/// Arbitrary but fixed: nothing else in the instance takes this key.
+pub const ADMIN_QUORUM_LOCK: i64 = 0x7077_6e66_6164_6d6e;
+
+/// Refuses to take `user_id` out of the administrator count when it is the
+/// last one in it, and returns the account as read under the lock, with the
+/// count. Called by every such operation (a demotion, a deletion request, an
+/// account deletion) in its own transaction, before it writes anything.
+///
+/// The quorum lock comes first: two removals in flight would otherwise each
+/// count the other administrator, and both go through. It holds until the
+/// transaction ends, so the next removal counts once this one is committed.
+async fn ensure_not_last_admin<C: ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<(users::Model, u64), AdminError> {
+    conn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT pg_advisory_xact_lock($1)",
+        [ADMIN_QUORUM_LOCK.into()],
+    ))
+    .await?;
+
+    let user = users::Entity::find_by_id(user_id)
+        .one(conn)
+        .await?
+        .ok_or(AdminError::UserNotFound)?;
+    let count = admin_count(conn).await?;
+
+    if is_counted_admin(&user) && count == 1 {
+        return Err(AdminError::LastAdmin);
+    }
+
+    Ok((user, count))
+}
+
+/// Whether `user` is one of the administrators `admin_count` counts. The
+/// last-admin guards apply to those only: an admin scheduled for deletion is
+/// already out of the count, so removing them leaves it where it is.
+fn is_counted_admin(user: &users::Model) -> bool {
+    user.is_instance_admin && user.purge_scheduled_at.is_none()
+}
+
+/// Counts remaining administrators, used by `ensure_not_last_admin` and
+/// `promote_admin`.
 async fn admin_count<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
     // Counts users where is_instance_admin is true and purge_scheduled_at is null, to avoid counting admins that are scheduled for deletion.
     users::Entity::find()
@@ -773,16 +1232,4 @@ async fn admin_count<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
         .filter(users::Column::PurgeScheduledAt.is_null())
         .count(db)
         .await
-}
-
-/// Drops the cached suspension state so a decision applies immediately.
-///
-/// Best effort by design: the cache is an optimisation, and its TTL bounds
-/// the damage of a failure here to thirty seconds.
-async fn invalidate_suspension_cache(redis: &mut ConnectionManager, user_id: Uuid) {
-    let key = suspension_cache_key(user_id);
-
-    if let Err(err) = redis.del::<_, ()>(&key).await {
-        tracing::warn!(error = ?err, %user_id, "failed to invalidate suspension cache");
-    }
 }

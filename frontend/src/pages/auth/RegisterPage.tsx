@@ -27,12 +27,12 @@ import { TurnstileWidget } from "@/components/common/TurnstileWidget";
  * Which input a server rejection belongs under.
  *
  * These are the rules the client cannot check for itself: taken and reserved
- * usernames, blocked email domains, passwords found in a breach corpus.
+ * usernames, blocked email domains, passwords found in a breach corpus. A
+ * taken address is not one of them: registration never says.
  */
 const FIELD_BY_CODE: Record<string, keyof RegisterValues> = {
   username_taken: "username",
   username_reserved: "username",
-  email_taken: "email",
   invalid_email: "email",
   email_domain_not_allowed: "email",
   password_compromised: "password",
@@ -53,6 +53,11 @@ function RegistrationSuccess({ email }: Readonly<{ email: string }>) {
         <p className="text-sm text-muted-foreground">
           {t("auth:register.success.description", { email })}
         </p>
+        {/* The same page whether the address was free or not: the answer
+            never says, and the mail sent to the address does. */}
+        <p className="text-sm text-muted-foreground">
+          {t("auth:register.success.existingAccount")}
+        </p>
       </div>
       <Button asChild variant="secondary" size="lg" className="w-full">
         <Link to={ROUTES.login}>{t("auth:register.success.backToLogin")}</Link>
@@ -66,7 +71,7 @@ function RegistrationSuccess({ email }: Readonly<{ email: string }>) {
  *
  * Two shapes reach here: a semantic code from the table above, and a 422 whose
  * `fields` breakdown names the offending validator. Only the composition rule
- * is worth reading out of the second — every other rule in it is enforced by
+ * is worth reading out of the second: every other rule in it is enforced by
  * the schema, so seeing one means client and server have drifted apart.
  */
 function fieldForError(
@@ -89,10 +94,10 @@ export function RegisterPage() {
   const { register: createAccount } = useAuth();
 
   const [termsAccepted, setTermsAccepted] = useState(false);
-  // Set once the account exists; also the address the verification mail went to.
+  // Set once the registration is answered; also the address the mail went to.
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const turnstile = useTurnstile();
+  const turnstile = useTurnstile("register");
   usePageTitle(t("auth:register.tabTitle"));
 
   const {
@@ -117,7 +122,7 @@ export function RegisterPage() {
   const submit = useMutation({
     mutationFn: (values: RegisterValues) =>
       createAccount({ ...values, legal: legalVersions!, turnstile_token: turnstile.token ?? "" }),
-    onSuccess: (_user, values) => setRegisteredEmail(values.email),
+    onSuccess: (_answer, values) => setRegisteredEmail(values.email),
     onError: (error) => {
       turnstile.reset();
 
@@ -137,11 +142,11 @@ export function RegisterPage() {
     },
   });
 
-  // Anything that did not land under an input — rate limit, backend down —
+  // Anything that did not land under an input (rate limit, backend down)
   // still has to be visible somewhere.
   const bannerError = submit.error && !fieldForError(submit.error) ? submit.error : null;
 
-  // Registering does not open a session — the account is unusable until the
+  // Registering does not open a session: the account is unusable until the
   // address is verified, so the only next step is the inbox.
   if (registeredEmail) {
     return <RegistrationSuccess email={registeredEmail} />;
@@ -247,7 +252,16 @@ export function RegisterPage() {
           </span>
         </div>
 
-        <TurnstileWidget siteKey={turnstile.siteKey} widgetRef={turnstile.ref} onSuccess={turnstile.setToken} />
+        <TurnstileWidget
+          siteKey={turnstile.siteKey}
+          action={turnstile.action}
+          configError={turnstile.configError}
+          issue={turnstile.issue}
+          widgetRef={turnstile.ref}
+          onSuccess={turnstile.onSuccess}
+          onError={turnstile.onError}
+          onExpire={turnstile.onExpire}
+        />
 
         <Button
           type="submit"

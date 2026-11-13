@@ -23,13 +23,11 @@ cd "${BACKEND_DIR}"
 # Environment
 # ---------------------------------------------------------------------------
 
-if [[ -z "${DATABASE_URL:-}" ]]; then
-    if [[ -f "${REPO_ROOT}/.env" ]]; then
-        set -a
-        # shellcheck disable=SC1091
-        source "${REPO_ROOT}/.env"
-        set +a
-    fi
+if [[ -z "${DATABASE_URL:-}" && -f "${REPO_ROOT}/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "${REPO_ROOT}/.env"
+    set +a
 fi
 
 if [[ -z "${DATABASE_URL:-}" ]]; then
@@ -154,9 +152,82 @@ fi
 # The cast is not needed for reads: citext decodes as text without it.
 # See https://github.com/SeaQL/sea-orm/discussions/1750 and https://github.com/SeaQL/sea-orm/issues/3174
 
-echo "==> Patch 5: removing 'select_as' on citext columns"
+# FIXED in SeaORM 2.0.3
 
-perl -0pi -e 's/\s*select_as = "text",//g' "$ENTITIES_DIR"/*.rs
+# echo "==> Patch 5: removing 'select_as' on citext columns"
+
+# perl -0pi -e 's/\s*select_as = "text",//g' "$ENTITIES_DIR"/*.rs
+
+# ---------------------------------------------------------------------------
+# Patch 6: readable relation names, and Related<users> on membership tables
+# ---------------------------------------------------------------------------
+# Several tables have more than one foreign key to users. The generator names
+# those relations Users1, Users2... in no reliable order, and emits no
+# Related<users::Entity> at all. Each relation is renamed after its column.
+# On team_members and workspace_members the member path (user_id) becomes the
+# Related impl, which find_also_related(users::Entity) relies on; the other
+# paths are reached with explicit joins, e.g. Relation::InvitedBy.def().
+
+echo "==> Patch 6: naming users relations after their column"
+
+rename_users_relation() {
+    local file="$1" column="$2" variant="$3"
+    COL="${column}" VAR="${variant}" perl -0777 -pi -e '
+      s{(\#\[sea_orm\(\s*belongs_to\s*=\s*"super::users::Entity",\s*from\s*=\s*"Column::$ENV{COL}".*?\)\]\s*)\w+,}{$1$ENV{VAR},}s
+    ' "${file}"
+    if ! grep -qE "^\s*${variant},\$" "${file}"; then
+        echo "    error: relation ${variant} (Column::${column}) not found in ${file}." >&2
+        exit 1
+    fi
+}
+
+for table in team_members workspace_members; do
+    file="${ENTITIES_DIR}/${table}.rs"
+    rename_users_relation "${file}" UserId User
+    rename_users_relation "${file}" InvitedBy InvitedBy
+    perl -0777 -pi -e '
+      s|^impl ActiveModelBehavior for ActiveModel \{\}|impl Related<super::users::Entity> for Entity {\n    fn to() -> RelationDef {\n        Relation::User.def()\n    }\n}\n\nimpl ActiveModelBehavior for ActiveModel {}|m
+        unless /impl Related<super::users::Entity> for Entity/;
+    ' "${file}"
+done
+
+INVITATIONS_FILE="${ENTITIES_DIR}/workspace_invitations.rs"
+rename_users_relation "${INVITATIONS_FILE}" InvitedUserId InvitedUser
+rename_users_relation "${INVITATIONS_FILE}" InvitedBy InvitedBy
+rename_users_relation "${INVITATIONS_FILE}" AcceptedBy AcceptedBy
+
+# ---------------------------------------------------------------------------
+# Patch 7: Related between teams/workspaces and users follows the direct key
+# ---------------------------------------------------------------------------
+# teams and workspaces reach users two ways: their own key (teams.created_by,
+# workspaces.owner_id) or a junction table (team_members, workspace_favorites).
+# The generator picks one per run, and its pick has flipped, which silently
+# changes what find_related returns. The has_many on users already follows the
+# direct key and needs the reverse impl, so both sides are pinned to it.
+# Membership and favorites are queried through their own entities.
+
+echo "==> Patch 7: pinning Related between teams/workspaces and users to the direct key"
+
+set_related() {
+    local file="$1" target="$2" variant="$3"
+    TARGET="${target}" VARIANT="${variant}" perl -0777 -pi -e '
+      s{\nimpl Related<super::$ENV{TARGET}::Entity> for Entity \{\n.*?\n\}\n}{\n}s;
+      s{^impl ActiveModelBehavior for ActiveModel \{\}}{impl Related<super::$ENV{TARGET}::Entity> for Entity {\n    fn to() -> RelationDef {\n        Relation::$ENV{VARIANT}.def()\n    }\n}\n\nimpl ActiveModelBehavior for ActiveModel {}}m;
+    ' "${file}"
+}
+
+set_related "${ENTITIES_DIR}/teams.rs" users Users
+set_related "${ENTITIES_DIR}/users.rs" teams Teams
+set_related "${ENTITIES_DIR}/workspaces.rs" users Users
+set_related "${ENTITIES_DIR}/users.rs" workspaces Workspaces
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+# The committed entities are rustfmt'ed; the generator and the patches are not.
+
+echo "==> Formatting"
+cargo fmt -p domain
 
 # ---------------------------------------------------------------------------
 # Verification

@@ -1,0 +1,1401 @@
+// backend/crates/services/src/workspace_service.rs
+
+use domain::dto::team::{TeamRole, TeamSummary};
+use domain::dto::workspace::{
+    CreateWorkspaceInput, EffectiveMember, ExcludedMember, Membership, Platform,
+    UpdateWorkspaceInput, WorkspaceMode, WorkspaceSummary, WorkspaceType, WriteupVisibility,
+};
+use domain::entities::{
+    team_members, teams, users, workspace_favorites, workspace_members, workspaces,
+};
+
+use chrono::{DateTime, Utc};
+use sea_orm::sea_query::LockType;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QuerySelect, Set, TransactionTrait,
+};
+use std::str::FromStr;
+use uuid::Uuid;
+
+use crate::storage_service::{AvatarKind, ObjectStore, ObjectsToPurge};
+use crate::{permissions_service, slug_service, team_service, workspace_invitation_service};
+
+#[derive(Debug, thiserror::Error)]
+pub enum WorkspaceError {
+    #[error(transparent)]
+    Db(#[from] sea_orm::DbErr),
+
+    #[error(transparent)]
+    Slug(#[from] slug_service::SlugError),
+
+    #[error(transparent)]
+    Team(#[from] team_service::TeamError),
+
+    #[error(transparent)]
+    Permissions(#[from] permissions_service::PermissionsError),
+
+    #[error("workspace not found")]
+    WorkspaceNotFound,
+
+    #[error("input does not satisfy ck_workspaces_ownership")]
+    InvalidOwnership,
+
+    #[error("workspace {0} has an unrecognized type or mode value in the database")]
+    DataIntegrity(Uuid),
+
+    #[error("user is not a member of this workspace's team")]
+    TargetNotInTeam,
+
+    #[error("user is already a member of this workspace's team, so cannot be a guest of it")]
+    TargetAlreadyInTeam,
+
+    #[error("a solo workspace has no members to override")]
+    SoloWorkspace,
+
+    /// The target is neither on the workspace's team nor a guest of it,
+    /// which is all this says: not whether the account exists.
+    #[error("no such member of this workspace")]
+    MemberNotFound,
+
+    #[error("nobody changes their own access to a workspace")]
+    TargetIsSelf,
+
+    #[error("nobody changes the Captain's access to a workspace")]
+    TargetIsCaptain,
+
+    /// An Admin acting on someone at or above Admin, before or after the
+    /// change, or a role below Admin the caller holds.
+    #[error("caller's role does not permit this action")]
+    InsufficientRole,
+
+    #[error("a guest's role is at most member")]
+    GuestRoleAboveMember,
+
+    #[error("the workspace is archived and read-only")]
+    Archived,
+
+    /// The Captain leaving a team workspace: they hold every workspace of
+    /// the team, so the way out is transferring the team first.
+    #[error("the captain cannot leave a team workspace")]
+    CaptainMustTransfer,
+
+    #[error("ends_at must be after starts_at")]
+    InvalidDateRange,
+
+    #[error("a platform workspace must name its platform")]
+    PlatformRequired,
+
+    #[error("event_url is not an absolute http(s) URL of at most 2048 characters")]
+    InvalidEventUrl,
+}
+
+/// Minimum team role required to create a workspace under `team`: Admin, or
+/// Member when the team lets its members create workspaces. A Viewer never
+/// can, whatever the setting.
+///
+/// The creator gets nothing beyond their team role: no override is written,
+/// so a Member who creates a workspace is a Member on it, and turning the
+/// setting off later leaves the workspace as it is.
+fn min_role_to_create_workspace(team: &teams::Model) -> TeamRole {
+    if team.members_can_create_workspaces {
+        TeamRole::Member
+    } else {
+        TeamRole::Admin
+    }
+}
+
+/// Mirrors `ck_workspaces_event_url`; both count characters, not bytes.
+const EVENT_URL_MAX_CHARS: usize = 2048;
+
+/// The URL as it will be stored: parsed and normalised (lowercase scheme and
+/// host, punycode), absolute, http or https, with a host and no credentials.
+/// A blank string clears it. Never a `javascript:` or `data:` link, since the
+/// frontend renders it as one.
+fn normalize_event_url(raw: &str) -> Result<Option<String>, WorkspaceError> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let url = reqwest::Url::parse(raw).map_err(|_| WorkspaceError::InvalidEventUrl)?;
+    let valid = matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some_and(|host| !host.is_empty())
+        && url.username().is_empty()
+        && url.password().is_none();
+    let stored = String::from(url);
+    if !valid || stored.chars().count() > EVENT_URL_MAX_CHARS {
+        return Err(WorkspaceError::InvalidEventUrl);
+    }
+    Ok(Some(stored))
+}
+
+/// Creates a workspace, either solo (owned directly by `actor_id`) or under
+/// a team, and returns the persisted row with the creator's access to it.
+///
+/// That access comes from `admit`, the decision every other route reads,
+/// rather than from what this function already knows about the creator: the
+/// rule exists once, here as elsewhere.
+pub async fn create_workspace(
+    db: &DatabaseConnection,
+    actor_id: Uuid,
+    input: CreateWorkspaceInput,
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
+    validate_ownership(input.mode, input.team_id)?;
+    validate_platform(input.r#type, input.platform)?;
+    validate_date_range(input.starts_at, input.ends_at)?;
+
+    let (team_id, owner_id) = match input.mode {
+        WorkspaceMode::Team => (input.team_id, None),
+        WorkspaceMode::Solo => (None, Some(actor_id)),
+    };
+
+    if let WorkspaceMode::Team = input.mode {
+        let team_id =
+            team_id.expect("validate_ownership guarantees team_id is Some for WorkspaceMode::Team");
+        // The team, not a workspace, is what a non-member is asking about, so
+        // the answer is the one the team routes give: `team_not_found`, the
+        // same whether the team exists or not.
+        let role = team_service::get_user_role_in_team(db, team_id, actor_id)
+            .await?
+            .ok_or(team_service::TeamError::TeamNotFound)?;
+        // Read without a lock, as the role above: a creation racing with the
+        // setting being turned off lands as one made just before it, which
+        // turning it off leaves in place anyway.
+        let team = teams::Entity::find_by_id(team_id)
+            .one(db)
+            .await?
+            .ok_or(team_service::TeamError::TeamNotFound)?;
+        team_service::require_role(role, min_role_to_create_workspace(&team))?;
+    }
+
+    let slug = slug_service::generate_unique_slug(&input.name, move |candidate| async move {
+        Ok(workspaces::Entity::find()
+            .filter(workspaces::Column::Slug.eq(candidate))
+            .one(db)
+            .await?
+            .is_some())
+    })
+    .await?;
+
+    let workspace = workspaces::ActiveModel {
+        name: Set(input.name),
+        slug: Set(slug),
+        description: Set(input.description),
+        color: Set(input.color.as_str().to_string()),
+        r#type: Set(input.r#type.as_str().to_string()),
+        platform: Set(input.platform.map(|p| p.as_str().to_string())),
+        mode: Set(input.mode.as_str().to_string()),
+        team_id: Set(team_id),
+        owner_id: Set(owner_id),
+        starts_at: Set(input.starts_at.map(Into::into)),
+        ends_at: Set(input.ends_at.map(Into::into)),
+        lock_after_end: Set(input.lock_after_end.unwrap_or(true)),
+        default_writeup_visibility: Set(input
+            .default_writeup_visibility
+            .unwrap_or(WriteupVisibility::Draft)
+            .as_str()
+            .to_string()),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
+
+    admit(db, workspace, actor_id).await
+}
+
+pub async fn get_workspace_by_slug(
+    db: &DatabaseConnection,
+    slug: &str,
+) -> Result<workspaces::Model, WorkspaceError> {
+    let workspace = workspaces::Entity::find()
+        .filter(workspaces::Column::Slug.eq(slug))
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    Ok(workspace)
+}
+
+/// Resolves a workspace by slug and the caller's membership as a single
+/// unit, mirroring `team_service::get_team_for_member`: a missing workspace
+/// and a workspace the caller has no access to both surface as
+/// `WorkspaceNotFound`, so a non-member can't tell the two apart.
+///
+/// The entry point of the `WorkspaceMember` extractor. Routes that name the
+/// workspace by id go through `get_workspace_for_member_by_id`; both end in
+/// `admit`, so the rule exists once whatever the route.
+pub async fn get_workspace_for_member(
+    db: &DatabaseConnection,
+    slug: &str,
+    user_id: Uuid,
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
+    let workspace = get_workspace_by_slug(db, slug).await?;
+    admit(db, workspace, user_id).await
+}
+
+/// Same as `get_workspace_for_member`, for routes that name the workspace by
+/// id (the avatar routes).
+pub async fn get_workspace_for_member_by_id(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+    admit(db, workspace, user_id).await
+}
+
+/// The single access decision for a loaded workspace. `None` and `Excluded`
+/// fold into `WorkspaceNotFound`: an excluded team member must not be able to
+/// tell the workspace apart from one that does not exist.
+async fn admit(
+    db: &DatabaseConnection,
+    workspace: workspaces::Model,
+    user_id: Uuid,
+) -> Result<(workspaces::Model, Membership), WorkspaceError> {
+    let membership = permissions_service::effective_role(db, user_id, &workspace).await?;
+
+    match membership {
+        Membership::None | Membership::Excluded => Err(WorkspaceError::WorkspaceNotFound),
+        Membership::Owner | Membership::Active(_) => Ok((workspace, membership)),
+    }
+}
+
+/// Refuses any change to an archived workspace's content. Archiving makes a
+/// workspace read-only; unarchiving, deleting and favouriting stay possible,
+/// so this is called by the writes it guards rather than by the extractor.
+///
+/// Read-only protects the content, not who reaches it: a write that only
+/// takes access away (an exclusion, a guest's removal) stays possible, while
+/// one that can grant or change access is refused like any other change.
+pub fn ensure_writable(workspace: &workspaces::Model) -> Result<(), WorkspaceError> {
+    if workspace.archived {
+        return Err(WorkspaceError::Archived);
+    }
+
+    Ok(())
+}
+
+/// Every workspace `user_id` can currently see: solo workspaces they own,
+/// team workspaces where they're a team member and not `Excluded` via a
+/// `workspace_members` override, and workspaces where they only appear as
+/// a guest. Each with the caller's role and its team.
+///
+/// A fixed number of queries, at most seven, however many workspaces and
+/// teams there are: every row the rule needs is read in bulk, then each
+/// workspace is resolved in memory by `permissions_service::resolve`, the
+/// rule every route applies.
+pub async fn list_workspaces_for_user(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+) -> Result<Vec<WorkspaceSummary>, WorkspaceError> {
+    // Solo workspaces owned directly.
+    let solo = workspaces::Entity::find()
+        .filter(workspaces::Column::OwnerId.eq(user_id))
+        .all(db)
+        .await?;
+
+    // Teams this user belongs to, with their role on each, then the
+    // workspaces under those teams.
+    let team_roles: std::collections::HashMap<Uuid, TeamRole> = team_members::Entity::find()
+        .filter(team_members::Column::UserId.eq(user_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|tm| {
+            let role = TeamRole::from_str(&tm.role).unwrap_or(TeamRole::Viewer);
+            (tm.team_id, role)
+        })
+        .collect();
+
+    let team_workspaces = if team_roles.is_empty() {
+        Vec::new()
+    } else {
+        workspaces::Entity::find()
+            .filter(workspaces::Column::TeamId.is_in(team_roles.keys().copied()))
+            .all(db)
+            .await?
+    };
+
+    // Every override row for this user, fetched once rather than per
+    // workspace, indexed by workspace id.
+    let overrides_by_workspace: std::collections::HashMap<Uuid, workspace_members::Model> =
+        workspace_members::Entity::find()
+            .filter(workspace_members::Column::UserId.eq(user_id))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|o| (o.workspace_id, o))
+            .collect();
+
+    // Guest workspaces: any override row with is_guest = true. Whether it
+    // still admits them, and as what, is `resolve`'s to say below.
+    let guest_workspace_ids: Vec<Uuid> = overrides_by_workspace
+        .values()
+        .filter(|o| o.is_guest)
+        .map(|o| o.workspace_id)
+        .collect();
+
+    let guest_workspaces = if guest_workspace_ids.is_empty() {
+        Vec::new()
+    } else {
+        workspaces::Entity::find()
+            .filter(workspaces::Column::Id.is_in(guest_workspace_ids))
+            .all(db)
+            .await?
+    };
+
+    // Union, dedupe on id: a user shouldn't be both a team member and a
+    // guest on the same workspace, but don't assume the data enforces it.
+    let mut by_id: std::collections::HashMap<Uuid, workspaces::Model> =
+        std::collections::HashMap::new();
+    for w in solo
+        .into_iter()
+        .chain(team_workspaces)
+        .chain(guest_workspaces)
+    {
+        by_id.entry(w.id).or_insert(w);
+    }
+
+    // Each one resolved on the rows read above, and dropped when that grants
+    // nothing: an exclusion, for one. No query per workspace.
+    let visible: Vec<(workspaces::Model, Membership)> = by_id
+        .into_values()
+        .filter_map(|w| {
+            let row = overrides_by_workspace.get(&w.id);
+            let team_role = w.team_id.and_then(|id| team_roles.get(&id).copied());
+            let membership = permissions_service::resolve(&w, user_id, row, team_role).membership;
+            membership
+                .satisfies(TeamRole::Viewer)
+                .then_some((w, membership))
+        })
+        .collect();
+
+    // Their teams, one query: a guest's team included, which they are not on.
+    let team_ids: std::collections::HashSet<Uuid> =
+        visible.iter().filter_map(|(w, _)| w.team_id).collect();
+    let teams_by_id: std::collections::HashMap<Uuid, teams::Model> = if team_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        teams::Entity::find()
+            .filter(teams::Column::Id.is_in(team_ids))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|team| (team.id, team))
+            .collect()
+    };
+
+    // Favorites for this user, one query.
+    let favorite_ids: std::collections::HashSet<Uuid> = workspace_favorites::Entity::find()
+        .filter(workspace_favorites::Column::UserId.eq(user_id))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|f| f.workspace_id)
+        .collect();
+
+    // Map to DTOs.
+    let mut summaries = visible
+        .into_iter()
+        .map(|(w, my_role)| {
+            // A NULL column is "no platform"; an unrecognised value is
+            // corrupt data, as in `WorkspaceResponse::try_from_model`.
+            let platform = match w.platform.as_deref() {
+                None => None,
+                Some(raw) => Some(Platform::parse(raw).ok_or(WorkspaceError::DataIntegrity(w.id))?),
+            };
+
+            Ok(WorkspaceSummary {
+                r#type: WorkspaceType::parse(&w.r#type)
+                    .ok_or(WorkspaceError::DataIntegrity(w.id))?,
+                mode: WorkspaceMode::parse(&w.mode).ok_or(WorkspaceError::DataIntegrity(w.id))?,
+                platform,
+                my_role,
+                team: w.team_id.and_then(|id| teams_by_id.get(&id)).map(|team| {
+                    let mut summary = TeamSummary::from_model(team);
+                    // A team's avatar is served to its members only:
+                    // a guest would be announced an image they cannot
+                    // load.
+                    if !team_roles.contains_key(&team.id) {
+                        summary.avatar_version = None;
+                    }
+                    summary
+                }),
+                favorite: favorite_ids.contains(&w.id),
+                id: w.id,
+                slug: w.slug,
+                name: w.name,
+                color: w.color.parse().unwrap_or_default(),
+                avatar_version: w.avatar_version,
+                archived: w.archived,
+                starts_at: w.starts_at.map(Into::into),
+                ends_at: w.ends_at.map(Into::into),
+            })
+        })
+        .collect::<Result<Vec<_>, WorkspaceError>>()?;
+
+    // Archived last, favourites included, then favourites first, then by
+    // name, then by id. The map above has no order of its own and two
+    // workspaces can share a name, so the id settles what the name leaves
+    // equal: without it the selector would reshuffle those on every load.
+    // `to_lowercase` for the same reason as the members roster: a byte order
+    // would file `Zeta` before `alpha`.
+    summaries.sort_by_cached_key(|summary| {
+        (
+            summary.archived,
+            std::cmp::Reverse(summary.favorite),
+            summary.name.to_lowercase(),
+            summary.id,
+        )
+    });
+
+    Ok(summaries)
+}
+
+/// Applies a PATCH. Refused on an archived workspace.
+///
+/// The date window is checked on the merged values, stored ones overlaid by
+/// the patch: a PATCH that moves only one bound can make the window invalid
+/// just as surely as one that sends both.
+pub async fn update_workspace(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    input: UpdateWorkspaceInput,
+) -> Result<workspaces::Model, WorkspaceError> {
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    ensure_writable(&workspace)?;
+
+    // Absent keeps the stored value, null clears it, a value replaces it.
+    let starts_at = match input.starts_at {
+        None => workspace.starts_at.map(Into::into),
+        Some(patched) => patched,
+    };
+    let ends_at = match input.ends_at {
+        None => workspace.ends_at.map(Into::into),
+        Some(patched) => patched,
+    };
+    validate_date_range(starts_at, ends_at)?;
+
+    // Only a sent platform is checked, against the stored type: the type
+    // never changes, and a stored row is not re-judged by a PATCH that
+    // leaves its platform alone.
+    let platform = match input.platform {
+        None => None,
+        Some(platform) => {
+            let r#type = WorkspaceType::parse(&workspace.r#type)
+                .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+            validate_platform(r#type, platform)?;
+            Some(platform)
+        }
+    };
+    let event_url = match input.event_url {
+        None => None,             // absent: unchanged
+        Some(None) => Some(None), // null: cleared
+        Some(Some(raw)) => Some(normalize_event_url(&raw)?),
+    };
+
+    let mut active_model: workspaces::ActiveModel = workspace.into();
+    if let Some(name) = input.name {
+        active_model.name = Set(name);
+    }
+    if let Some(description) = input.description {
+        active_model.description = Set(description);
+    }
+    if let Some(color) = input.color {
+        active_model.color = Set(color.as_str().to_string());
+    }
+    if let Some(lock_after_end) = input.lock_after_end {
+        active_model.lock_after_end = Set(lock_after_end);
+    }
+    if let Some(default_writeup_visibility) = input.default_writeup_visibility {
+        active_model.default_writeup_visibility =
+            Set(default_writeup_visibility.as_str().to_string());
+    }
+    if let Some(platform) = platform {
+        active_model.platform = Set(platform.map(|p| p.as_str().to_string()));
+    }
+    if let Some(event_url) = event_url {
+        active_model.event_url = Set(event_url);
+    }
+    active_model.starts_at = Set(starts_at.map(Into::into));
+    active_model.ends_at = Set(ends_at.map(Into::into));
+    // Written by the server on every change: no trigger, and no
+    // `before_save` hook in the entities, which are regenerated.
+    active_model.updated_at = Set(Utc::now().into());
+
+    active_model.update(db).await.map_err(Into::into)
+}
+
+/// Deletes a workspace, then its objects once the deletion is committed.
+pub async fn delete_workspace(
+    db: &DatabaseConnection,
+    store: &ObjectStore,
+    workspace_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let txn = db.begin().await?;
+    let objects = delete_workspace_rows(&txn, workspace_id).await?;
+    txn.commit().await?;
+
+    store.purge(objects).await;
+    Ok(())
+}
+
+/// The database half of `delete_workspace`, for a caller that deletes more
+/// in the same transaction: deletes the row, which takes its members,
+/// favourites, invitations and tags with it, and returns the objects to purge
+/// once the caller has committed.
+pub(crate) async fn delete_workspace_rows<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+) -> Result<ObjectsToPurge, WorkspaceError> {
+    let result = workspaces::Entity::delete_by_id(workspace_id)
+        .exec(conn)
+        .await?;
+
+    if result.rows_affected == 0 {
+        return Err(WorkspaceError::WorkspaceNotFound);
+    }
+
+    Ok(ObjectsToPurge::avatar(AvatarKind::Workspace, workspace_id))
+}
+
+/// Archives a workspace and, in the same transaction, cancels every pending
+/// invitation to it (see `workspace_invitation_service::close_on_archive`).
+/// The workspace row is locked as invitation creation and acceptance lock
+/// it, so neither can slip a pending invitation or a new guest past the
+/// archive.
+pub async fn archive_workspace(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+) -> Result<workspaces::Model, WorkspaceError> {
+    let txn = db.begin().await?;
+
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .lock(LockType::NoKeyUpdate)
+        .one(&txn)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    // Idempotent: setting the flag it already has is not an error.
+    let archived = workspaces::ActiveModel {
+        id: Set(workspace.id),
+        archived: Set(true),
+        updated_at: Set(Utc::now().into()),
+        ..Default::default()
+    }
+    .update(&txn)
+    .await?;
+
+    workspace_invitation_service::close_on_archive(&txn, workspace_id).await?;
+
+    txn.commit().await?;
+    Ok(archived)
+}
+
+pub async fn unarchive_workspace(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+) -> Result<workspaces::Model, WorkspaceError> {
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    // Idempotent: setting the flag it already has is not an error.
+    workspaces::ActiveModel {
+        id: Set(workspace.id),
+        archived: Set(false),
+        updated_at: Set(Utc::now().into()),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .map_err(Into::into)
+}
+
+/// Marks a workspace as one of `user_id`'s favourites.
+///
+/// Access is the caller's job: the route sits behind
+/// `WorkspaceMember<role::Viewer>`. Called directly, this would favourite a
+/// workspace the user cannot see, and the foreign-key error on an unknown id
+/// would tell them which ids exist.
+pub async fn add_favorite(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let inserted = workspace_favorites::ActiveModel {
+        user_id: Set(user_id),
+        workspace_id: Set(workspace_id),
+        ..Default::default()
+    }
+    .insert(db)
+    .await;
+
+    match inserted {
+        Ok(_) => Ok(()),
+        // Favouriting something already favourited is the same wish stated
+        // twice, not a failure, so the caller gets the outcome it asked for.
+        //
+        // Caught after the fact rather than prevented by a prior SELECT: two
+        // concurrent requests both pass an existence check and one still
+        // loses on the insert, so the check would narrow the race without
+        // closing it. The constraint is the thing that actually decides, so
+        // it is the thing to read.
+        Err(err) if is_unique_violation(&err) => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
+pub async fn remove_favorite(
+    db: &DatabaseConnection,
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    workspace_favorites::Entity::delete_by_id((user_id, workspace_id))
+        .exec(db)
+        .await?;
+
+    Ok(())
+}
+
+/// Everyone with access to `workspace`, with their effective role resolved
+/// and where it comes from.
+///
+/// Solo: a single entry for the owner, `Membership::Owner` rather than
+/// `Active(Captain)`. `Membership` has an `Owner` tier where `TeamRole` does
+/// not, and using it is what keeps this roster and
+/// `permissions_service::effective_role` saying the same thing about the
+/// same person.
+///
+/// Team: every team member, minus anyone a `workspace_members` row excludes,
+/// with an override role taking precedence over the inherited team one, plus
+/// every guest, who has no team membership behind them at all.
+///
+/// Each person is resolved by `permissions_service::resolve`, the rule
+/// `effective_role` applies, on the rows read here in bulk.
+///
+/// A member whose `users` row has gone is dropped rather than failing the
+/// whole listing, matching `team_service::list_team_members`.
+pub async fn list_effective_members(
+    db: &DatabaseConnection,
+    workspace: &workspaces::Model,
+) -> Result<Vec<EffectiveMember>, WorkspaceError> {
+    let mode =
+        WorkspaceMode::parse(&workspace.mode).ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+
+    if let WorkspaceMode::Solo = mode {
+        // `ck_workspaces_ownership` makes a solo workspace with no owner
+        // unreachable, so this is the same named-error-over-unwrap choice as
+        // `PermissionsError::WorkspaceMisconfigured`.
+        let owner_id = workspace
+            .owner_id
+            .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+
+        let owner = users::Entity::find_by_id(owner_id).one(db).await?;
+        let access = permissions_service::resolve(workspace, owner_id, None, None);
+
+        return Ok(owner
+            .zip(access.source)
+            .map(|(owner, role_source)| EffectiveMember {
+                user_id: owner_id,
+                handle: owner.username,
+                first_name: owner.first_name.unwrap_or_default(),
+                last_name: owner.last_name.unwrap_or_default(),
+                avatar_version: owner.avatar_version,
+                role: access.membership,
+                role_source,
+                is_guest: false,
+                // No membership row stands behind sole ownership, so the
+                // workspace's own creation is the date the owner got access.
+                joined_at: workspace.created_at.into(),
+                invited_by: None,
+            })
+            .into_iter()
+            .collect());
+    }
+
+    // Likewise unreachable: `mode = 'team'` with no `team_id` is the other
+    // half of `ck_workspaces_ownership`.
+    let team_id = workspace
+        .team_id
+        .ok_or(WorkspaceError::DataIntegrity(workspace.id))?;
+
+    let team_roster = team_members::Entity::find()
+        .filter(team_members::Column::TeamId.eq(team_id))
+        .find_also_related(users::Entity)
+        .all(db)
+        .await?;
+
+    // Overrides come back with their user rows already joined, so the guest
+    // pass below needs no second query.
+    let mut overrides: std::collections::HashMap<
+        Uuid,
+        (workspace_members::Model, Option<users::Model>),
+    > = workspace_members::Entity::find()
+        .filter(workspace_members::Column::WorkspaceId.eq(workspace.id))
+        .find_also_related(users::Entity)
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|(member, user)| (member.user_id, (member, user)))
+        .collect();
+
+    let mut members = Vec::with_capacity(team_roster.len());
+
+    for (team_member, user) in team_roster {
+        let Some(user) = user else { continue };
+
+        // Removed rather than read, so what is left in `overrides` after this
+        // loop is exactly the set of rows with no team membership behind
+        // them: the guests.
+        let row = overrides
+            .remove(&team_member.user_id)
+            .map(|(member, _)| member);
+        let team_role = TeamRole::from_str(&team_member.role).unwrap_or(TeamRole::Viewer);
+        let access = permissions_service::resolve(
+            workspace,
+            team_member.user_id,
+            row.as_ref(),
+            Some(team_role),
+        );
+
+        // No source is no access: an exclusion, which is not listed.
+        let Some(role_source) = access.source else {
+            continue;
+        };
+
+        members.push(EffectiveMember {
+            user_id: team_member.user_id,
+            handle: user.username,
+            first_name: user.first_name.unwrap_or_default(),
+            last_name: user.last_name.unwrap_or_default(),
+            avatar_version: user.avatar_version,
+            role: access.membership,
+            role_source,
+            is_guest: false,
+            // The team_members date, not the override's: an override
+            // changes what they may do here, not when they gained access.
+            joined_at: team_member.joined_at.into(),
+            // Recorded for guests only: a team member's way in is the team.
+            invited_by: None,
+        });
+    }
+
+    for (member, user) in overrides.into_values() {
+        // Everything still here belongs to someone with no team membership
+        // behind it, so `is_guest = false` is not a case this filter handles
+        // quietly, it is one that cannot arise. Two guards make that true,
+        // one at each end of the row's life: `set_member_override` refuses to
+        // write a non-guest override for someone who is not on the team, and
+        // `team_service::remove_member` deletes these rows in the same
+        // transaction that ends the membership.
+        //
+        // It matters that they cannot, because skipping such a row would deny
+        // nothing: this function gates no access, and
+        // `permissions_service::effective_role` reads the override before it
+        // reads team membership, so it would still admit them. Leaving the
+        // row possible would mean someone with access to the workspace and no
+        // place on its members list.
+        if !member.is_guest {
+            continue;
+        }
+
+        let Some(user) = user else { continue };
+
+        // `ck_workspace_members_guest_has_role` makes a role-less guest
+        // unreachable. Unlike the orphan above, this one really is
+        // unreachable rather than merely unhandled, so there is nothing to
+        // fix upstream and dropping the row (no source, no access) is only
+        // defensive.
+        let access = permissions_service::resolve(workspace, member.user_id, Some(&member), None);
+        let Some(role_source) = access.source else {
+            continue;
+        };
+
+        members.push(EffectiveMember {
+            user_id: member.user_id,
+            handle: user.username,
+            first_name: user.first_name.unwrap_or_default(),
+            last_name: user.last_name.unwrap_or_default(),
+            avatar_version: user.avatar_version,
+            role: access.membership,
+            role_source,
+            is_guest: true,
+            joined_at: member.joined_at.into(),
+            invited_by: member.invited_by,
+        });
+    }
+
+    // Without this the order is whatever Postgres returns, which is not
+    // stable across reads: the members table would reshuffle on every
+    // refresh. Seniority first, then handle, so the people who can change
+    // things are at the top.
+    //
+    // `to_lowercase` because the handles come from a CITEXT column: a byte
+    // ordering would file `Zoe` before `alice`, which is not the order the
+    // column itself considers those two to be in.
+    members.sort_by_cached_key(|member| {
+        (
+            std::cmp::Reverse(member.role.rank()),
+            member.handle.to_lowercase(),
+        )
+    });
+
+    Ok(members)
+}
+
+/// The team members excluded from `workspace`, by handle then id. Refused on
+/// a solo workspace, which has no team to exclude anyone from, as every
+/// member route refuses it; an archived one is still read.
+///
+/// One query. Only team members carry the exclusion: `exclude_member`
+/// refuses anyone else, and `team_service::remove_member` deletes a member's
+/// rows with their membership.
+pub async fn list_exclusions(
+    db: &DatabaseConnection,
+    workspace: &workspaces::Model,
+) -> Result<Vec<ExcludedMember>, WorkspaceError> {
+    if workspace.team_id.is_none() {
+        return Err(WorkspaceError::SoloWorkspace);
+    }
+
+    let mut excluded: Vec<ExcludedMember> = workspace_members::Entity::find()
+        .filter(workspace_members::Column::WorkspaceId.eq(workspace.id))
+        .filter(workspace_members::Column::Role.eq(Membership::Excluded.as_str()))
+        .find_also_related(users::Entity)
+        .all(db)
+        .await?
+        .into_iter()
+        .filter_map(|(row, user)| {
+            user.map(|user| ExcludedMember {
+                user_id: row.user_id,
+                handle: user.username,
+                first_name: user.first_name.unwrap_or_default(),
+                last_name: user.last_name.unwrap_or_default(),
+                avatar_version: user.avatar_version,
+            })
+        })
+        .collect();
+
+    // Same order as the members roster within a rank, for the same reason:
+    // a CITEXT column, and an id to settle equal handles.
+    excluded.sort_by_cached_key(|member| (member.handle.to_lowercase(), member.user_id));
+
+    Ok(excluded)
+}
+
+/// Grants `target_user_id` a workspace-level role, overriding whatever they
+/// inherit from the team, or admits them as a guest.
+///
+/// Refuses a non-guest override for someone who is not on the workspace's
+/// team. That guard is the creation-side half of the one
+/// `team_service::remove_member` enforces on deletion: without it, the row
+/// that removal exists to clean up could simply be written directly, and
+/// `permissions_service::effective_role` would honour it, since it reads the
+/// override before it reads team membership.
+///
+/// Refuses the mirror case too, `is_guest` for someone who *is* on the team:
+/// a guest is by definition someone with no team membership behind them, and
+/// a row claiming otherwise would be a fact the roster then contradicts.
+/// (This blocks writing that state, not reaching it: someone admitted as a
+/// guest who later joins the team arrives there legitimately, and
+/// `list_effective_members` reads them as the team member they now are.)
+///
+/// Exclusion is not expressible here and lives in `exclude_member`: it is not
+/// a `TeamRole`, and a role parameter that sometimes means "no role at all"
+/// is the kind that gets passed `Captain` by mistake.
+///
+/// A guest's role is at most Member: Admin is a team role to manage the
+/// workspace, and a guest has no team behind them. Refused on an archived
+/// workspace: it grants or changes access.
+pub async fn set_member_override<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    target_user_id: Uuid,
+    role: TeamRole,
+    is_guest: bool,
+) -> Result<(), WorkspaceError> {
+    let (workspace, team_id) = require_team_workspace(db, workspace_id).await?;
+    ensure_writable(&workspace)?;
+    let in_team = is_team_member(db, team_id, target_user_id).await?;
+
+    match (is_guest, in_team) {
+        (false, false) => return Err(WorkspaceError::TargetNotInTeam),
+        (true, true) => return Err(WorkspaceError::TargetAlreadyInTeam),
+        _ => {}
+    }
+
+    if is_guest && role.level() > TeamRole::Member.level() {
+        return Err(WorkspaceError::GuestRoleAboveMember);
+    }
+
+    upsert_override(db, workspace_id, target_user_id, role.as_str(), is_guest).await
+}
+
+/// Removes `target_user_id`'s access to one workspace while leaving their
+/// team membership intact.
+///
+/// Its own function rather than a value of `set_member_override`'s `role`,
+/// and only for team members: an exclusion subtracts from inherited access,
+/// so for someone with none it would name nothing. To drop a guest, see
+/// `remove_guest`. Allowed on an archived workspace: it only takes access
+/// away (see `ensure_writable`).
+pub async fn exclude_member<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    target_user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let (_, team_id) = require_team_workspace(db, workspace_id).await?;
+
+    if !is_team_member(db, team_id, target_user_id).await? {
+        return Err(WorkspaceError::TargetNotInTeam);
+    }
+
+    upsert_override(
+        db,
+        workspace_id,
+        target_user_id,
+        Membership::Excluded.as_str(),
+        false,
+    )
+    .await
+}
+
+/// The workspace and its team, or an error naming why it has none. Whether
+/// an archived workspace refuses the write is each caller's to decide, since
+/// it depends on what the write does to access (see `ensure_writable`).
+///
+/// A `workspace_members` row on a solo workspace is inert: both
+/// `permissions_service::effective_role` and `list_effective_members` answer
+/// from `owner_id` and never look at the table. Writing one would be a
+/// silent no-op, so it is refused rather than accepted and ignored.
+async fn require_team_workspace<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+) -> Result<(workspaces::Model, Uuid), WorkspaceError> {
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .one(db)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    let team_id = workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)?;
+
+    Ok((workspace, team_id))
+}
+
+async fn is_team_member<C: ConnectionTrait>(
+    db: &C,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, WorkspaceError> {
+    Ok(team_members::Entity::find_by_id((team_id, user_id))
+        .one(db)
+        .await?
+        .is_some())
+}
+
+/// Writes the row whether or not one is already there.
+///
+/// Select-then-insert-or-update rather than `OnConflict`, mirroring
+/// `team_service::add_member`'s explicit shape. `joined_at` is left `NotSet`
+/// in both branches: the database fills it on insert, and an update must not
+/// reset it, since changing what someone may do here is not them arriving
+/// again.
+async fn upsert_override<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    user_id: Uuid,
+    role: &str,
+    is_guest: bool,
+) -> Result<(), WorkspaceError> {
+    let row = workspace_members::ActiveModel {
+        workspace_id: Set(workspace_id),
+        user_id: Set(user_id),
+        role: Set(Some(role.to_owned())),
+        is_guest: Set(is_guest),
+        ..Default::default()
+    };
+
+    let exists = workspace_members::Entity::find_by_id((workspace_id, user_id))
+        .one(db)
+        .await?
+        .is_some();
+
+    if exists {
+        row.update(db).await?;
+    } else {
+        row.insert(db).await?;
+    }
+
+    Ok(())
+}
+
+/// Drops `target_user_id`'s row for this workspace, whatever it held: a
+/// granted role, an exclusion, or a guest admission. The completion of
+/// `set_member_override` and `exclude_member`, which could both write a row
+/// that nothing could then take back.
+///
+/// One operation, three different outcomes, which a caller has to know apart
+/// before putting it behind a single button:
+///
+/// - on a team member with a granted role, they fall back to the role they
+///   inherit from the team, so this is a reset, not a removal;
+/// - on an excluded team member, their inherited access comes back, so this
+///   *grants*;
+/// - on a guest, who has no team membership to fall back to, the row was the
+///   whole of their access, so this revokes it.
+///
+/// Absent row is success, not `WorkspaceNotFound`: the caller asked for the
+/// override to be gone and it is. Same shape as `remove_favorite`. Refused
+/// on a solo workspace, and on an archived one since it can grant access; a
+/// guest is removed from an archived workspace through `remove_guest`.
+pub async fn remove_member_override<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    target_user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let (workspace, _) = require_team_workspace(db, workspace_id).await?;
+    ensure_writable(&workspace)?;
+
+    workspace_members::Entity::delete_by_id((workspace_id, target_user_id))
+        .exec(db)
+        .await?;
+
+    Ok(())
+}
+
+/// Takes a guest's access to the workspace away: deletes their row, and only
+/// a guest's. Allowed on an archived workspace, since it only takes access
+/// away (see `ensure_writable`); refused on a solo one, which has no guests.
+/// No guest row is success, as in `remove_member_override`.
+pub async fn remove_guest<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    guest_user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    require_team_workspace(db, workspace_id).await?;
+
+    workspace_members::Entity::delete_many()
+        .filter(workspace_members::Column::WorkspaceId.eq(workspace_id))
+        .filter(workspace_members::Column::UserId.eq(guest_user_id))
+        .filter(workspace_members::Column::IsGuest.eq(true))
+        .exec(db)
+        .await?;
+
+    Ok(())
+}
+
+/// A change to one person's access to a team workspace, as the member routes
+/// ask for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberWrite {
+    /// Their role here: an override of the team role for a team member, the
+    /// role itself for a guest. Never Captain: the routes cannot name it.
+    SetRole(TeamRole),
+    /// A team member back to their team role. An exclusion is left alone.
+    ClearRoleOverride,
+    /// A team member out of this workspace, their team membership kept.
+    Exclude,
+    /// A team member's exclusion lifted, back to their team role. A role
+    /// override is left alone.
+    LiftExclusion,
+    /// A guest out of the workspace.
+    RemoveGuest,
+}
+
+impl MemberWrite {
+    /// Whether this write only ever takes access away, which an archived
+    /// workspace still allows (see `ensure_writable`).
+    fn only_takes_access_away(self) -> bool {
+        matches!(self, MemberWrite::Exclude | MemberWrite::RemoveGuest)
+    }
+}
+
+/// What a member write reads about one person, under lock.
+struct MemberState {
+    team_role: Option<TeamRole>,
+    row: Option<workspace_members::Model>,
+}
+
+impl MemberState {
+    fn is_excluded(&self) -> bool {
+        self.row
+            .as_ref()
+            .and_then(|row| row.role.as_deref())
+            .is_some_and(|role| role == Membership::Excluded.as_str())
+    }
+
+    /// A guest is someone with no team membership whose row admits them.
+    /// Someone admitted as a guest who later joined the team counts as the
+    /// team member they now are, as `list_effective_members` reads them.
+    fn is_guest(&self) -> bool {
+        self.team_role.is_none() && self.row.as_ref().is_some_and(|row| row.is_guest)
+    }
+
+    /// Their access once `write` is applied, or the reason it does not apply
+    /// to them: exclusions and role overrides are for team members, removal
+    /// for guests.
+    fn after(&self, write: MemberWrite, before: Membership) -> Result<Membership, WorkspaceError> {
+        let Some(team_role) = self.team_role else {
+            return match write {
+                MemberWrite::SetRole(role) => Ok(Membership::Active(role)),
+                MemberWrite::RemoveGuest => Ok(Membership::None),
+                MemberWrite::ClearRoleOverride
+                | MemberWrite::Exclude
+                | MemberWrite::LiftExclusion => Err(WorkspaceError::TargetNotInTeam),
+            };
+        };
+
+        Ok(match write {
+            MemberWrite::SetRole(role) => Membership::Active(role),
+            MemberWrite::Exclude => Membership::Excluded,
+            MemberWrite::ClearRoleOverride if !self.is_excluded() => Membership::Active(team_role),
+            MemberWrite::LiftExclusion if self.is_excluded() => Membership::Active(team_role),
+            MemberWrite::ClearRoleOverride | MemberWrite::LiftExclusion => before,
+            MemberWrite::RemoveGuest => return Err(WorkspaceError::TargetAlreadyInTeam),
+        })
+    }
+}
+
+/// Reads one person's team role and row for a member write, locked: the team
+/// row shared, so a role change or a departure on the team waits for this
+/// write rather than happening under it, and their row for update.
+async fn locked_member<C: ConnectionTrait>(
+    conn: &C,
+    workspace_id: Uuid,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<MemberState, WorkspaceError> {
+    let team_role = team_members::Entity::find_by_id((team_id, user_id))
+        .lock_shared()
+        .one(conn)
+        .await?
+        .map(|member| TeamRole::from_str(&member.role).unwrap_or(TeamRole::Viewer));
+
+    let row = workspace_members::Entity::find_by_id((workspace_id, user_id))
+        .lock_exclusive()
+        .one(conn)
+        .await?;
+
+    Ok(MemberState { team_role, row })
+}
+
+/// Whether this access is below Admin. No access at all counts as below.
+fn below_admin(membership: Membership) -> bool {
+    match membership {
+        Membership::None | Membership::Excluded => true,
+        Membership::Active(role) => role.level() < TeamRole::Admin.level(),
+        Membership::Owner => false,
+    }
+}
+
+/// Applies `write` to `target_id` on a team workspace, for `actor_id`, with
+/// the rules the member routes enforce.
+///
+/// The Captain may act on anyone but themselves, and alone may give Admin.
+/// An Admin may act only when the target's access is below Admin both
+/// before and after the change, so they can neither reach an Admin nor make
+/// one, nor give back an Admin team role by lifting what kept it down. Nobody
+/// acts on the Captain or on themselves. Anyone else is refused.
+///
+/// Refusals in this order: a solo workspace, an archived one for a write that
+/// can grant or change access, a target who is neither on the team nor a
+/// guest (without saying whether the account exists), the target being the
+/// caller or the Captain, a write that does not apply to that kind of
+/// target, the caller's rank, and a guest's ceiling.
+///
+/// Everything is read and written in one transaction. The workspace row is
+/// locked first, so member writes on one workspace run one at a time and an
+/// archive landing meanwhile is seen; the caller's and the target's rows
+/// next, so neither role is read stale (see `locked_member`).
+pub async fn write_member(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    actor_id: Uuid,
+    target_id: Uuid,
+    write: MemberWrite,
+) -> Result<(), WorkspaceError> {
+    let txn = db.begin().await?;
+
+    // NO KEY UPDATE rather than UPDATE: rows that only reference the
+    // workspace, a favourite being added, are not held up by it.
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .lock(LockType::NoKeyUpdate)
+        .one(&txn)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+
+    let team_id = workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)?;
+    if !write.only_takes_access_away() {
+        ensure_writable(&workspace)?;
+    }
+
+    let target = locked_member(&txn, workspace_id, team_id, target_id).await?;
+    if target.team_role.is_none() && !target.is_guest() {
+        return Err(WorkspaceError::MemberNotFound);
+    }
+    if target_id == actor_id {
+        return Err(WorkspaceError::TargetIsSelf);
+    }
+    if target.team_role == Some(TeamRole::Captain) {
+        return Err(WorkspaceError::TargetIsCaptain);
+    }
+
+    locked_member(&txn, workspace_id, team_id, actor_id).await?;
+    let actor = permissions_service::effective_role(&txn, actor_id, &workspace).await?;
+    let before = permissions_service::effective_role(&txn, target_id, &workspace).await?;
+    let after = target.after(write, before)?;
+
+    match actor {
+        Membership::Active(TeamRole::Captain) => {}
+        Membership::Active(TeamRole::Admin) if below_admin(before) && below_admin(after) => {}
+        _ => return Err(WorkspaceError::InsufficientRole),
+    }
+
+    match write {
+        MemberWrite::SetRole(role) => {
+            set_member_override(&txn, workspace_id, target_id, role, target.is_guest()).await?
+        }
+        MemberWrite::Exclude => exclude_member(&txn, workspace_id, target_id).await?,
+        // Nothing to undo when the row holds the other kind, or nothing.
+        MemberWrite::ClearRoleOverride if target.row.is_none() || target.is_excluded() => {}
+        MemberWrite::LiftExclusion if !target.is_excluded() => {}
+        MemberWrite::RemoveGuest => remove_guest(&txn, workspace_id, target_id).await?,
+        MemberWrite::ClearRoleOverride | MemberWrite::LiftExclusion => {
+            remove_member_override(&txn, workspace_id, target_id).await?
+        }
+    }
+
+    txn.commit().await?;
+    Ok(())
+}
+
+/// The caller giving up their own access to a team workspace: a guest's row
+/// is deleted, a team member excludes themselves, their team membership
+/// kept. The one member write made on oneself, and allowed on an archived
+/// workspace, since it only takes access away.
+///
+/// A self-exclusion is lifted like any other, by the Captain or an Admin
+/// (see `write_member`): leaving is not undone by the one who left. The
+/// Captain cannot leave, since every workspace of the team is theirs.
+pub async fn leave_workspace(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), WorkspaceError> {
+    let txn = db.begin().await?;
+
+    let workspace = workspaces::Entity::find_by_id(workspace_id)
+        .lock(LockType::NoKeyUpdate)
+        .one(&txn)
+        .await?
+        .ok_or(WorkspaceError::WorkspaceNotFound)?;
+    let team_id = workspace.team_id.ok_or(WorkspaceError::SoloWorkspace)?;
+
+    let me = locked_member(&txn, workspace_id, team_id, user_id).await?;
+    match me.team_role {
+        Some(TeamRole::Captain) => return Err(WorkspaceError::CaptainMustTransfer),
+        Some(_) => exclude_member(&txn, workspace_id, user_id).await?,
+        None if me.is_guest() => remove_guest(&txn, workspace_id, user_id).await?,
+        None => return Err(WorkspaceError::WorkspaceNotFound),
+    }
+
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Copied rather than imported, same reasoning as `team_service.rs`'s own
+/// copy: the only thing this module needs is whether the row already
+/// existed.
+fn is_unique_violation(err: &sea_orm::DbErr) -> bool {
+    matches!(
+        err.sql_err(),
+        Some(sea_orm::SqlErr::UniqueConstraintViolation(_))
+    )
+}
+
+/// A platform workspace has to say which platform; `Other` is the way out for
+/// one that is not in the list. Optional for an event. Mirrors
+/// `ck_workspaces_platform_required`, which catches every other writer.
+fn validate_platform(
+    r#type: WorkspaceType,
+    platform: Option<Platform>,
+) -> Result<(), WorkspaceError> {
+    if r#type == WorkspaceType::Platform && platform.is_none() {
+        return Err(WorkspaceError::PlatformRequired);
+    }
+
+    Ok(())
+}
+
+/// Rejects a window that does not move forward in time. A zero-length window
+/// is refused too: it can never be "during". One missing bound is fine.
+fn validate_date_range(
+    starts_at: Option<DateTime<Utc>>,
+    ends_at: Option<DateTime<Utc>>,
+) -> Result<(), WorkspaceError> {
+    if let (Some(starts_at), Some(ends_at)) = (starts_at, ends_at)
+        && ends_at <= starts_at
+    {
+        return Err(WorkspaceError::InvalidDateRange);
+    }
+
+    Ok(())
+}
+
+fn validate_ownership(mode: WorkspaceMode, team_id: Option<Uuid>) -> Result<(), WorkspaceError> {
+    match (mode, team_id) {
+        (WorkspaceMode::Team, Some(_)) => Ok(()),
+        (WorkspaceMode::Solo, None) => Ok(()),
+        _ => Err(WorkspaceError::InvalidOwnership),
+    }
+}
+
+#[cfg(test)]
+mod event_url_tests {
+    use super::normalize_event_url;
+
+    #[test]
+    fn keeps_http_and_https_normalised() {
+        assert_eq!(
+            normalize_event_url(" HTTPS://Hexagon.CTF/x ")
+                .unwrap()
+                .as_deref(),
+            Some("https://hexagon.ctf/x")
+        );
+        assert!(normalize_event_url("http://ctf.example:8080/").is_ok());
+    }
+
+    #[test]
+    fn clears_on_blank() {
+        assert_eq!(normalize_event_url("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn refuses_other_schemes_credentials_and_relative() {
+        for raw in [
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "ftp://ctf.example",
+            "https://user:pw@ctf.example",
+            "/relative",
+            "ctf.example",
+        ] {
+            assert!(normalize_event_url(raw).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn refuses_past_the_limit() {
+        let long = format!("https://ctf.example/{}", "a".repeat(2048));
+        assert!(normalize_event_url(&long).is_err());
+    }
+}

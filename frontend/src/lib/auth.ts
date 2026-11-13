@@ -9,8 +9,12 @@ import type {
   User,
 } from "@/types/api";
 
-/** Provider state, not something the API ever returns. */
-export type AuthStatus = "loading" | "authenticated" | "anonymous";
+/**
+ * Provider state, not something the API ever returns. `unavailable`: the
+ * session could not be read at all (no answer, or a 5xx) and none is cached,
+ * so whether someone is signed in is unknown until the server answers.
+ */
+export type AuthStatus = "loading" | "authenticated" | "anonymous" | "unavailable";
 
 export type AuthContextValue = {
   /** `null` while loading and when signed out — check `status` to tell them apart. */
@@ -18,8 +22,11 @@ export type AuthContextValue = {
   status: AuthStatus;
   /** Resolves with the signed-in user, rejects with an `ApiError`. */
   login: (payload: LoginPayload) => Promise<User>;
-  /** Creates the account without signing in (email verification comes first). */
-  register: (payload: RegisterPayload) => Promise<User>;
+  /**
+   * Registers without signing in. Resolves the same whether the address was
+   * free or already had an account: the answer never says which.
+   */
+  register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
   /** Consumes an email verification token. Does not open a session. */
   confirmEmail: (token: string) => Promise<void>;

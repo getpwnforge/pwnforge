@@ -1,0 +1,17 @@
+# Build context of the backend image (docker compose and docker-build.yml use
+# ./backend as the context). Keeps local artifacts, secrets and history out of
+# it: a context with target/ is tens of gigabytes, and an .env copied into a
+# build stage would end up in the image's layers.
+
+# Local build output.
+target
+**/target
+
+# Local configuration and secrets; the examples stay, they hold no values.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Version control.
+.git
+**/.git

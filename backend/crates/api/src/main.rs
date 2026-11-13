@@ -1,22 +1,34 @@
 // crates/api/src/main.rs
 mod app;
 mod error;
+mod healthcheck;
 mod middleware;
 mod openapi;
 mod routes;
+mod shutdown;
 mod state;
 mod tasks;
+#[cfg(test)]
+mod test_support;
 
 use migration::MigratorTrait;
 use services::config::Config;
 use state::AppState;
-use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use services::background::{BackgroundTasks, Shutdown};
 use services::setup_service;
+use services::storage_service::{ObjectStore, S3Store};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // The container healthcheck: probes the running server, before anything
+    // below loads configuration or opens a connection.
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        std::process::exit(healthcheck::run().await);
+    }
+
     dotenvy::dotenv().ok();
 
     // Initialize logging
@@ -24,6 +36,17 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let port = config.port;
+
+    // warn! rather than a refusal: a local instance runs on plain HTTP.
+    if !config.public_url_is_https() {
+        tracing::warn!(
+            public_url = %config.public_url,
+            "PUBLIC_URL is not https. Fine for local development; anywhere else, serve \
+             the instance behind a TLS-terminating reverse proxy: without it the setup \
+             token, every password and the session cookies cross the network in clear, \
+             and browsers drop the session cookies while COOKIE_SECURE is on"
+        );
+    }
 
     let db = services::connect_db(&config).await?;
     let redis = services::connect_redis(&config).await?;
@@ -37,6 +60,24 @@ async fn main() -> anyhow::Result<()> {
     // Run database seeding
     seed::run(&db).await?;
 
+    // HeadBucket on both buckets before the listener opens. An instance whose
+    // buckets are missing, misnamed, or unreachable fails here with a sentence
+    // naming the bucket, rather than on the first user who uploads an avatar.
+    //
+    // Note there is deliberately no `depends_on: garage` in docker-compose.yml.
+    // Since Compose 2.20 a dependency re-enables its own profile, so declaring
+    // one would start the bundled object store for an operator running against
+    // AWS. Readiness is this check's job instead.
+    let storage = ObjectStore::S3(S3Store::new(&config.storage));
+
+    storage.health().await.map_err(|error| {
+        anyhow::anyhow!(
+            "object storage is not usable: {error}. \
+             Check PWNFORGE_S3_* and, for the bundled object store, that the \
+             garage-init container has run (COMPOSE_PROFILES=garage)."
+        )
+    })?;
+
     let setup_token = setup_service::issue_boot_token(&db, config.setup_token.as_deref()).await?;
 
     if let Some(token) = &setup_token {
@@ -45,26 +86,33 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Instance not set up yet. Open /setup and use token: {token}");
     }
 
+    let grace = Duration::from_secs(config.shutdown_grace_secs);
+    // Installed before anything listens: as PID 1 in its container, the
+    // server drops a signal it has no handler for.
+    let stop = shutdown::signal_received()?;
+
+    let background = BackgroundTasks::new();
+    let (trigger, stopping) = Shutdown::channel();
+
     let state = AppState {
         db: db.clone(),
         redis,
         config: Arc::new(config),
         jwt_keys: Arc::new(state::JwtKeys { encoding, decoding }),
         setup_token: setup_token.map(Arc::new),
+        storage: Arc::new(storage),
+        background: background.clone(),
     };
 
-    // Background cleanup: runs hourly for the lifetime of the process.
-    tasks::cleanup::spawn(db);
+    // Background cleanup: runs hourly until the shutdown, which waits for
+    // the pass under way.
+    background.spawn(tasks::cleanup::run(db, state.storage.clone(), stopping));
 
     let app = app::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
     ::tracing::info!("listening on {}", listener.local_addr()?);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    shutdown::serve(listener, app, &background, trigger, stop, grace).await?;
 
     Ok(())
 }

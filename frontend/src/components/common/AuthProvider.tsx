@@ -1,7 +1,7 @@
 // src/components/common/AuthProvider.tsx
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { setUnauthenticatedHandler } from "@/lib/api";
 import { AuthContext, type AuthContextValue, type AuthStatus } from "@/lib/auth";
 import {
@@ -25,6 +25,32 @@ import type {
 } from "@/types/api";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { Loader2Icon } from "lucide-react";
+
+const AUTH_ME_QUERY_HASH = hashKey(AUTH_ME_QUERY_KEY);
+
+const SERVER_TOAST = "server-unreachable";
+const SERVER_BACK_TOAST = "server-back";
+
+/**
+ * Forgets the session client-side: every cached answer goes, so that an
+ * account signing in next in this tab is not served this one's, and the
+ * session's own query is set to "nobody".
+ *
+ * Set, not removed. The provider's observer would stay on the removed query,
+ * whose fetch the removal cancels without a word, and `status` would read
+ * `loading`, or the old user, until something else happened to re-render the
+ * provider: a visitor with no session would wait on the spinner for good.
+ */
+function forgetSession(queryClient: QueryClient) {
+  // An /auth/me already on the wire must not land afterwards and put the
+  // previous account back.
+  void queryClient.cancelQueries({ queryKey: AUTH_ME_QUERY_KEY, exact: true });
+  queryClient.removeQueries({ predicate: (query) => query.queryHash !== AUTH_ME_QUERY_HASH });
+  queryClient.setQueryData(AUTH_ME_QUERY_KEY, null);
+}
+
+type StatusWaiter = { wanted: AuthStatus; resolve: () => void };
 
 /**
  * Holds the session for the whole app.
@@ -40,12 +66,17 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     data: user,
     isPending,
     refetch,
+    isError,
   } = useQuery({
     queryKey: AUTH_ME_QUERY_KEY,
     queryFn: fetchCurrentUser,
-    // The interceptor already handles the one recoverable failure (expired
-    // access token); retrying past that only delays the login screen.
-    retry: false,
+    // A 401 never reaches here, fetchCurrentUser turns it into null: what
+    // fails is the server itself (no answer, 5xx). Two quick retries cover a
+    // restart; past that the status reads `unavailable` and the query keeps
+    // asking every few seconds until the server is back.
+    retry: 2,
+    retryDelay: (attempt) => 250 * 2 ** attempt,
+    refetchInterval: (query) => (query.state.status === "error" && query.state.data === undefined ? 5000 : false),
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,
   });
@@ -57,7 +88,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
       setUnauthenticatedHandler(() => {
         const hadSession = queryClient.getQueryData(AUTH_ME_QUERY_KEY) != null;
 
-        queryClient.setQueryData(AUTH_ME_QUERY_KEY, null);
+        forgetSession(queryClient);
 
         if (hadSession) {
           // Same sentence the inline error uses for this code — kept as one
@@ -96,25 +127,92 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     mutationFn: logoutRequest,
     // Even on failure: the cookies are gone client-side either way, keeping the
     // cache would only show stale data to the next user of this browser.
-    onSettled: () => {
-      queryClient.removeQueries();
-      queryClient.setQueryData(AUTH_ME_QUERY_KEY, null);
-    },
+    onSettled: () => forgetSession(queryClient),
   });
 
+  let status: AuthStatus;
+  if (isPending) {
+    status = "loading";
+  } else if (user) {
+    status = "authenticated";
+  } else if (isError) {
+    // No answer is not "signed out": sending this visitor to the sign-in
+    // page would lose where they were for a server that is only restarting.
+    status = "unavailable";
+  } else {
+    status = "anonymous";
+  }
+
+  // Says why the page waits while the server is away, and when it is back.
+  // The "back" toast is a new one: updating by id merges the options, and it
+  // would keep the endless duration, the spinner and the colors.
+  const wasUnavailable = useRef(false);
+  useEffect(() => {
+    if (status === "unavailable") {
+      wasUnavailable.current = true;
+      toast.warning(t("errors:generic.server_unreachable"), {
+        id: SERVER_TOAST,
+        duration: Infinity,
+        richColors: true,
+        icon: <Loader2Icon aria-hidden className="size-4 animate-spin" />,
+      });
+    } else if (wasUnavailable.current && status !== "loading") {
+      wasUnavailable.current = false;
+      toast.dismiss(SERVER_TOAST);
+      toast.success(t("errors:generic.server_back"), { id: SERVER_BACK_TOAST, richColors: true });
+    }
+  }, [status, t]);
+
+  // The cache changes as soon as login or logout answers, but this provider
+  // only hears of it on React Query's next batched notification. A caller
+  // navigating right away would reach route guards still reading the old
+  // status, and be bounced: back to the sign-in form after signing in, back
+  // into the app after signing out. Both calls therefore resolve once the
+  // new status has been rendered, which is when every guard has it too.
+  const renderedStatus = useRef(status);
+  const statusWaiters = useRef(new Set<StatusWaiter>());
+
+  useEffect(() => {
+    renderedStatus.current = status;
+    for (const waiter of statusWaiters.current) {
+      if (waiter.wanted === status) {
+        statusWaiters.current.delete(waiter);
+        waiter.resolve();
+      }
+    }
+  }, [status]);
+
+  const untilRendered = useCallback(
+    (wanted: AuthStatus): Promise<void> =>
+      renderedStatus.current === wanted
+        ? Promise.resolve()
+        : new Promise((resolve) => statusWaiters.current.add({ wanted, resolve })),
+    [],
+  );
+
   const login = useCallback(
-    (payload: LoginPayload): Promise<User> => loginAsync(payload),
-    [loginAsync],
+    async (payload: LoginPayload): Promise<User> => {
+      const loggedIn = await loginAsync(payload);
+      await untilRendered("authenticated");
+      return loggedIn;
+    },
+    [loginAsync, untilRendered],
   );
 
   const register = useCallback(
-    (payload: RegisterPayload): Promise<User> => registerAsync(payload),
+    (payload: RegisterPayload): Promise<void> => registerAsync(payload),
     [registerAsync],
   );
 
+  // On failure as well: the session is forgotten locally either way, and the
+  // caller still sends the user to the sign-in form.
   const logout = useCallback(async (): Promise<void> => {
-    await logoutAsync();
-  }, [logoutAsync]);
+    try {
+      await logoutAsync();
+    } finally {
+      await untilRendered("anonymous");
+    }
+  }, [logoutAsync, untilRendered]);
 
   const confirmEmail = useCallback(
     (token: string): Promise<void> => confirmEmailAsync(token),
@@ -139,15 +237,6 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const reload = useCallback(async (): Promise<void> => {
     await refetch();
   }, [refetch]);
-
-  let status: AuthStatus;
-  if (isPending) {
-    status = "loading";
-  } else if (user) {
-    status = "authenticated";
-  } else {
-    status = "anonymous";
-  }
 
   const value = useMemo<AuthContextValue>(
     () => ({

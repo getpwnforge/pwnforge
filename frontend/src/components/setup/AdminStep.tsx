@@ -18,13 +18,14 @@ import { isApiError } from "@/lib/api-error";
 /**
  * Which input a server rejection belongs under.
  *
- * The three rules the client cannot check itself — reserved username, blocked
- * email domain, breached password — each map to exactly one field.
+ * The rules the client cannot check itself (a taken or reserved username, a
+ * taken address, a blocked email domain, a breached password) each map to
+ * exactly one field.
  */
 const FIELD_BY_CODE: Record<string, keyof AdminValues> = {
   username_taken: "admin_username",
   username_reserved: "admin_username",
-  email_taken: "admin_email",
+  admin_email_taken: "admin_email",
   invalid_email: "admin_email",
   email_domain_not_allowed: "admin_email",
   password_compromised: "admin_password",

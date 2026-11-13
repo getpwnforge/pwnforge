@@ -17,7 +17,9 @@ use axum::{
 use chrono::Utc;
 use domain::{
     dto::{
-        error_responses::{LegalVersionStaleErrorResponse, SimpleErrorResponse},
+        error_responses::{
+            LegalVersionStaleErrorResponse, SimpleErrorResponse, UnprocessableErrorResponse,
+        },
         legal::{LegalAcceptanceInput, LegalStatusDto, LegalVersionsDto},
     },
     legal::{CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION},
@@ -62,11 +64,11 @@ async fn status(
 ///
 /// Records acceptance of the currently published documents. Returns 409 with
 /// `legal_version_stale` if the client submitted a superseded version.
-///
-/// No `ConnectInfo` fallback on the client IP, unlike the rate limit checks
-/// in `routes/auth.rs`. When the trusted-proxy chain does not resolve an
-/// address, the raw TCP peer is Cloudflare, not the user: recording the
-/// proxy's address as evidence would be worse than recording nothing.
+//
+// No `ConnectInfo` fallback on the client IP, unlike the rate limit checks
+// in `routes/auth.rs`. When the trusted-proxy chain does not resolve an
+// address, the raw TCP peer is Cloudflare, not the user: recording the
+// proxy's address as evidence would be worse than recording nothing.
 #[utoipa::path(
     post,
     path = "/api/v1/legal/accept",
@@ -75,9 +77,11 @@ async fn status(
     request_body = LegalAcceptanceInput,
     responses(
         (status = 204, description = "Legal documents accepted"),
-        (status = 422, description = "Invalid request", body = SimpleErrorResponse),
+        (status = 400, description = "malformed_json or invalid_body: the body is not JSON, or could not be read", body = SimpleErrorResponse),
         (status = 401, description = "Unauthorized", body = SimpleErrorResponse),
         (status = 409, description = "Legal version stale", body = LegalVersionStaleErrorResponse),
+        (status = 415, description = "unsupported_media_type: Content-Type is not application/json", body = SimpleErrorResponse),
+        (status = 422, description = "invalid_body: the body is JSON of the wrong shape", body = UnprocessableErrorResponse),
     )
 )]
 async fn accept(
@@ -105,9 +109,9 @@ async fn accept(
 )]
 /// `GET /api/v1/legal/versions`
 ///
-/// Public: the registration form needs it before any session exists. Read
-/// straight from the constants, so it cannot drift from what the backend will
-/// accept a moment later.
+/// Public: the registration form needs it before any session exists.
+// Read straight from the constants, so it cannot drift from what the backend
+// will accept a moment later.
 async fn versions() -> Json<LegalVersionsDto> {
     Json(LegalVersionsDto {
         terms_version: CURRENT_TERMS_VERSION,

@@ -1,9 +1,10 @@
 //! `pwnforge-admin user ...` - account lifecycle and access management.
 //!
-//! Destructive actions require interactive confirmation. Self-suspension and
-//! "last remaining instance admin" guards described in SECURITY.md apply to
-//! the future HTTP admin routes; here we still enforce the admin-quorum check
-//! since the CLI can just as easily lock out the instance.
+//! `delete` and `cancel-deletion` ask for interactive confirmation; the other
+//! commands act as soon as they are run. The guards are in `admin_service`,
+//! not here: with an `--actor`, an admin cannot suspend, delete or demote
+//! their own account, and the last instance admin cannot be deleted or
+//! demoted.
 
 use crate::CliContext;
 use crate::datetime::parse_datetime;
@@ -14,9 +15,10 @@ use clap::{Args, Subcommand};
 use dialoguer::Confirm;
 use domain::entities::users;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use services::admin_service::{self, AdminError};
+use services::admin_service::{self, AdminError, DeletionRequest};
 use services::audit_service::AuditContext;
 use services::auth_service;
+use services::storage_service::{ObjectStore, S3Store};
 use tabled::{Table, Tabled};
 use uuid::Uuid;
 
@@ -33,6 +35,10 @@ struct UserRow {
     #[tabled(rename = "admin")]
     is_instance_admin: bool,
     status: String,
+    /// The last sign-in or token refresh, or `never`: an empty cell would read
+    /// like a missing value rather than an account nobody has used.
+    #[tabled(rename = "last activity")]
+    last_activity: String,
 }
 
 #[derive(Tabled)]
@@ -139,6 +145,14 @@ fn report(err: AdminError) -> anyhow::Error {
         }
         AdminError::SelfTarget => {
             eprintln!("Error: refusing to target the account you are running as.");
+            std::process::exit(1);
+        }
+        AdminError::CaptainMustTransfer { teams } => {
+            eprintln!(
+                "Error: this account is the Captain of teams that have other members: {}.\n\
+                 Transfer each one first (pwnforge-admin team transfer <slug> <user>).",
+                teams.join(", ")
+            );
             std::process::exit(1);
         }
         other => other.into(),
@@ -256,6 +270,10 @@ async fn list(ctx: &CliContext, suspended_only: bool) -> anyhow::Result<()> {
             } else {
                 "active".into()
             },
+            last_activity: user
+                .last_activity_at
+                .map(|at| at.to_rfc3339())
+                .unwrap_or_else(|| "never".into()),
         })
         .collect();
 
@@ -310,15 +328,22 @@ async fn delete(
     }
 
     let mut redis = ctx.redis.clone();
+    // An immediate deletion purges the account's objects, so this command
+    // needs the store the instance writes to. Built here rather than in the
+    // context: no other command touches the bucket.
+    let store = ObjectStore::S3(S3Store::new(&ctx.config.storage));
 
     admin_service::delete_user(
         &ctx.db,
         &mut redis,
+        &store,
         &ctx.config,
         &cli_ctx(ctx),
         id,
-        kind.into(),
-        reason.as_deref(),
+        DeletionRequest {
+            kind: kind.into(),
+            reason: reason.as_deref(),
+        },
     )
     .await
     .map_err(report)?;

@@ -10,7 +10,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      # Bound to the loopback interface: published as 0.0.0.0 these were
+      # reachable from anything on the same network as the developer's machine.
+      - "127.0.0.1:5432:5432"
     volumes:
       - db-data:/var/lib/postgresql
     healthcheck:
@@ -31,10 +33,11 @@ services:
     cap_drop: [ALL]
     cap_add: [SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -45,25 +48,61 @@ services:
     networks:
       - internal
 
-  minio:
-    image: minio/minio:latest
+  # Same profile as production, so `COMPOSE_PROFILES=garage` behaves the same
+  # way locally. The only difference is the exposed port.
+  #
+  # Garage has no web console - MinIO's was the reason the old pin was stuck on
+  # a 2025 release, and it is gone either way. Inspect a local instance with
+  # the CLI or any S3 client; see "Inspecting object storage" in
+  # CONTRIBUTING.md.
+  #
+  # Requires ops/garage/garage.toml (gitignored). Copy the .example and fill in
+  # the two secrets before the first start.
+  garage:
+    image: dxflrs/garage:v2.4.1
+    profiles: ["garage"]
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # Loopback-bound, as everything else in the dev compose is: reachable from
+    # the host for debugging, not from the network. 3900 is the S3 API, 3903
+    # the admin API.
     ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
+      - "127.0.0.1:3900:3900"
+      - "127.0.0.1:3903:3903"
     volumes:
-      - minio-data:/data
+      - ./ops/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "/garage", "status"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+
+  garage-init:
+    image: python:3.13-alpine
+    profiles: ["garage"]
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      garage:
+        condition: service_healthy
+    environment:
+      GARAGE_ADMIN_URL: http://garage:3903
+      PWNFORGE_GARAGE_CAPACITY: ${PWNFORGE_GARAGE_CAPACITY:-100G}
+      PWNFORGE_GARAGE_ZONE: ${PWNFORGE_GARAGE_ZONE:-pwnforge}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS}
+    command: ["python3", "/init/bootstrap.py"]
+    volumes:
+      - ./ops/garage/bootstrap.py:/init/bootstrap.py:ro
+      - ./ops/garage/garage.toml:/etc/garage.toml:ro
     networks:
       - internal
 
@@ -78,11 +117,15 @@ services:
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # No stop_grace_period, unlike docker-compose.yml: the `sh` below is PID 1
+    # here and does not pass SIGTERM on, so the backend never gets it in this
+    # stack and a longer period would only delay the kill. The clean shutdown
+    # is checked on the production compose, by `make prod-check`.
     working_dir: /app
     command: sh -c "cargo install cargo-watch --locked; cargo build -p admin-cli & cargo watch -x 'run -p api'"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       PORT: ${PORT}
@@ -93,11 +136,18 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-noreply@localhost}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       # SETUP_TOKEN: ${SETUP_TOKEN}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       CHECK_PWNED_PASSWORDS: ${CHECK_PWNED_PASSWORDS:-true}
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      PWNFORGE_S3_ENDPOINT: ${PWNFORGE_S3_ENDPOINT-http://garage:3900}
+      PWNFORGE_S3_REGION: ${PWNFORGE_S3_REGION:-garage}
+      PWNFORGE_S3_ACCESS_KEY_ID: ${PWNFORGE_S3_ACCESS_KEY_ID}
+      PWNFORGE_S3_SECRET_ACCESS_KEY: ${PWNFORGE_S3_SECRET_ACCESS_KEY}
+      PWNFORGE_S3_FORCE_PATH_STYLE: ${PWNFORGE_S3_FORCE_PATH_STYLE:-true}
+      PWNFORGE_S3_BUCKET_ATTACHMENTS: ${PWNFORGE_S3_BUCKET_ATTACHMENTS}
+      PWNFORGE_S3_BUCKET_AVATARS: ${PWNFORGE_S3_BUCKET_AVATARS}
+      PWNFORGE_S3_KEY_PREFIX: ${PWNFORGE_S3_KEY_PREFIX:-}
+      PWNFORGE_S3_PUBLIC_BASE_URL: ${PWNFORGE_S3_PUBLIC_BASE_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
@@ -108,6 +158,7 @@ services:
       BLOCK_DISPOSABLE_EMAILS: ${BLOCK_DISPOSABLE_EMAILS:-true}
       RUST_LOG: ${RUST_LOG:-info}
       BACKEND_ENV: development
+      SHUTDOWN_GRACE_SECS: ${SHUTDOWN_GRACE_SECS:-25}
     ports:
       - "${PORT}:3000"
     volumes:
@@ -125,8 +176,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      # No `garage` edge: depending on a profiled service re-enables its
+      # profile (Compose >= 2.20), which would start Garage even for someone
+      # pointing the dev stack at a real S3. The backend HeadBuckets at boot.
     deploy:
       resources:
         limits:
@@ -156,7 +208,7 @@ services:
       - ./frontend:/app
       - frontend-node-modules:/app/node_modules
     environment:
-      VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY}
+      VITE_DEV_ALLOWED_HOST: ${VITE_DEV_ALLOWED_HOST}
     depends_on:
       backend:
         condition: service_healthy
@@ -177,7 +229,8 @@ networks:
 
 volumes:
   db-data:
-  minio-data:
+  garage-meta:
+  garage-data:
   cargo-cache:
   cargo-target:
   frontend-node-modules:

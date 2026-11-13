@@ -64,6 +64,21 @@ pub enum EmailError {
     Address(#[from] lettre::address::AddressError),
 }
 
+impl EmailError {
+    /// The mail service did not take the message: unreachable, down or
+    /// refusing it. Not a message that could not be built, which is a bug.
+    pub fn is_delivery_failure(&self) -> bool {
+        matches!(self, Self::Transport(_) | Self::Smtp(_) | Self::Rejected(_))
+    }
+}
+
+/// Whether `address` makes a mailbox, parsed as `send` parses every address
+/// it is given. Stricter than the `email` validator on the request bodies:
+/// `a..b@example.test` and `a@[127.0.0.1]` pass that one and fail this.
+pub fn is_valid_mailbox(address: &str) -> bool {
+    address.parse::<lettre::message::Mailbox>().is_ok()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum AlertKind {
     PasswordChanged,
@@ -268,6 +283,41 @@ struct EmailVerificationText {
 }
 
 #[derive(Template)]
+#[template(path = "invitation.html.j2")]
+struct InvitationHtml {
+    locale: String,
+    title: String,
+    preheader: String,
+    greeting: String,
+    body: String,
+    cta: String,
+    link: String,
+    fallback_notice: String,
+    expiry: String,
+    ignore_notice: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "invitation.txt")]
+struct InvitationText {
+    title: String,
+    greeting: String,
+    body: String,
+    cta: String,
+    link: String,
+    expiry: String,
+    ignore_notice: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
 #[template(path = "security_alert.html.j2")]
 struct SecurityAlertHtml {
     locale: String,
@@ -414,13 +464,29 @@ struct TestEmailText {
     public_url: String,
 }
 
+/// A link to a page of the app carrying a token, in the fragment: what
+/// follows `#` never leaves the browser, so the token stays out of the
+/// access logs of every server and proxy the page load goes through. The
+/// page reads it, then drops it from the address bar and the history.
+fn token_link(public_url: &str, path: &str, token: &str) -> String {
+    format!("{public_url}/{path}#token={token}")
+}
+
+fn reset_link(public_url: &str, token: &str) -> String {
+    token_link(public_url, "auth/password/reset", token)
+}
+
+fn verification_link(public_url: &str, token: &str) -> String {
+    token_link(public_url, "auth/email/verify", token)
+}
+
 pub async fn send_password_reset(
     config: &Config,
     to: &str,
     locale: &str,
     token: &str,
 ) -> Result<(), EmailError> {
-    let link = format!("{}/auth/password/reset?token={token}", config.public_url);
+    let link = reset_link(&config.public_url, token);
 
     let title = t!("email.password_reset.title", locale = locale).to_string();
     let preheader = t!("email.password_reset.preheader", locale = locale).to_string();
@@ -476,7 +542,7 @@ pub async fn send_email_verification(
     token: &str,
 ) -> Result<(), EmailError> {
     // Same shape, link points at the verification page.
-    let link = format!("{}/auth/email/verify?token={token}", config.public_url);
+    let link = verification_link(&config.public_url, token);
 
     let title = t!("email.email_verification.title", locale = locale).to_string();
     let preheader = t!("email.email_verification.preheader", locale = locale).to_string();
@@ -523,6 +589,136 @@ pub async fn send_email_verification(
     .render()?;
 
     send(config, to, &subject, &html, &text, None).await
+}
+
+/// What an invitation mail invites to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvitationKind {
+    Team,
+    Workspace,
+}
+
+impl InvitationKind {
+    /// The path segment of the page that opens the invitation.
+    fn segment(self) -> &'static str {
+        match self {
+            InvitationKind::Team => "team",
+            InvitationKind::Workspace => "workspace",
+        }
+    }
+}
+
+/// The one invitation mail, for teams and workspaces alike, and the same
+/// whether an account holds `to` or not: it asks the reader to sign in, or
+/// to create an account with this address first, and links to the
+/// invitation itself.
+///
+/// The link carries the token in clear, as the verification and reset links
+/// do; the page posts it back in a body, and it only ever opens the
+/// invitation to the account it names.
+pub async fn send_invitation(
+    config: &Config,
+    to: &str,
+    locale: &str,
+    kind: InvitationKind,
+    name: &str,
+    token: &str,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Result<(), EmailError> {
+    let message = invitation_message(&config.public_url, locale, kind, name, token, expires_at)?;
+    send(
+        config,
+        to,
+        &message.subject,
+        &message.html,
+        &message.text,
+        None,
+    )
+    .await
+}
+
+struct RenderedMessage {
+    subject: String,
+    html: String,
+    text: String,
+}
+
+fn invitation_message(
+    public_url: &str,
+    locale: &str,
+    kind: InvitationKind,
+    name: &str,
+    token: &str,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> Result<RenderedMessage, askama::Error> {
+    let link = token_link(
+        public_url,
+        &format!("invitations/{}", kind.segment()),
+        token,
+    );
+    let (subject_key, preheader_key, body_key) = match kind {
+        InvitationKind::Team => (
+            "email.invitation.subject_team",
+            "email.invitation.preheader_team",
+            "email.invitation.body_team",
+        ),
+        InvitationKind::Workspace => (
+            "email.invitation.subject_workspace",
+            "email.invitation.preheader_workspace",
+            "email.invitation.body_workspace",
+        ),
+    };
+
+    let date = expires_at.format("%Y-%m-%d %H:%M").to_string();
+    let title = t!(subject_key, locale = locale).to_string();
+    let subject = title.clone();
+    let preheader = t!(preheader_key, locale = locale, name = name).to_string();
+    let greeting = t!("email.common.greeting", locale = locale).to_string();
+    let body = t!(body_key, locale = locale, name = name).to_string();
+    let cta = t!("email.invitation.cta", locale = locale).to_string();
+    let fallback_notice = t!("email.common.fallback_notice", locale = locale).to_string();
+    let expiry = t!("email.invitation.expiry", locale = locale, date = date).to_string();
+    let ignore_notice = t!("email.invitation.ignore_notice", locale = locale).to_string();
+    let footer = Footer::new(locale);
+
+    let html = InvitationHtml {
+        locale: locale.to_string(),
+        title: title.clone(),
+        preheader,
+        greeting: greeting.clone(),
+        body: body.clone(),
+        cta: cta.clone(),
+        link: link.clone(),
+        fallback_notice,
+        expiry: expiry.clone(),
+        ignore_notice: ignore_notice.clone(),
+        footer: footer.text.clone(),
+        footer_instance: footer.instance.clone(),
+        footer_note: footer.note.clone(),
+        public_url: public_url.to_owned(),
+    }
+    .render()?;
+
+    let text = InvitationText {
+        title,
+        greeting,
+        body,
+        cta,
+        link,
+        expiry,
+        ignore_notice,
+        footer: footer.text,
+        footer_instance: footer.instance,
+        footer_note: footer.note,
+        public_url: public_url.to_owned(),
+    }
+    .render()?;
+
+    Ok(RenderedMessage {
+        subject,
+        html,
+        text,
+    })
 }
 
 pub async fn send_security_alert(
@@ -674,6 +870,152 @@ pub async fn send_account_notice(
     send(config, to, &subject, &html, &text, None).await
 }
 
+/// What a sign-up notice tells the holder of an address someone just tried
+/// to register with. Sent in place of an error, so that registration never
+/// says whether an address has an account (see `auth_service::register`).
+pub enum SignupNotice {
+    /// The address belongs to an account that verified it: sign in, or
+    /// reset the password.
+    ExistingAccount,
+    /// The address is held by a registration nobody confirmed, which the
+    /// cleanup task deletes after `deleted_after`. Never with that
+    /// registration's verification link: whoever reads this owns the
+    /// mailbox, not that account.
+    PendingRegistration {
+        deleted_after: chrono::DateTime<chrono::Utc>,
+    },
+}
+
+#[derive(Clone)]
+struct NoticeLink {
+    label: String,
+    href: String,
+}
+
+#[derive(Template)]
+#[template(path = "signup_notice.html.j2")]
+struct SignupNoticeHtml {
+    locale: String,
+    title: String,
+    preheader: String,
+    greeting: String,
+    body: String,
+    detail: Option<String>,
+    links: Vec<NoticeLink>,
+    closing: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "signup_notice.txt")]
+struct SignupNoticeText {
+    title: String,
+    greeting: String,
+    body: String,
+    detail: Option<String>,
+    links: Vec<NoticeLink>,
+    closing: String,
+    footer: String,
+    footer_instance: String,
+    footer_note: String,
+    public_url: String,
+}
+
+/// Renders a sign-up notice: subject, HTML and text.
+fn render_signup_notice(
+    public_url: &str,
+    locale: &str,
+    notice: &SignupNotice,
+) -> Result<(String, String, String), EmailError> {
+    let key = match notice {
+        SignupNotice::ExistingAccount => "existing",
+        SignupNotice::PendingRegistration { .. } => "pending",
+    };
+    let text_of =
+        |name: &str| t!(format!("email.signup_notice.{key}.{name}"), locale = locale).to_string();
+
+    let (detail, links) = match notice {
+        SignupNotice::ExistingAccount => (
+            None,
+            vec![
+                NoticeLink {
+                    label: text_of("sign_in"),
+                    href: format!("{public_url}/login"),
+                },
+                NoticeLink {
+                    label: text_of("forgot_password"),
+                    href: format!("{public_url}/forgot-password"),
+                },
+            ],
+        ),
+        SignupNotice::PendingRegistration { deleted_after } => {
+            let date = deleted_after.format("%Y-%m-%d %H:%M UTC").to_string();
+            (
+                Some(
+                    t!(
+                        "email.signup_notice.pending.detail",
+                        locale = locale,
+                        date = date
+                    )
+                    .to_string(),
+                ),
+                Vec::new(),
+            )
+        }
+    };
+
+    let title = text_of("title");
+    let greeting = t!("email.common.greeting", locale = locale).to_string();
+    let body = text_of("body");
+    let closing = text_of("closing");
+    let footer = Footer::new(locale);
+
+    let html = SignupNoticeHtml {
+        locale: locale.to_owned(),
+        title: title.clone(),
+        preheader: text_of("preheader"),
+        greeting: greeting.clone(),
+        body: body.clone(),
+        detail: detail.clone(),
+        links: links.clone(),
+        closing: closing.clone(),
+        footer: footer.text.clone(),
+        footer_instance: footer.instance.clone(),
+        footer_note: footer.note.clone(),
+        public_url: public_url.to_owned(),
+    }
+    .render()?;
+
+    let text = SignupNoticeText {
+        title,
+        greeting,
+        body,
+        detail,
+        links,
+        closing,
+        footer: footer.text,
+        footer_instance: footer.instance,
+        footer_note: footer.note,
+        public_url: public_url.to_owned(),
+    }
+    .render()?;
+
+    Ok((text_of("subject"), html, text))
+}
+
+pub async fn send_signup_notice(
+    config: &Config,
+    to: &str,
+    locale: &str,
+    notice: SignupNotice,
+) -> Result<(), EmailError> {
+    let (subject, html, text) = render_signup_notice(&config.public_url, locale, &notice)?;
+    send(config, to, &subject, &html, &text, None).await
+}
+
 /// Untranslated on purpose: this only has to prove that the transport works,
 /// and the operator has not picked a locale yet. It still goes through the
 /// shared layout — it is the first email an instance ever sends, and the one
@@ -820,7 +1162,9 @@ async fn send(
 ) -> Result<(), EmailError> {
     match config.email_backend {
         EmailBackend::Console => {
-            tracing::info!(to, subject, ?reply_to, "email (console backend)");
+            // No address in the structured log: in production it is JSON and
+            // often shipped elsewhere. The developer reads them in the body below.
+            tracing::info!(subject, "email (console backend)");
             // println! rather than tracing for the body: the pretty formatter
             // wraps long lines, which makes the link painful to copy.
             println!(
@@ -917,6 +1261,43 @@ mod tests {
 
     const PUBLIC_URL: &str = "https://ctf.example.test";
 
+    /// A bare address and one with a display name make a mailbox; an empty
+    /// atom, which the request validator lets through, does not.
+    #[test]
+    fn a_mailbox_is_parsed_as_the_smtp_path_parses_it() {
+        for address in [
+            "visitor@example.test",
+            "PwnForge <noreply@ctf.example.test>",
+        ] {
+            assert!(is_valid_mailbox(address), "{address} is a mailbox");
+        }
+        for address in [
+            "a..b@example.test",
+            ".a@example.test",
+            "a@[127.0.0.1]",
+            "no-at-sign",
+            "",
+        ] {
+            assert!(!is_valid_mailbox(address), "{address:?} is not a mailbox");
+        }
+    }
+
+    /// A refusal by the provider is a delivery failure; a message that could
+    /// not be built, or an address that does not parse, is not.
+    #[test]
+    fn only_the_mail_service_failing_counts_as_a_delivery_failure() {
+        assert!(EmailError::Rejected("refused".to_owned()).is_delivery_failure());
+
+        let unbuilt = EmailError::Message(lettre::error::Error::MissingFrom);
+        assert!(!unbuilt.is_delivery_failure());
+        let unparsed = EmailError::Address(
+            "a..b@example.test"
+                .parse::<lettre::Address>()
+                .expect_err("an empty atom does not parse"),
+        );
+        assert!(!unparsed.is_delivery_failure());
+    }
+
     fn password_reset_html(locale: &str, link: &str) -> PasswordResetHtml {
         let footer = Footer::new(locale);
 
@@ -940,7 +1321,7 @@ mod tests {
 
     #[test]
     fn password_reset_renders_in_both_languages() {
-        let link = "https://example.test/auth/password/reset?token=abc123";
+        let link = "https://example.test/auth/password/reset#token=abc123";
 
         for locale in ["en", "fr"] {
             let html = password_reset_html(locale, link)
@@ -980,7 +1361,7 @@ mod tests {
     #[test]
     fn password_reset_text_carries_the_link() {
         let footer = Footer::new("en");
-        let link = "https://example.test/auth/password/reset?token=abc123";
+        let link = "https://example.test/auth/password/reset#token=abc123";
 
         let text = PasswordResetText {
             title: t!("email.password_reset.title", locale = "en").to_string(),
@@ -1062,5 +1443,130 @@ mod tests {
             quoted.to_string(),
             r#""PwnForge, CTF" <hello@pwnforge.app>"#
         );
+    }
+
+    /// The invitation mail renders for both kinds in both languages, carries
+    /// its link and expiry, and leaves no placeholder behind. It takes no
+    /// account at all, which is what keeps its form the same whether one
+    /// holds the address or not.
+    #[test]
+    fn the_invitation_mail_renders_for_both_kinds_in_both_languages() {
+        let expires_at = chrono::DateTime::parse_from_rfc3339("2026-10-21T09:30:00Z")
+            .expect("valid date")
+            .with_timezone(&chrono::Utc);
+
+        for kind in [InvitationKind::Team, InvitationKind::Workspace] {
+            for locale in ["en", "fr"] {
+                let message = invitation_message(
+                    PUBLIC_URL,
+                    locale,
+                    kind,
+                    "Night Owls",
+                    "tok123",
+                    expires_at,
+                )
+                .expect("template must render");
+                let link = format!("{PUBLIC_URL}/invitations/{}#token=tok123", kind.segment());
+
+                for part in [&message.html, &message.text] {
+                    assert!(part.contains(&link), "link missing in {locale}");
+                    assert!(part.contains("Night Owls"), "name missing in {locale}");
+                    assert!(
+                        part.contains("2026-10-21 09:30"),
+                        "expiry missing in {locale}"
+                    );
+                    assert!(
+                        !part.contains("{{"),
+                        "unsubstituted placeholder in {locale}"
+                    );
+                    assert!(!part.contains("%{"), "untranslated variable in {locale}");
+                }
+                assert!(!message.subject.is_empty());
+                assert!(message.html.contains(&format!(r#"lang="{locale}""#)));
+            }
+        }
+    }
+
+    /// Every link that carries a token carries it in the fragment, which the
+    /// browser never sends: a query string would land in the access log of
+    /// every server and proxy the page load goes through.
+    #[test]
+    fn token_links_carry_the_token_in_the_fragment() {
+        for (link, path) in [
+            (reset_link(PUBLIC_URL, "tok123"), "/auth/password/reset"),
+            (
+                verification_link(PUBLIC_URL, "tok123"),
+                "/auth/email/verify",
+            ),
+        ] {
+            assert_eq!(link, format!("{PUBLIC_URL}{path}#token=tok123"));
+            assert!(!link.contains('?'), "no query string in {link}");
+        }
+    }
+
+    /// Fails on a key with no translation: `t!` hands the key itself back.
+    fn assert_translated(rendered: &str, locale: &str) {
+        assert!(
+            !rendered.contains("email.signup_notice") && !rendered.contains("email.common"),
+            "untranslated key in {locale}: {rendered}"
+        );
+    }
+
+    /// The holder of a verified address is pointed at the sign-in and reset
+    /// pages, by plain links, and handed no token.
+    #[test]
+    fn a_signup_notice_to_an_account_links_to_sign_in_and_reset_only() {
+        for locale in ["en", "fr"] {
+            let (subject, html, text) =
+                render_signup_notice(PUBLIC_URL, locale, &SignupNotice::ExistingAccount)
+                    .expect("the notice must render");
+
+            assert_translated(&subject, locale);
+            for part in [&html, &text] {
+                assert_translated(part, locale);
+                assert!(
+                    part.contains(&format!("{PUBLIC_URL}/login")),
+                    "sign-in link in {locale}"
+                );
+                assert!(
+                    part.contains(&format!("{PUBLIC_URL}/forgot-password")),
+                    "reset link in {locale}"
+                );
+                assert!(!part.contains("token"), "no token in {locale}");
+            }
+        }
+    }
+
+    /// A registration nobody confirmed is announced with the date it goes,
+    /// and never with a link that could confirm it.
+    #[test]
+    fn a_signup_notice_to_a_pending_registration_gives_its_date_and_no_link() {
+        let deleted_after = "2026-10-26T12:00:00Z"
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .expect("a valid date");
+
+        for locale in ["en", "fr"] {
+            let (subject, html, text) = render_signup_notice(
+                PUBLIC_URL,
+                locale,
+                &SignupNotice::PendingRegistration { deleted_after },
+            )
+            .expect("the notice must render");
+
+            assert_translated(&subject, locale);
+            for part in [&html, &text] {
+                assert_translated(part, locale);
+                assert!(
+                    part.contains("2026-10-26 12:00 UTC"),
+                    "deletion date in {locale}"
+                );
+                assert!(!part.contains("token"), "no token in {locale}");
+                assert!(
+                    !part.contains("/auth/"),
+                    "no link to an auth page in {locale}"
+                );
+                assert!(!part.contains("/login"), "no sign-in link in {locale}");
+            }
+        }
     }
 }

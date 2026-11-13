@@ -10,31 +10,28 @@ import {
   Settings,
   Folder,
   Folders,
-  CircleQuestionMark,
-  Bell,
   Search,
   ChevronDown,
   Check,
   Ellipsis,
   User,
   LogOut,
+  CircleQuestionMark,
   // PanelLeftClose,
-  RefreshCcwIcon,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
 import { ROUTES } from "@/lib/routes"
 import { cn } from "@/lib/utils"
+import { displayName } from "@/lib/display-name"
 
-import { useWorkspaces, useWorkspaceId } from "@/hooks/useWorkspaces"
-import {
-  useNotifications,
-  useMarkNotificationRead,
-  useMarkAllNotificationsRead,
-  type Notification,
-} from "@/hooks/useNotifications"
+import { useWorkspaces, useWorkspaceSlug } from "@/hooks/useWorkspaces"
+import { useTeams } from "@/hooks/useTeams"
+import { usePendingTeamInvitations, usePendingWorkspaceInvitations } from "@/hooks/useInvitations"
+import { useRecentWorkspaces } from "@/stores/recent-workspaces"
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { useAuth } from "@/hooks/useAuth"
+import { PendingInvitationsMenu } from "@/components/layout/PendingInvitationsMenu"
 
 // import { useSidebarStore } from "@/stores/sidebar-store"
 
@@ -74,33 +71,48 @@ import { WsIcon } from "@/components/brand/WsIcon";
 import { Tag } from "@/components/ui/tag";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { Separator } from "@/components/ui/separator";
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, SidebarRail, SidebarTrigger } from "../ui/sidebar";
 import { useSidebar } from "../ui/sidebar-context";
-import type { WsColor } from "@/lib/ws-color";
+import type { WorkspaceSummary } from "@/lib/api/types";
+import { avatarUrl } from "@/lib/avatar";
 
 
-function workspaceNav(id: string): NavItem[] {
-  return [
-    { key: "dashboard",  labelKey: "sidebar.dashboard",  icon: Home,              to: ROUTES.workspace(id), end: true },
-    { key: "challenges", labelKey: "sidebar.challenges", icon: Flag,              to: ROUTES.challenges(id), badgeKey: "challenges" },
-    { key: "writeups",   labelKey: "sidebar.writeups",   icon: FileText,          to: ROUTES.writeups(id), badgeKey: "writeups" },
-    { key: "stats",      labelKey: "sidebar.stats",      icon: ChartNoAxesColumn, to: ROUTES.stats(id) },
-    { key: "members",    labelKey: "sidebar.members",    icon: Users,             to: ROUTES.members(id), badgeKey: "members" },
-    { key: "settings",   labelKey: "sidebar.settings",   icon: Settings,          to: ROUTES.settings(id) },
+
+function workspaceNav(slug: string, solo: boolean): NavItem[] {
+  const items: NavItem[] = [
+    { key: "dashboard",  labelKey: "sidebar.dashboard",  icon: Home,              to: ROUTES.workspace(slug), end: true },
+    { key: "challenges", labelKey: "sidebar.challenges", icon: Flag,              to: ROUTES.challenges(slug), badgeKey: "challenges" },
+    { key: "writeups",   labelKey: "sidebar.writeups",   icon: FileText,          to: ROUTES.writeups(slug), badgeKey: "writeups" },
+    { key: "stats",      labelKey: "sidebar.stats",      icon: ChartNoAxesColumn, to: ROUTES.stats(slug) },
+    { key: "members",    labelKey: "sidebar.members",    icon: Users,             to: ROUTES.members(slug), badgeKey: "members" },
+    { key: "settings",   labelKey: "sidebar.settings",   icon: Settings,          to: ROUTES.settings(slug) },
   ];
+
+  // A solo workspace has nobody else to list.
+  return solo ? items.filter((item) => item.key !== "members") : items;
 }
 
 const GLOBAL_NAV: NavItem[] = [
-  { key: "workspaces", labelKey: "sidebar.workspaces", icon: Folders,             to: ROUTES.workspaces },
+  { key: "workspaces", labelKey: "sidebar.workspaces", icon: Folders,             to: ROUTES.workspaces, badgeKey: "workspaces" },
   { key: "teams",      labelKey: "sidebar.teams",      icon: Users,              to: ROUTES.teams, badgeKey: "teams" },
   { key: "my-stats",   labelKey: "sidebar.myStats",    icon: ChartNoAxesColumn,  to: ROUTES.myStats },
   { key: "help",       labelKey: "sidebar.help",       icon: CircleQuestionMark, to: ROUTES.help },
 ];
 
+/** The current workspace's nav, without Members on a solo; the global nav outside a workspace. */
+function useNavItems(): NavItem[] {
+  const workspaceSlug = useWorkspaceSlug();
+  const { data: workspaces = [] } = useWorkspaces();
+  if (!workspaceSlug) return GLOBAL_NAV;
+  const current = workspaces.find((w) => w.slug === workspaceSlug);
+  return workspaceNav(workspaceSlug, current?.mode === "solo");
+}
+
 const systemTags = new Set(["web", "crypto", "pwn", "reverse", "forensics", "misc"])
+
+// No route lists a workspace's tags yet.
+const activeTags: string[] = []
 
 type NavItem = {
   key: string
@@ -109,36 +121,6 @@ type NavItem = {
   to: string
   end?: boolean
   badgeKey?: string
-}
-
-// Locale-aware relative time without i18n key sprawl.
-function relativeTime(iso: string, locale: string) {
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" })
-  const min = Math.round((new Date(iso).getTime() - Date.now()) / 60000)
-  if (Math.abs(min) < 60) return rtf.format(min, "minute")
-  const h = Math.round(min / 60)
-  if (Math.abs(h) < 24) return rtf.format(h, "hour")
-  return rtf.format(Math.round(h / 24), "day")
-}
-
-function groupByRecency(items: Notification[]) {
-  const startOfToday = new Date()
-  startOfToday.setHours(0, 0, 0, 0)
-  const weekAgo = new Date(startOfToday)
-  weekAgo.setDate(weekAgo.getDate() - 7)
-
-  const buckets = { today: [] as Notification[], week: [] as Notification[], earlier: [] as Notification[] }
-  for (const n of [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
-    const d = new Date(n.createdAt)
-    if (d >= startOfToday) buckets.today.push(n)
-    else if (d >= weekAgo) buckets.week.push(n)
-    else buckets.earlier.push(n)
-  }
-  return [
-    { key: "today", items: buckets.today },
-    { key: "week", items: buckets.week },
-    { key: "earlier", items: buckets.earlier },
-  ].filter((g) => g.items.length > 0)
 }
 
 function RailTooltip({ label }: Readonly<{ label: string }>) {
@@ -152,183 +134,13 @@ function RailTooltip({ label }: Readonly<{ label: string }>) {
   )
 }
 
-export function NotificationsMenu() {
-  const { t, i18n } = useTranslation(['nav', 'common'])
-
-  const [open, setOpen] = React.useState(false)
-  const { data: notifications = [], isLoading } = useNotifications()
-  const markRead = useMarkNotificationRead()
-  const markAll = useMarkAllNotificationsRead()
-
-  const unread = notifications.filter((n) => !n.read).length
-  const groups = groupByRecency(notifications)
-
-  let content: React.ReactNode
-
-  if (isLoading) {
-    content = <NotificationsSkeleton />
-  } else if (notifications.length === 0) {
-    content = (
-      <Empty className="h-full bg-muted/30">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Bell />
-          </EmptyMedia>
-          <EmptyTitle>{t("nav:notifications.noNew")}</EmptyTitle>
-          <EmptyDescription className="max-w-xs text-pretty">
-            {t("nav:notifications.noNewDesc")}
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button variant="primary">
-            <RefreshCcwIcon />
-            Refresh
-          </Button>
-        </EmptyContent>
-      </Empty>
-    )
-  } else {
-    content = groups.map((g) => (
-      <section key={g.key}>
-        <div className="px-3.5 pb-1 pt-2 text-nav uppercase tracking-nav text-text-subtle">
-          {t(`common:time.${g.key}`)}
-        </div>
-        {g.items.map((n) => (
-          <NotificationRow
-            key={n.id}
-            n={n}
-            locale={i18n.language}
-            onOpen={() => {
-              if (!n.read) markRead.mutate(n.id)
-              setOpen(false)
-              // navigate(targetFor(n)) // once notification targets are wired
-            }}
-          />
-        ))}
-      </section>
-    ))
-}
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label={t("nav:notifications.title")}
-          className="rounded-md p-1 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <NotificationBell count={unread} />
-        </button>
-      </PopoverTrigger>
-
-      <PopoverContent align="end" className="w-96 p-0">
-        <header className="flex items-center justify-between border-b border-border px-3.5 py-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-text">{t("nav:notifications.title")}</span>
-            {unread > 0 && (
-              <span className="rounded-full bg-ember-soft px-1.5 py-px font-mono text-nav font-semibold text-primary">
-                {unread}
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => markAll.mutate()}
-            disabled={unread === 0}
-            className="text-xs text-muted-foreground hover:text-text disabled:opacity-40"
-          >
-            {t("nav:notifications.markAllRead")}
-          </button>
-        </header>
-
-        <div className="max-h-96 overflow-y-auto">
-          {content}
-        </div>
-
-        <div className="border-t border-border p-2.5 text-center">
-          <button type="button" className="text-sm font-medium text-primary hover:underline">
-            {t("nav:notifications.viewAll")}
-          </button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-function NotificationRow({
-  n, locale, onOpen,
-}: Readonly<{ n: Notification; locale: string; onOpen: () => void }>) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={cn(
-        "flex w-full gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-2",
-        !n.read && "bg-ember-soft/20",
-      )}
-    >
-      <span className="flex w-2 shrink-0 justify-center pt-1.5">
-        {!n.read && <span className="size-1.75 rounded-full bg-primary" />}
-      </span>
-
-      {n.source.kind === "workspace" ? (
-        <WsIcon name={n.source.name} color={n.source.color} size="sm" />
-      ) : (
-        <UserAvatar name={n.source.name} size="sm" className="shrink-0" />
-      )}
-
-      <span className="min-w-0 flex-1">
-        <span className={cn("block text-sm leading-snug", n.read ? "text-muted-foreground" : "text-text")}>
-          {n.actor && <b className="font-semibold">{n.actor} </b>}
-          {n.text}{" "}
-          {n.highlight && (
-            <b className={cn("font-semibold", n.read ? "text-text-muted" : "text-primary")}>
-              {n.highlight}
-            </b>
-          )}
-        </span>
-        <span className="mt-0.5 block text-xs text-text-subtle">
-          {n.context} · {relativeTime(n.createdAt, locale)}
-        </span>
-      </span>
-    </button>
-  )
-}
-
-function NotificationsSkeleton() {
-  return (
-    <div className="space-y-1 p-2">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="flex gap-2.5 px-2 py-2.5">
-          <Skeleton className="size-6 shrink-0 rounded-md" />
-          <div className="flex-1 space-y-1.5">
-            <Skeleton className="h-3 w-3/4" />
-            <Skeleton className="h-2.5 w-1/2" />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function NotificationBell({ count }: Readonly<{ count: number }>) {
-  return (
-    <div className="relative">
-      <Bell className="size-5 text-muted-foreground hover:text-foreground" />
-      {count > 0 && (
-        <span className="absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-danger text-[10px] font-semibold leading-none text-danger-contrast">
-          {count > 9 ? "9+" : count}
-        </span>
-      )}
-    </div>
-  )
-}
-
 function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const navigate = useNavigate();
-  const workspaceId = useWorkspaceId();
 
-  const items = workspaceId ? workspaceNav(workspaceId) : GLOBAL_NAV;
+  const { data: workspaces = [] } = useWorkspaces()
+  const { data: teams = [] } = useTeams()
+
+  const items = useNavItems()
 
   const { t } = useTranslation('nav')
 
@@ -337,7 +149,7 @@ function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
 
   const go = (to: string) => {
     setOpen(false);
-    navigate(to);
+    void navigate(to);
   };
 
   const dialog = (
@@ -346,13 +158,33 @@ function SearchBar({ collapsed }: Readonly<{ collapsed?: boolean }>) {
         <CommandInput placeholder={t("search.placeholder")} />
         <CommandList>
           <CommandEmpty>{t("search.noResults")}</CommandEmpty>
-          <CommandGroup heading="Suggestions">
+          <CommandGroup heading={t("search.suggestions")}>
             {items.map((item) => (
               <CommandItem key={item.key} value={t(item.labelKey)} onSelect={() => go(item.to)}>
                 {t(item.labelKey)}
               </CommandItem>
             ))}
           </CommandGroup>
+          {workspaces.length > 0 && (
+            <CommandGroup heading={t("palette.workspaces")}>
+              {workspaces.map((w) => (
+                <CommandItem key={w.id} value={`${w.name} ${w.slug}`} onSelect={() => go(ROUTES.workspace(w.slug))} className="gap-2.5">
+                  <WsIcon name={w.name} color={w.color} src={avatarUrl("workspaces", w.id, w.avatar_version, 64)} size="sm" />
+                  <span className="truncate">{w.name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {teams.length > 0 && (
+            <CommandGroup heading={t("palette.teams")}>
+              {teams.map((team) => (
+                <CommandItem key={team.id} value={`${team.name} ${team.slug}`} onSelect={() => go(ROUTES.team(team.slug))} className="gap-2.5">
+                  <WsIcon name={team.name} color={team.color} src={avatarUrl("teams", team.id, team.avatar_version, 64)} size="sm" />
+                  <span className="truncate">{team.name}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
         </CommandList>
       </Command>
     </CommandDialog>
@@ -396,10 +228,11 @@ function WorkspaceTrigger({
   workspace,
   isLoading,
 }: Readonly<{
-  workspace: { name: string; type: string; platform?: string; color?: WsColor } | null;
+  workspace: WorkspaceSummary | null;
   isLoading: boolean;
 }>) {
   const { t } = useTranslation("nav");
+  const platform = workspace?.platform ? t(`platforms.${workspace.platform}`) : null;
 
   if (isLoading) return <TriggerSkeleton />;
 
@@ -421,11 +254,12 @@ function WorkspaceTrigger({
 
   return (
     <>
-      <WsIcon name={workspace.name} color={workspace.color} />
+      <WsIcon name={workspace.name} color={workspace.color} src={avatarUrl("workspaces", workspace.id, workspace.avatar_version, 64)} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-text">{workspace.name}</div>
         <div className="truncate text-xs text-muted-foreground">
-          {t(`workspacesTypes.${workspace.type}`)} · {workspace.platform}
+          {t(`workspaceModes.${workspace.mode}`)}
+          {` · ${platform}`}
         </div>
       </div>
     </>
@@ -439,15 +273,16 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
   const { data: workspaces = [], isLoading } = useWorkspaces()
   const [open, setOpen] = React.useState(false)
 
-  const currentId = useWorkspaceId()
+  const currentId = useWorkspaceSlug()
   const currentWorkspace = currentId
-    ? (workspaces.find((w: { id: string }) => w.id === currentId) ?? null)
+    ? (workspaces.find((w) => w.slug === currentId) ?? null)
     : null
+  const platform = currentWorkspace?.platform ? t(`platforms.${currentWorkspace.platform}`) : null
 
 
-  function selectWorkspace(id: string) {
+  function selectWorkspace(slug: string) {
     setOpen(false)
-    navigate(`/w/${id}`)
+    void navigate(ROUTES.workspace(slug))
   }
 
   const commandList = (
@@ -463,21 +298,22 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
             <CommandEmpty>{t("search.noResults")}</CommandEmpty>
             {workspaces.length > 0 && (
               <CommandGroup heading={t("search.recent")}>
-                {workspaces.map((w: { id: string; name: string; platform?: string; type: string; color?: "ember" | "blue" | "violet" | "teal" | "rose" | "amber" }) => (
+                {workspaces.map((w) => (
                   <CommandItem
                     key={w.id}
-                    value={`${w.name} ${w.platform} ${w.type}`}
-                    onSelect={() => selectWorkspace(w.id)}
+                    value={`${w.name} ${w.slug}`}
+                    onSelect={() => selectWorkspace(w.slug)}
                     className="gap-2.5"
                   >
-                    <WsIcon name={w.name} color={w.color} size="sm" />
+                    <WsIcon name={w.name} color={w.color} src={avatarUrl("workspaces", w.id, w.avatar_version, 64)} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm">{w.name}</div>
                       <div className="truncate text-xs text-muted-foreground">
-                        {t(`workspacesTypes.${w.type}`)} · {w.platform}
+                        {t(`workspaceModes.${w.mode}`)}
+                        {` · ${platform}`}
                       </div>
                     </div>
-                    {w.id === currentId && (
+                    {w.slug === currentId && (
                       <Check className="ml-auto size-4 shrink-0 text-primary" />
                     )}
                   </CommandItem>
@@ -490,7 +326,7 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
                 value="all-workspaces"
                 onSelect={() => {
                   setOpen(false)
-                  navigate("/workspaces")
+                  void navigate("/workspaces")
                 }}
                 className="gap-2.5 text-muted-foreground"
               >
@@ -510,7 +346,7 @@ function WorkspaceSelector({ collapsed }: Readonly<{ collapsed?: boolean }>) {
     if (currentId && isLoading) {
       triggerIcon = <Skeleton className="size-6 rounded-md" />
     } else if (currentWorkspace) {
-      triggerIcon = <WsIcon name={currentWorkspace.name} color={currentWorkspace.color} size="sm" />
+      triggerIcon = <WsIcon name={currentWorkspace.name} color={currentWorkspace.color} src={avatarUrl("workspaces", currentWorkspace.id, currentWorkspace.avatar_version, 64)} size="sm" />
     } else {
       triggerIcon = <Folder className="size-4" />
     }
@@ -596,9 +432,9 @@ function SidebarNavLink({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={!!match} tooltip={t(item.labelKey)}>
-        <NavLink to={item.to} end={item.end} onClick={onNavigate}>
-          <Icon />
-          {!collapsed && <span>{t(item.labelKey)}</span>}
+        <NavLink to={item.to} end={item.end} onClick={onNavigate} className="text-text-muted">
+          <Icon className={cn(match && "text-ember")} />
+          {!collapsed && <span className={cn(match && 'text-foreground')}>{t(item.labelKey)}</span>}
         </NavLink>
       </SidebarMenuButton>
       {badge !== undefined && badge > 0 && <SidebarMenuBadge>{badge}</SidebarMenuBadge>}
@@ -611,15 +447,16 @@ function SidebarNav({
 }: Readonly<{ items: NavItem[]; counts?: Record<string, number>; onNavigate?: () => void }>) {
   const { t } = useTranslation('nav')
   const { data: workspaces = [] } = useWorkspaces()
-  const workspaceId = useWorkspaceId()
-  const workspace = workspaces.find((w) => w.id === workspaceId)
+  const recentSlugs = useRecentWorkspaces((s) => s.slugs)
+  // In visit order, and only those the list still holds.
+  const recentWorkspaces = recentSlugs.flatMap((slug) => workspaces.filter((w) => w.slug === slug))
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
 
   return (
     <>
       <SidebarGroup>
-        <SidebarGroupLabel>
+        <SidebarGroupLabel className="uppercase">
           {t(items === GLOBAL_NAV ? "sections.personalSpace" : "sections.workspace")}
         </SidebarGroupLabel>
         <SidebarMenu>
@@ -635,14 +472,14 @@ function SidebarNav({
       </SidebarGroup>
 
       {items === GLOBAL_NAV ? (
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("sections.recentWorkspaces")}</SidebarGroupLabel>
+        recentWorkspaces.length > 0 && <SidebarGroup>
+          <SidebarGroupLabel className="uppercase">{t("sections.recentWorkspaces")}</SidebarGroupLabel>
           <SidebarMenu>
-            {workspaces.map((w) => (
+            {recentWorkspaces.map((w) => (
               <SidebarMenuItem key={w.id}>
                 <SidebarMenuButton asChild tooltip={w.name}>
-                  <NavLink to={`/w/${w.id}`} onClick={onNavigate}>
-                    <WsIcon name={w.name} color={w.color} size="sm" />
+                  <NavLink to={ROUTES.workspace(w.slug)} onClick={onNavigate}>
+                    <WsIcon name={w.name} color={w.color} src={avatarUrl("workspaces", w.id, w.avatar_version, 64)} size="sm" />
                     {!collapsed && <span>{w.name}</span>}
                   </NavLink>
                 </SidebarMenuButton>
@@ -652,22 +489,24 @@ function SidebarNav({
         </SidebarGroup>
       ) : (
         <>
-          <SidebarGroup>
-            <SidebarGroupLabel>{t("sections.activeTags")}</SidebarGroupLabel>
-            <div className="flex flex-wrap gap-1 px-2">
-              {workspace?.tags?.map((tag) => (
-                <Tag key={tag} variant={systemTags.has(tag) ? "system" : "custom"} className="text-xs">{tag}</Tag>
-              ))}
-            </div>
-          </SidebarGroup>
+          {activeTags.length > 0 && (
+            <SidebarGroup>
+              <SidebarGroupLabel className="uppercase">{t("sections.activeTags")}</SidebarGroupLabel>
+              <div className="flex flex-wrap gap-1 px-2">
+                {activeTags.map((tag) => (
+                  <Tag key={tag} variant={systemTags.has(tag) ? "system" : "custom"} className="text-xs">{tag}</Tag>
+                ))}
+              </div>
+            </SidebarGroup>
+          )}
 
           <SidebarGroup>
             <Separator className="mb-2" />
-            <SidebarGroupLabel>{t("sections.navigate")}</SidebarGroupLabel>
+            <SidebarGroupLabel className="uppercase">{t("sections.navigate")}</SidebarGroupLabel>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip={t("allWorkspaces")}>
-                  <NavLink to="/workspaces">
+                  <NavLink to={ROUTES.workspaces}>
                     <Folders />
                     {!collapsed && <span>{t("allWorkspaces")}</span>}
                   </NavLink>
@@ -675,7 +514,7 @@ function SidebarNav({
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton asChild tooltip={t("myTeams")}>
-                  <NavLink to="/teams">
+                  <NavLink to={ROUTES.teams}>
                     <Users />
                     {!collapsed && <span>{t("myTeams")}</span>}
                   </NavLink>
@@ -695,14 +534,16 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
-  const displayName = user?.username ?? ""
+  // First and last name when set, otherwise the username; never "null null".
+  const name = user ? displayName(user) : ""
   const handle = user ? `@${user.username}` : ""
+  const avatar = user ? (avatarUrl("users", user.id, user.avatar_version, 64) ?? undefined) : undefined
 
   async function handleLogout() {
     try {
       await logout()
     } catch {
-      // The local session is gone either way — the cache has been dropped —
+      // The local session is gone either way (the cache has been dropped),
       // so we still send the user to the sign-in screen. But the refresh token
       // may well have survived server-side, and the cookies are httpOnly so
       // the client cannot clear them itself. On a shared machine that is worth
@@ -713,15 +554,15 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
       })
     }
 
-    navigate(ROUTES.login, { replace: true })
+    await navigate(ROUTES.login, { replace: true })
   }
 
   const menuContent = (
     <DropdownMenuContent className="w-fit">
       <DropdownMenuLabel className="flex items-center gap-2.5 p-2">
-        <UserAvatar name={displayName}/>
+        <UserAvatar name={name} src={avatar} />
         <div className="min-w-0 flex-1">
-          <div className="text-base font-medium text-text">{displayName}</div>
+          <div className="text-base font-medium text-text">{name}</div>
           <div className="text-xs text-muted-foreground font-mono">
             {user?.email}
           </div>
@@ -772,10 +613,10 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            aria-label="User menu"
+            aria-label={t("userMenu.open")}
             className="group/rail relative grid size-11 shrink-0 place-items-center rounded-md hover:bg-surface-2"
           >
-            <UserAvatar name={displayName} />
+            <UserAvatar name={name} src={avatar} />
             <RailTooltip label={handle} />
           </button>
         </DropdownMenuTrigger>
@@ -789,12 +630,12 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="User menu"
+          aria-label={t("userMenu.open")}
           className="flex items-center gap-2.5 p-2 text-left rounded-md border border-transparent hover:bg-surface-2 hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring w-full"
         >
-          <UserAvatar name={displayName}/>
+          <UserAvatar name={name} src={avatar} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-text">{displayName}</div>
+            <div className="truncate text-sm font-medium text-text">{name}</div>
             <div className="truncate text-xs text-muted-foreground font-mono">
               {handle}
             </div>
@@ -808,22 +649,27 @@ function UserMenu({collapsed}: Readonly<{collapsed?: boolean}>) {
 }
 
 export function AppSidebar() {
-  const workspaceId = useWorkspaceId()
-  const items = workspaceId ? workspaceNav(workspaceId) : GLOBAL_NAV
+  const items = useNavItems()
   const { state, isMobile, setOpenMobile } = useSidebar()
   const collapsed = state === "collapsed"
+  // Mounted under RequireAuth only: an anonymous visitor never fires these requests.
+  const pendingTeams = usePendingTeamInvitations().data?.length ?? 0
+  const pendingWorkspaces = usePendingWorkspaceInvitations().data?.length ?? 0
+
 
   function closeOnMobile() {
     if (isMobile) setOpenMobile(false)
   }
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible="icon" className="absolute h-auto">
       <SidebarHeader>
         <div className={cn("flex w-full items-center", collapsed ? "flex-col gap-2" : "justify-between gap-2.5")}>
-          <Logo size="md" wordmark={!collapsed} />
+          <Link to={ROUTES.workspaces}>
+            <Logo size="md" wordmark={!collapsed} />
+          </Link>
           <div className={cn("flex items-center gap-1", collapsed && "flex-col")}>
-            {!collapsed && <NotificationsMenu />}
+            {!collapsed && <PendingInvitationsMenu />}
             <SidebarTrigger />
           </div>
         </div>
@@ -835,7 +681,11 @@ export function AppSidebar() {
           <WorkspaceSelector collapsed={collapsed} />
         </SidebarGroup>
         <Separator className="my-1" />
-        <SidebarNav items={items} onNavigate={closeOnMobile} />
+        <SidebarNav
+          items={items}
+          counts={{ teams: pendingTeams, workspaces: pendingWorkspaces }}
+          onNavigate={closeOnMobile}
+        />
       </SidebarContent>
 
       <SidebarFooter className={cn(collapsed && "items-center")}>
