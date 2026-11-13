@@ -24,9 +24,22 @@ function ProbeLayout() {
   );
 }
 
+/** jsdom lays nothing out: there is never a size to report. */
+class ResizeObserverStub {
+  observe() {
+    // Nothing to watch without layout.
+  }
+  unobserve() {
+    // Nothing was watched.
+  }
+  disconnect() {
+    // Nothing to let go of.
+  }
+}
+
 /** What jsdom lacks and Radix menus, selects and dialogs call. */
 function stubBrowserGaps() {
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   const element = Element.prototype as unknown as Record<string, unknown>;
   element.hasPointerCapture ??= () => false;
   element.releasePointerCapture ??= () => {};
