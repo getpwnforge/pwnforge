@@ -10,12 +10,27 @@ ignore = [
   # Remove once rust_decimal moves to rkyv 0.8.
   "RUSTSEC-2026-0235",
 
-  # Transitive via jsonwebtoken's `rust_crypto` feature, which is monolithic:
-  # there is no way to enable HMAC without also pulling RSA. No fixed version
-  # exists upstream. PwnForge signs and verifies tokens with HS256 only, so the
-  # vulnerable RSA code path is compiled but never executed. Revisit if the
-  # instance ever adopts an asymmetric algorithm (RS256, PS256).
-  "RUSTSEC-2023-0071",
+  # RUSTSEC-2026-0459: libsqlite3-sys, via SQLite's CVE-2026-119375. Optional
+  # dependency of sqlx-sqlite, listed in Cargo.lock but never compiled:
+  # PwnForge enables Postgres only, and `cargo tree -i libsqlite3-sys --target
+  # all -e all` returns nothing.
+  "RUSTSEC-2026-0459",
+
+  # RUSTSEC-2026-0442: arrow-data, out-of-bounds read on RunEndEncoded arrays.
+  # Reached only through sea-orm-arrow, an optional part of sea-orm that is
+  # never enabled: `cargo tree -i arrow-data --target all -e all` returns
+  # nothing. PwnForge reads no Arrow data.
+  "RUSTSEC-2026-0442",
+
+  # RUSTSEC-2026-0374: basic-toml, unmaintained, no known vulnerability. Used
+  # by askama_derive at compile time only, to read askama's own configuration;
+  # nothing of it runs in the binary. Remove once askama drops it.
+  "RUSTSEC-2026-0374",
+
+  # RUSTSEC-2026-0441: pin-utils, unmaintained, no known vulnerability. A
+  # small macro crate pulled in by aws-smithy-http (aws-sdk-s3). Remove once
+  # the AWS SDK drops it.
+  "RUSTSEC-2026-0441",
 
   # Transitive build dependency, unmaintained but not vulnerable.
   "RUSTSEC-2026-0173",
