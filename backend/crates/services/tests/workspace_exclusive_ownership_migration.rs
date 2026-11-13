@@ -60,14 +60,18 @@ async fn create_team(db: &DatabaseConnection) -> Uuid {
     id
 }
 
+/// Inserts with the columns of this schema step only, and no RETURNING: the
+/// entity knows the columns of every later migration, and SeaORM would ask
+/// this older schema for all of them.
 async fn insert_workspace(
     db: &DatabaseConnection,
     mode: &str,
     team_id: Option<Uuid>,
     owner_id: Option<Uuid>,
-) -> Result<workspaces::Model, DbErr> {
-    workspaces::ActiveModel {
-        id: Set(Uuid::now_v7()),
+) -> Result<Uuid, DbErr> {
+    let id = Uuid::now_v7();
+    workspaces::Entity::insert(workspaces::ActiveModel {
+        id: Set(id),
         team_id: Set(team_id),
         owner_id: Set(owner_id),
         slug: Set(format!("own-{}", Uuid::now_v7().simple())),
@@ -77,9 +81,31 @@ async fn insert_workspace(
         mode: Set(mode.to_owned()),
         default_writeup_visibility: Set("draft".to_owned()),
         ..Default::default()
-    }
-    .insert(db)
+    })
+    .exec_without_returning(db)
+    .await?;
+    Ok(id)
+}
+
+/// The owner columns of a workspace, read with a statement: the entity
+/// selects every later column, `event_url` among them, which this schema
+/// predates.
+async fn ownership_of(db: &DatabaseConnection, id: Uuid) -> Option<(Option<Uuid>, Option<Uuid>)> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT team_id, owner_id FROM workspaces WHERE id = $1",
+        [id.into()],
+    ))
     .await
+    .expect("the lookup must succeed")
+    .map(|row| {
+        (
+            row.try_get("", "team_id")
+                .expect("team_id is a nullable uuid"),
+            row.try_get("", "owner_id")
+                .expect("owner_id is a nullable uuid"),
+        )
+    })
 }
 
 /// The definition Postgres holds for the check, as it would print it.
@@ -99,7 +125,7 @@ async fn ownership_definition(db: &DatabaseConnection) -> Option<String> {
 
 /// The check is read from the message: `sql_err()` classifies nothing for a
 /// CHECK violation.
-fn assert_refused(result: Result<workspaces::Model, DbErr>, what: &str) {
+fn assert_refused(result: Result<Uuid, DbErr>, what: &str) {
     let message = result
         .expect_err(&format!("{what} must be refused"))
         .to_string();
@@ -183,7 +209,7 @@ async fn a_row_breaking_the_rule_fails_the_migration() {
             .expect_err("the migration must fail on that row")
             .to_string();
         assert!(
-            message.contains(&breaking.id.to_string()) && message.contains("1 workspace"),
+            message.contains(&breaking.to_string()) && message.contains("1 workspace"),
             "the failure must count and name the row, got {message}"
         );
 
@@ -201,13 +227,11 @@ async fn a_row_breaking_the_rule_fails_the_migration() {
             Some(MIGRATION),
             "the migration must not be recorded as applied"
         );
-        let kept = workspaces::Entity::find_by_id(breaking.id)
-            .one(&db)
+        let kept = ownership_of(&db, breaking)
             .await
-            .expect("the lookup must succeed")
             .expect("the row must still exist");
         assert_eq!(
-            (kept.team_id, kept.owner_id),
+            kept,
             (Some(team), Some(owner)),
             "the row must be left as it was"
         );

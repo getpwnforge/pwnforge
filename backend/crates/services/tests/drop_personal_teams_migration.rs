@@ -93,8 +93,11 @@ async fn team_workspace(
     member: Uuid,
     favourited_by: &[Uuid],
 ) -> Uuid {
-    let id = workspaces::ActiveModel {
-        id: Set(Uuid::now_v7()),
+    let id = Uuid::now_v7();
+    // No RETURNING: the entity knows the columns of every later migration,
+    // and SeaORM would ask this older schema for all of them.
+    workspaces::Entity::insert(workspaces::ActiveModel {
+        id: Set(id),
         team_id: Set(Some(team_id)),
         slug: Set(format!("dp-{}", Uuid::now_v7().simple())),
         name: Set("Workspace".to_owned()),
@@ -103,11 +106,10 @@ async fn team_workspace(
         mode: Set("team".to_owned()),
         default_writeup_visibility: Set("draft".to_owned()),
         ..Default::default()
-    }
-    .insert(db)
+    })
+    .exec_without_returning(db)
     .await
-    .expect("the fixture workspace must insert")
-    .id;
+    .expect("the fixture workspace must insert");
 
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -146,11 +148,32 @@ async fn team_workspace(
     id
 }
 
-async fn workspace(db: &DatabaseConnection, id: Uuid) -> Option<workspaces::Model> {
-    workspaces::Entity::find_by_id(id)
-        .one(db)
-        .await
-        .expect("the lookup must succeed")
+/// What the migration may change on a workspace, read with a statement too:
+/// the entity selects every later column, `event_url` among them, which this
+/// schema predates.
+struct Workspace {
+    mode: String,
+    team_id: Option<Uuid>,
+    owner_id: Option<Uuid>,
+}
+
+async fn workspace(db: &DatabaseConnection, id: Uuid) -> Option<Workspace> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT mode, team_id, owner_id FROM workspaces WHERE id = $1",
+        [id.into()],
+    ))
+    .await
+    .expect("the lookup must succeed")
+    .map(|row| Workspace {
+        mode: row.try_get("", "mode").expect("mode is text"),
+        team_id: row
+            .try_get("", "team_id")
+            .expect("team_id is a nullable uuid"),
+        owner_id: row
+            .try_get("", "owner_id")
+            .expect("owner_id is a nullable uuid"),
+    })
 }
 
 /// Read with a statement too: the entity reads back `teams.description`,

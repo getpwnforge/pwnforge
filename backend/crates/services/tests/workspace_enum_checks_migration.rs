@@ -54,15 +54,19 @@ async fn create_owner(db: &DatabaseConnection) -> Uuid {
     .id
 }
 
+/// Inserts with the columns of this schema step only, and no RETURNING: the
+/// entity knows the columns of every later migration, and SeaORM would ask
+/// this older schema for all of them.
 async fn insert_workspace(
     db: &DatabaseConnection,
     owner: Uuid,
     color: &str,
     r#type: &str,
     platform: Option<&str>,
-) -> Result<workspaces::Model, sea_orm::DbErr> {
-    workspaces::ActiveModel {
-        id: Set(Uuid::now_v7()),
+) -> Result<Uuid, sea_orm::DbErr> {
+    let id = Uuid::now_v7();
+    workspaces::Entity::insert(workspaces::ActiveModel {
+        id: Set(id),
         owner_id: Set(Some(owner)),
         slug: Set(format!("enum-{}", Uuid::now_v7().simple())),
         name: Set("Enum checks".to_owned()),
@@ -72,17 +76,37 @@ async fn insert_workspace(
         mode: Set("solo".to_owned()),
         default_writeup_visibility: Set("draft".to_owned()),
         ..Default::default()
-    }
-    .insert(db)
-    .await
+    })
+    .exec_without_returning(db)
+    .await?;
+    Ok(id)
 }
 
-async fn stored(db: &DatabaseConnection, id: Uuid) -> workspaces::Model {
-    workspaces::Entity::find_by_id(id)
-        .one(db)
+/// What the migration may rewrite, read by name for the same reason: a
+/// lookup through the entity would select every later column too.
+struct Stored {
+    color: String,
+    r#type: String,
+    platform: Option<String>,
+}
+
+async fn stored(db: &DatabaseConnection, id: Uuid) -> Stored {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT color, type, platform FROM workspaces WHERE id = $1",
+            [id.into()],
+        ))
         .await
         .expect("the lookup must succeed")
-        .expect("the workspace must exist")
+        .expect("the workspace must exist");
+    Stored {
+        color: row.try_get("", "color").expect("color is text"),
+        r#type: row.try_get("", "type").expect("type is text"),
+        platform: row
+            .try_get("", "platform")
+            .expect("platform is nullable text"),
+    }
 }
 
 /// Which of the five checks exist on `workspaces`, in name order.
@@ -132,13 +156,13 @@ async fn the_migration_normalises_constrains_and_rolls_back() {
             .await
             .expect("the migration must apply");
 
-        assert_eq!(stored(&db, off_palette.id).await.color, "ember");
-        assert_eq!(stored(&db, legacy_ctf.id).await.r#type, "event");
+        assert_eq!(stored(&db, off_palette).await.color, "ember");
+        assert_eq!(stored(&db, legacy_ctf).await.r#type, "event");
         assert_eq!(
-            stored(&db, no_platform.id).await.platform.as_deref(),
+            stored(&db, no_platform).await.platform.as_deref(),
             Some("other")
         );
-        let kept = stored(&db, valid.id).await;
+        let kept = stored(&db, valid).await;
         assert_eq!(
             (
                 kept.color.as_str(),
@@ -166,7 +190,7 @@ async fn the_migration_normalises_constrains_and_rolls_back() {
             "down() drops the five checks"
         );
         assert_eq!(
-            stored(&db, off_palette.id).await.color,
+            stored(&db, off_palette).await.color,
             "ember",
             "down() does not restore the values it never recorded"
         );
@@ -200,7 +224,7 @@ async fn an_unknown_value_fails_the_migration_and_undoes_it() {
         );
 
         assert_eq!(
-            stored(&db, off_palette.id).await.color,
+            stored(&db, off_palette).await.color,
             "red",
             "the colour normalisation is rolled back with the failure"
         );
