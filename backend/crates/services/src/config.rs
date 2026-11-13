@@ -265,6 +265,8 @@ impl Config {
     /// boot is deliberate: an instance that silently sends no mail is worse
     /// than one that refuses to start.
     fn validate(&self) -> Result<()> {
+        refuse_console_in_production(&self.email_backend, &self.public_url)?;
+
         match self.email_backend {
             EmailBackend::Console => {}
 
@@ -380,6 +382,20 @@ fn validate_mailbox(key: &str, value: &str) -> Result<()> {
 fn is_https(url: &str) -> bool {
     url.get(..8)
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+}
+
+/// The console backend prints every mail to the logs, its links and their
+/// tokens included: a password reset waiting for whoever reads them. Fine on
+/// a developer machine. An https PUBLIC_URL is how an instance says it is
+/// served for real, and there the backend is refused.
+fn refuse_console_in_production(backend: &EmailBackend, public_url: &str) -> Result<()> {
+    if backend == &EmailBackend::Console && is_https(public_url) {
+        anyhow::bail!(
+            "EMAIL_BACKEND 'console' prints every mail and its links to the logs: \
+             choose 'smtp' or 'resend' when PUBLIC_URL is https"
+        );
+    }
+    Ok(())
 }
 
 impl StorageConfig {
@@ -739,6 +755,25 @@ mod tests {
         for url in ["http://localhost:5173", "ctf.example.test", "https:/x", ""] {
             assert!(!is_https(url), "{url:?} is not https");
         }
+    }
+
+    /// The console backend runs wherever the instance is not served over
+    /// https, development and prod-check included, and nowhere else.
+    #[test]
+    fn the_console_backend_is_refused_on_an_https_instance() {
+        assert!(
+            refuse_console_in_production(&EmailBackend::Console, "https://ctf.example.test")
+                .is_err()
+        );
+        for url in ["http://localhost:5173", "http://127.0.0.1:18080"] {
+            assert!(
+                refuse_console_in_production(&EmailBackend::Console, url).is_ok(),
+                "{url}"
+            );
+        }
+        assert!(
+            refuse_console_in_production(&EmailBackend::Smtp, "https://ctf.example.test").is_ok()
+        );
     }
 
     /// Positive: the shapes an operator legitimately configures, from local

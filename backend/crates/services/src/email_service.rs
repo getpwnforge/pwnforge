@@ -1162,7 +1162,9 @@ async fn send(
 ) -> Result<(), EmailError> {
     match config.email_backend {
         EmailBackend::Console => {
-            tracing::info!(to, subject, ?reply_to, "email (console backend)");
+            // No address in the structured log: in production it is JSON and
+            // often shipped elsewhere. The developer reads them in the body below.
+            tracing::info!(subject, "email (console backend)");
             // println! rather than tracing for the body: the pretty formatter
             // wraps long lines, which makes the link painful to copy.
             println!(
